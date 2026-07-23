@@ -1,0 +1,45 @@
+# ===== Secretos y entorno (NUNCA a git) =====
+# Cualquier variante: .env, .env.prod, .env.local, .env.backup, .env.viejo, etc.
+.env*
+# ...pero SÍ se versionan las plantillas de ejemplo (sin valores reales):
+!.env.example
+!.env.prod.example
+
+# ===== Datos de clientes (NUNCA a git) =====
+# Todos los Excel con datos reales (Contacto Posventa, encuesta Ford, RQR, etc.)
+*.xlsx
+*.xls
+*.csv
+
+# ===== Backups / dumps de la base (contienen datos de clientes) =====
+backups/
+*.sql
+*.sql.gz
+*.dump
+# ...PERO las migraciones de Prisma SÍ se versionan (son esquema/código, no datos).
+# Sin esta excepción, la regla *.sql las excluiría y la PC nueva no podría crear
+# el esquema con `prisma migrate deploy`.
+!backend/prisma/migrations/**/*.sql
+
+# ===== Dependencias y builds =====
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+dist/
+backend/dist/
+frontend/dist/
+frontend/.vite/
+# Caché incremental de TypeScript (se regenera al compilar)
+*.tsbuildinfo
+
+# ===== Archivos temporales de subida (Excel en proceso) =====
+uploads-temp/
+calidad-uploads/
+
+# ===== Logs y sistema =====
+*.log
+*.log.*
+logs/
+.DS_Store
+Thumbs.db
+npm-debug.log*

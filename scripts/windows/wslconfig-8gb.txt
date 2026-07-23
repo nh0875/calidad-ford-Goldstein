@@ -1,0 +1,36 @@
+# ==============================================================================
+#  ARCHIVO .wslconfig PARA LA PC DEFINITIVA (8 GB de RAM, i7-1255U)
+#
+#  COMO USARLO:
+#    1. Copiar este archivo a:   C:\Users\<TU-USUARIO>\.wslconfig
+#       (en la raiz del perfil, NO dentro de la carpeta del proyecto)
+#       El nombre final debe ser exactamente  .wslconfig  (sin .txt)
+#    2. Aplicarlo:  abrir PowerShell y correr   wsl --shutdown
+#       (o simplemente reiniciar la PC)
+#    3. Verificar:  wsl -d docker-desktop -- free -m
+#       La fila "Mem: total" tiene que dar ~3000, no ~4000.
+#
+#  POR QUE: WSL2 (donde corre Docker) toma por defecto el 50% de la RAM y no la
+#  devuelve. En 8 GB eso son ~4 GB para WSL y deja a Windows corto -> Docker
+#  Desktop se cae. Con el tope en 3 GB, Windows conserva ~5 GB y el stack sigue
+#  sobrado (usa ~100 MB en reposo y ~1 GB con carga real).
+# ==============================================================================
+
+[wsl2]
+# Tope de RAM para la VM de WSL2 (y por lo tanto para todos los contenedores).
+memory=3GB
+
+# El i7-1255U tiene 12 hilos; el stack no necesita mas de 4.
+processors=4
+
+# Swap generoso: absorbe picos (importar un Excel grande, analisis con IA) sin
+# que el kernel mate procesos por falta de memoria.
+swap=4GB
+
+[experimental]
+# Devuelve a Windows la memoria que WSL deja de usar. Clave para que no se
+# acumule consumo con el correr de los dias.
+autoMemoryReclaim=gradual
+
+# Permite que el disco virtual de WSL se achique cuando se borran datos.
+sparseVhd=true

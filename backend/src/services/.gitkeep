@@ -1,0 +1,5 @@
+# Acá van los servicios de negocio:
+# - excel.service.ts (parseo y mapeo de columnas del Excel de Contacto Posterior)
+# - whatsapp.service.ts (envío de plantillas y recepción de webhooks)
+# - sentiment.service.ts (análisis IA: semáforo + causa raíz)
+# - rqr.service.ts (generación de numeroRQR correlativo por año, creación automática)

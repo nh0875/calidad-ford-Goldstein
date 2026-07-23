@@ -1,0 +1,41 @@
+# Imagen de producción del backend: compila TypeScript y corre el JS ya
+# compilado (sin tsx watch ni volúmenes). Las migraciones se aplican al
+# arrancar con `prisma migrate deploy` (idempotente).
+
+# --- Etapa de build ---
+FROM node:20-alpine AS build
+
+RUN apk add --no-cache openssl
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY prisma ./prisma
+RUN npx prisma generate
+
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build
+
+# --- Etapa de runtime ---
+FROM node:20-alpine
+
+# Prisma necesita libssl para sus engines en Alpine
+RUN apk add --no-cache openssl wget
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Se copia node_modules completo desde el build: incluye el cliente de Prisma
+# ya generado y el CLI de prisma que hace falta para `migrate deploy`
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/prisma ./prisma
+COPY package*.json ./
+
+EXPOSE 3000
+
+# Aplica las migraciones pendientes y arranca la API + workers
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]

@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+  }
+
+  /* Foco de teclado visible en todo elemento interactivo (requisito de accesibilidad) */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-canvas;
+  }
+
+  ::selection {
+    background-color: theme("colors.accent.light");
+    color: theme("colors.navy.DEFAULT");
+  }
+}
+
+@layer utilities {
+  .skeleton {
+    @apply animate-pulse rounded-md bg-gray-200;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton {
+      animation: none;
+      opacity: 0.6;
+    }
+  }
+}

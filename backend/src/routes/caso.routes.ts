@@ -1,0 +1,22 @@
+import { Router } from "express";
+import { asyncHandler } from "../middlewares/asyncHandler";
+import { requireAdmin } from "../middlewares/auth";
+import { buscarCasos, listCasos, opcionesCasos } from "../controllers/caso.controller";
+import { eliminarCaso } from "../controllers/admin.controller";
+
+const router = Router();
+
+// Opciones reales (sucursal/asesor/período) para los desplegables de filtros
+router.get("/opciones", asyncHandler(opcionesCasos));
+
+// Autocompletado por nombre/teléfono/patente/orden (para vincular RQR manual)
+router.get("/buscar", asyncHandler(buscarCasos));
+
+// Listado con paginación y filtros: sucursal, asesor, estadoContacto,
+// origenAgendamiento, periodo, fechaDesde/fechaHasta
+router.get("/", asyncHandler(listCasos));
+
+// Borrado lógico (solo ADMIN); recuperable desde /api/admin/restaurar
+router.delete("/:id", requireAdmin, asyncHandler(eliminarCaso));
+
+export default router;

@@ -1,0 +1,150 @@
+# Stack de PRODUCCIÓN: imágenes compiladas, sin volúmenes de código ni
+# puertos de base de datos expuestos. Uso:
+#   cp .env.prod.example .env.prod   (y completar credenciales)
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # Tope de memoria: sin esto un contenedor puede consumir toda la VM de WSL2
+    # y tumbar Docker Desktop.
+    # Suma de los topes: 768 + 192 + 1024 + 128 + 256 = 2368m, dimensionada para
+    # el memory=3GB del .wslconfig de la PC de 8 GB (deja ~700m para el daemon).
+    # Son TECHOS, no reservas: en reposo el stack usa ~100 MB en total.
+    mem_limit: 768m
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?definir en .env.prod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definir en .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:-calidad_ford}
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-calidad_ford}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    mem_limit: 192m
+    volumes:
+      - redisdata_prod:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    # El proceso Node (API + workers) es el que más crece: importaciones de
+    # Excel, análisis con IA y exportaciones. Es el tope más alto del stack.
+    mem_limit: 1024m
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-calidad_ford}?schema=public
+      REDIS_URL: redis://redis:6379
+      META_WHATSAPP_TOKEN: ${META_WHATSAPP_TOKEN:-}
+      META_PHONE_NUMBER_ID: ${META_PHONE_NUMBER_ID:-}
+      META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
+      META_TEMPLATE_NAME: ${META_TEMPLATE_NAME:-contacto_posventa}
+      META_TEMPLATE_LANG: ${META_TEMPLATE_LANG:-es_AR}
+      META_GRAPH_BASE_URL: ${META_GRAPH_BASE_URL:-https://graph.facebook.com/v20.0}
+      WHATSAPP_ENVIO_DELAY_MS: ${WHATSAPP_ENVIO_DELAY_MS:-2500}
+      DIAS_SIN_RESPUESTA_PARA_NC: ${DIAS_SIN_RESPUESTA_PARA_NC:-5}
+      # Ventana horaria y tope diario de envíos de campaña
+      MAX_ENVIOS_DIARIOS: ${MAX_ENVIOS_DIARIOS:-200}
+      HORA_INICIO_ENVIO: ${HORA_INICIO_ENVIO:-09:00}
+      HORA_FIN_ENVIO: ${HORA_FIN_ENVIO:-19:00}
+      # Demora del agradecimiento (3 min)
+      DELAY_AGRADECIMIENTO_MS: ${DELAY_AGRADECIMIENTO_MS:-180000}
+      # Cifrado de secretos guardados en Configuración (credenciales de Meta)
+      CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:?definir en .env.prod}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      ANALISIS_MODO_MOCK: ${ANALISIS_MODO_MOCK:-false}
+      ANALISIS_MAX_POR_MINUTO: ${ANALISIS_MAX_POR_MINUTO:-8}
+      MODO_DEMO: ${MODO_DEMO:-false}
+      JWT_SECRET: ${JWT_SECRET:?definir en .env.prod}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD_INICIAL: ${ADMIN_PASSWORD_INICIAL:-}
+      # CORS restrictivo (dominio real del sistema) y límite de requests por IP
+      FRONTEND_URL: ${FRONTEND_URL:-}
+      RATE_LIMIT_POR_MINUTO: ${RATE_LIMIT_POR_MINUTO:-100}
+      # Estado del backup para /api/sistema/estado-backup (volumen compartido)
+      BACKUP_STATUS_FILE: /var/backup-status/status.json
+    volumes:
+      # Solo lectura: el backend lee el estado que escribe el contenedor de backup
+      - backup_status:/var/backup-status:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    depends_on:
+      - backend
+
+  # Backup diario de Postgres + copia offsite S3 + verificación semanal de
+  # integridad. No expone puertos; solo habla con postgres por la red interna.
+  backup:
+    build:
+      context: ./backup
+    restart: unless-stopped
+    # pg_dump + gzip del dump: crece con el tamaño de la base.
+    mem_limit: 256m
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-calidad_ford}
+      TZ: ${BACKUP_TZ:-America/Argentina/Buenos_Aires}
+      BACKUP_HOUR: ${BACKUP_HOUR:-03}
+      VERIFY_DOW: ${VERIFY_DOW:-7}
+      VERIFY_HOUR: ${VERIFY_HOUR:-04}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      VERIFY_MIN_CASOS: ${VERIFY_MIN_CASOS:-1}
+      # Almacenamiento offsite S3-compatible (AWS S3 / Backblaze B2 / DO Spaces).
+      # Si se dejan vacíos, el backup se hace local igual (con aviso en el log).
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_S3_ACCESS_KEY: ${BACKUP_S3_ACCESS_KEY:-}
+      BACKUP_S3_SECRET_KEY: ${BACKUP_S3_SECRET_KEY:-}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-us-east-1}
+    volumes:
+      - backups:/backups
+      - backup_status:/var/backup-status
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata_prod:
+  redisdata_prod:
+  backups: # dumps locales (rotación configurable)
+  backup_status: # status.json compartido entre backup y backend

@@ -1,0 +1,438 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+enum TipoUpload {
+  CONTACTO_POSVENTA
+  CONTACTO_VENTAS
+  ENCUESTA_FORD
+}
+
+// Estado de la encuesta oficial de Ford para un caso (Parte B)
+enum EncuestaFordEstado {
+  SIN_DATO // nunca vino en un export de Ford
+  RESPONDIDA // "Completed"
+  PENDIENTE_RESPUESTA // "Invited" / "Reminded": recibió pero no respondió
+  NO_ELEGIBLE // "Opt out" / "Quarantine": nunca tuvo chance real de responder
+  EMAIL_INVALIDO // "Delivery bounced": la invitación rebotó
+}
+
+enum TipoTareaRefuerzo {
+  RECORDAR_ENCUESTA // el empleado recuerda al cliente que responda la encuesta
+  VERIFICAR_EMAIL // el email rebotó: verificar/corregir y avisar
+}
+
+enum EstadoTareaRefuerzo {
+  PENDIENTE
+  EN_GESTION
+  COMPLETADA
+  CANCELADA
+}
+
+enum ResultadoTareaRefuerzo {
+  ENCUESTA_RESPONDIDA
+  NO_CONTESTA
+  DATOS_ERRONEOS
+  RECHAZO
+  OTRO
+}
+
+enum UploadStatus {
+  PROCESANDO
+  COMPLETADO
+  ERROR
+}
+
+enum OrigenAgendamiento {
+  DEALER
+  FORDPASS
+  ONLINEBOOKING
+  OTRO
+}
+
+enum EstadoContacto {
+  PENDIENTE
+  ENVIADO
+  RESPONDIDO
+  NO_RESPONDIO
+  INTERNO
+  ERROR
+}
+
+enum MessageDirection {
+  ENTRANTE
+  SALIENTE
+}
+
+enum Semaforo {
+  VERDE
+  AMARILLO
+  ROJO
+}
+
+// Gravedad del malestar del cliente, independiente de la confianza del modelo
+// en la clasificación. Decide (en código) si un AMARILLO abre RQR automático.
+enum Severidad {
+  LEVE
+  MODERADA
+  GRAVE
+}
+
+enum EstadoRQR {
+  ABIERTO
+  EN_TRATAMIENTO
+  CERRADO
+}
+
+enum RolUsuario {
+  ADMIN
+  CALIDAD
+}
+
+// Motivo por el que un teléfono queda en la lista de supresión (no contactar).
+enum MotivoSupresion {
+  OPT_OUT_WHATSAPP // el cliente respondió BAJA/STOP por WhatsApp (automático)
+  SOLICITUD_MANUAL // pidió la baja por teléfono/presencial (lo carga el ADMIN)
+  NUMERO_INVALIDO // número inexistente/erróneo
+  OTRO
+}
+
+// Tipo de valor que normaliza un alias declarado por el ADMIN.
+enum TipoAlias {
+  ASESOR
+  SUCURSAL
+}
+
+// Área del negocio a la que pertenece un caso/RQR (datos separados).
+enum AreaTrabajo {
+  VENTAS
+  POSVENTA
+}
+
+// Área que puede ver/gestionar un usuario. AMBAS = sin restricción (ve las dos).
+enum AreaUsuario {
+  VENTAS
+  POSVENTA
+  AMBAS
+}
+
+// ---------- Modelos ----------
+
+model ExcelUpload {
+  id            String       @id @default(cuid())
+  tipo          TipoUpload   @default(CONTACTO_POSVENTA)
+  filename      String
+  sucursal      String // ej: "San Juan", "Mendoza"
+  periodo       String // ej: "2026-07"
+  uploadedBy    String
+  uploadedAt    DateTime     @default(now())
+  columnMapping Json
+  kpiResumen    Json? // KPIs de las filas de resumen del Excel original, para contrastar contra lo que calcule el sistema
+  totalRows     Int
+  status        UploadStatus @default(PROCESANDO)
+
+  // Borrado lógico: nunca se borra físicamente (los datos quedan recuperables).
+  // Los listados excluyen las filas con eliminadoEn seteado.
+  eliminadoEn    DateTime?
+  eliminadoPorId String?
+  eliminadoPor   Usuario?  @relation("ExcelUploadEliminadoPor", fields: [eliminadoPorId], references: [id])
+
+  casos          Caso[]
+  tareasRefuerzo TareaRefuerzo[]
+
+  @@index([sucursal, periodo])
+  @@index([eliminadoEn])
+}
+
+// Cada fila del seguimiento post-servicio ("Contacto Posterior")
+model Caso {
+  id                 String             @id @default(cuid())
+  uploadId           String
+  upload             ExcelUpload        @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  numeroOrden        String
+  fechaProgramacion  DateTime
+  hora               String?
+  // Área del caso (POSVENTA para el Contacto Posventa; VENTAS para Contacto
+  // Ventas). Decide qué usuarios lo ven/gestionan.
+  area               AreaTrabajo        @default(POSVENTA)
+  origenAgendamiento OrigenAgendamiento @default(DEALER)
+  // asesor = nombre NORMALIZADO para mostrar/agrupar (ej. "Carla Campora").
+  // asesorCodigo = identificador numérico si venía en el texto (ej. "140445"),
+  // guardado aparte para desambiguar homónimos. asesorRaw = valor original del
+  // Excel, para trazabilidad y para poder re-normalizar en el futuro.
+  asesor             String
+  asesorCodigo       String?
+  asesorRaw          String?
+  modelo             String
+  patente            String
+  chasisVIN          String?
+  nombrePropietario  String
+  emailPropietario   String?
+  celular            String
+  whatsapp           String
+  // Teléfonos normalizados a E.164 (whatsapp + celular, deduplicados). Se usa
+  // para cruzar contra la lista de supresión sin depender del formato original.
+  telefonosNorm      String[]           @default([])
+  comentarioAsesor   String?            @db.Text
+  fechaSalida        DateTime?
+  diasEnServicio     Int?
+  sucursal           String
+  sucursalRaw        String?
+  estadoContacto     EstadoContacto     @default(PENDIENTE)
+  ultimoErrorEnvio   String? // motivo del último fallo de envío de WhatsApp
+  tieneRqrAbierto    Boolean            @default(false) // true mientras exista un RQR ABIERTO/EN_TRATAMIENTO del caso
+  createdAt          DateTime           @default(now())
+
+  // Parte A: agradecimiento + recordatorio de encuesta post-clasificación
+  agradecimientoEnviadoEn DateTime? // se envía una sola vez por caso; null = no enviado
+  whatsappOptOut          Boolean   @default(false) // el cliente pidió la baja (BAJA/STOP): no más automatismos
+
+  // Parte B: seguimiento de la encuesta oficial de Ford
+  encuestaFordEstado EncuestaFordEstado @default(SIN_DATO)
+  encuestaFordFecha  DateTime? // "Fecha respuesta" del export de Ford, cuando existe
+
+  // Borrado lógico (solo ADMIN); los listados excluyen los eliminados.
+  eliminadoEn    DateTime?
+  eliminadoPorId String?
+  eliminadoPor   Usuario?  @relation("CasoEliminadoPor", fields: [eliminadoPorId], references: [id])
+
+  mensajes       WhatsappMessage[]
+  analisis       SentimentAnalysis[]
+  rqrs           RQR[]
+  tareasRefuerzo TareaRefuerzo[]
+  supresiones    SupresionContacto[] @relation("SupresionCasoOrigen")
+
+  @@index([uploadId])
+  @@index([sucursal, estadoContacto])
+  @@index([numeroOrden])
+  @@index([eliminadoEn])
+  @@index([encuestaFordEstado])
+  @@index([area])
+}
+
+model WhatsappMessage {
+  id           String           @id @default(cuid())
+  casoId       String
+  caso         Caso             @relation(fields: [casoId], references: [id], onDelete: Cascade)
+  direction    MessageDirection
+  content      String           @db.Text
+  templateName String?
+  waMessageId  String?
+  status       String
+  // true = mensaje de agradecimiento/recordatorio automático (Parte A),
+  // para distinguirlo del template inicial en reportes y en el detalle del caso
+  esAgradecimiento Boolean       @default(false)
+  createdAt    DateTime         @default(now())
+
+  analisis SentimentAnalysis[]
+
+  @@index([casoId])
+  @@index([waMessageId])
+}
+
+model SentimentAnalysis {
+  id                   String           @id @default(cuid())
+  casoId               String
+  caso                 Caso             @relation(fields: [casoId], references: [id], onDelete: Cascade)
+  // Nullable: los análisis históricos importados desde Excel no tienen mensaje de WhatsApp asociado
+  messageId            String?
+  message              WhatsappMessage? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  // Nullable: si la IA no devuelve JSON interpretable, el registro queda
+  // sin semáforo y con requiereRevisionManual=true para que Calidad lo clasifique
+  semaforo             Semaforo?
+  // Gravedad del malestar (LEVE/MODERADA/GRAVE), independiente de la confianza.
+  // La confianza sigue guardándose como señal de calidad, pero ya NO decide el RQR.
+  severidad            Severidad?
+  confianza            Float
+  categoriaCausaRaiz   String?
+  resumenIA            String           @db.Text
+  respuestaCrudaIA     Json
+  requiereRQR          Boolean          @default(false)
+  requiereRevisionManual Boolean        @default(false)
+  esHistoricoImportado Boolean          @default(false)
+  analyzedAt           DateTime         @default(now())
+
+  rqr RQR?
+
+  @@index([casoId])
+  @@index([semaforo])
+}
+
+// Mensajes entrantes de WhatsApp que no matchean con ningún Caso
+// (ej: alguien responde desde otro número). Se conservan para revisión manual.
+model MensajeHuerfano {
+  id          String   @id @default(cuid())
+  telefono    String
+  waMessageId String?
+  content     String   @db.Text
+  payload     Json?
+  receivedAt  DateTime @default(now())
+
+  @@index([telefono])
+}
+
+// Formulario formal de Reclamo/Queja/Reporte.
+// Se genera automáticamente ante semáforo AMARILLO/ROJO, o manualmente.
+model RQR {
+  id                  String             @id @default(cuid())
+  // Nullable: un RQR creado a mano (reclamo telefónico/presencial) puede no
+  // tener Caso en el sistema; en ese caso se usan los campos *Manual
+  casoId              String?
+  caso                Caso?              @relation(fields: [casoId], references: [id])
+  nombreClienteManual String?
+  telefonoManual      String?
+  modeloManual        String?
+  sentimentAnalysisId String?            @unique
+  sentimentAnalysis   SentimentAnalysis? @relation(fields: [sentimentAnalysisId], references: [id])
+  // Área del RQR: hereda la del Caso; para los RQR manuales sin caso se elige
+  // al crearlo (un usuario restringido solo puede elegir la suya).
+  area                AreaTrabajo        @default(POSVENTA)
+  numeroRQR           String             @unique // correlativo por año, ej "RQR-2026-0042" (lo genera el servicio)
+  fechaApertura       DateTime           @default(now())
+  canal               String             @default("Posventa")
+  areaOrigen          String // ej "Taller", "Ventas"
+  areaAfectada        String?
+  asesor              String
+  descripcionReclamo  String             @db.Text // pre-completado desde resumen IA, editable
+  tratamientoBitacora String?            @db.Text // lo completa Calidad
+  solucionPropuesta   String?            @db.Text
+  tratamientoDadoPor  String?
+  fechaCierre         DateTime?
+  observaciones       String?            @db.Text
+  responsableCierre   String?
+  causaRaiz           String? // sugerida por IA, confirmable/editable por Calidad
+  estado              EstadoRQR          @default(ABIERTO)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  // Borrado lógico (solo ADMIN); los listados excluyen los eliminados.
+  eliminadoEn    DateTime?
+  eliminadoPorId String?
+  eliminadoPor   Usuario?  @relation("RQREliminadoPor", fields: [eliminadoPorId], references: [id])
+
+  @@index([casoId])
+  @@index([estado])
+  @@index([eliminadoEn])
+  @@index([area])
+}
+
+model Usuario {
+  id           String     @id @default(cuid())
+  nombre       String
+  email        String     @unique
+  passwordHash String
+  rol          RolUsuario @default(CALIDAD)
+  // Área que ve/gestiona. AMBAS = sin restricción. El ADMIN ignora esto (ve todo).
+  area         AreaUsuario @default(AMBAS)
+  activo       Boolean    @default(true)
+  // Parte B: participa del reparto equitativo de tareas de refuerzo.
+  // La admin suele quedar en false (supervisa, no gestiona casos).
+  participaEnRefuerzos Boolean @default(true)
+  createdAt    DateTime   @default(now())
+
+  auditLogs         AuditLog[]
+  casosEliminados   Caso[]          @relation("CasoEliminadoPor")
+  rqrsEliminados    RQR[]           @relation("RQREliminadoPor")
+  uploadsEliminados ExcelUpload[]   @relation("ExcelUploadEliminadoPor")
+  tareasAsignadas   TareaRefuerzo[] @relation("TareaAsignada")
+  supresionesCreadas SupresionContacto[]  @relation("SupresionCreadaPor")
+  aliasCreados       AliasNormalizacion[] @relation("AliasCreadoPor")
+}
+
+// Lista de supresión POR TELÉFONO: quien está acá nunca recibe una campaña de
+// WhatsApp, sin importar cuántos casos nuevos genere (a diferencia del flag
+// whatsappOptOut, que es por caso y se pierde al re-importar el mes siguiente).
+model SupresionContacto {
+  id           String          @id @default(cuid())
+  telefono     String          @unique // E.164 normalizado (+549...)
+  motivo       MotivoSupresion
+  casoOrigenId String? // el caso donde se originó la baja, si aplica
+  casoOrigen   Caso?           @relation("SupresionCasoOrigen", fields: [casoOrigenId], references: [id])
+  creadoPorId  String? // null = supresión automática del sistema (opt-out por WhatsApp)
+  creadoPor    Usuario?        @relation("SupresionCreadaPor", fields: [creadoPorId], references: [id])
+  notas        String?         @db.Text
+  creadoEn     DateTime        @default(now())
+
+  @@index([motivo])
+  @@index([creadoEn])
+}
+
+// Alias declarado por el ADMIN: "C. Campora" (claveOrigen) equivale a "Carla
+// Campora" (valorCanonico). Se aplica en reportes/rankings y en importaciones
+// futuras. claveOrigen es la clave normalizada (sin acentos, minúsculas).
+model AliasNormalizacion {
+  id             String    @id @default(cuid())
+  tipo           TipoAlias
+  claveOrigen    String // clave normalizada del valor variante
+  valorCanonico  String // nombre que se muestra/agrupa
+  codigoCanonico String? // código del asesor canónico, si aplica
+  creadoPorId    String?
+  creadoPor      Usuario?  @relation("AliasCreadoPor", fields: [creadoPorId], references: [id])
+  creadoEn       DateTime  @default(now())
+
+  @@unique([tipo, claveOrigen])
+  @@index([tipo])
+}
+
+// Configuración editable del sistema (clave→valor). Parte A guarda acá los
+// textos de los mensajes automáticos y sus toggles.
+model Configuracion {
+  clave         String   @id
+  valor         String   @db.Text
+  actualizadoEn DateTime @updatedAt
+}
+
+// Parte B: tarea de refuerzo de la encuesta de Ford, gestionada por un HUMANO
+// (el sistema no contacta al cliente; solo organiza y registra).
+model TareaRefuerzo {
+  id             String                  @id @default(cuid())
+  casoId         String
+  caso           Caso                    @relation(fields: [casoId], references: [id], onDelete: Cascade)
+  tipo           TipoTareaRefuerzo
+  asignadoAId    String?
+  asignadoA      Usuario?                @relation("TareaAsignada", fields: [asignadoAId], references: [id])
+  estado         EstadoTareaRefuerzo     @default(PENDIENTE)
+  resultado      ResultadoTareaRefuerzo?
+  notas          String?                 @db.Text
+  creadaEn       DateTime                @default(now())
+  actualizadaEn  DateTime                @updatedAt
+  completadaEn   DateTime?
+  origenUploadId String
+  origenUpload   ExcelUpload             @relation(fields: [origenUploadId], references: [id])
+
+  @@index([asignadoAId, estado])
+  @@index([casoId])
+  @@index([estado])
+}
+
+// Registro de auditoría: quién hizo qué, cuándo y desde dónde.
+// TABLA DE SOLO INSERCIÓN: el sistema no expone ningún endpoint ni método
+// para actualizar o eliminar filas de acá (ni siquiera ADMIN). Una corrección
+// se hace agregando un registro nuevo, nunca editando el original.
+model AuditLog {
+  id        String   @id @default(cuid())
+  // Nullable: acciones del sistema (cron, jobs) no tienen usuario humano
+  usuarioId String?
+  usuario   Usuario? @relation(fields: [usuarioId], references: [id])
+  accion    String // ej "LOGIN", "LOGIN_FALLIDO", "CASO_ELIMINADO", "RQR_CERRADO"
+  entidad   String // ej "Caso", "RQR", "Usuario", "Auth"
+  entidadId String? // id de la entidad afectada, cuando aplica
+  // Estado antes/después u otro contexto. NUNCA contraseñas, tokens ni API keys.
+  detalles  Json?
+  ip        String
+  userAgent String
+  createdAt DateTime @default(now())
+
+  @@index([usuarioId])
+  @@index([accion])
+  @@index([entidad])
+  @@index([ip])
+  @@index([createdAt])
+}
