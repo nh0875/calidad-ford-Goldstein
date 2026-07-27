@@ -20,8 +20,10 @@ router.get("/", asyncHandler(listRqr));
 // Creación manual (reclamo telefónico/presencial; el automático lo genera la IA)
 router.post("/", asyncHandler(createRqr));
 
-// Importación del Excel de formularios RQR (una hoja por RQR), validado
-router.post("/importar", recibirXlsx("archivo"), asyncHandler(importarRqr));
+// Importación del Excel de formularios RQR (una hoja por RQR), validado.
+// Solo ADMIN: es una carga masiva que crea RQR sobre casos de cualquier área,
+// así que no la puede disparar un usuario restringido a una sola área.
+router.post("/importar", requireAdmin, recibirXlsx("archivo"), asyncHandler(importarRqr));
 
 // Formulario Word con el formato del papel (imprimir / mandar a Ford)
 router.get("/:id/word", asyncHandler(exportarRqrWord));

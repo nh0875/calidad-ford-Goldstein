@@ -7,6 +7,7 @@ import {
   misTareas,
   patchTarea,
   reasignarTarea,
+  redistribuirTareas,
   resumenEmpleados,
   vincularTarea,
 } from "../controllers/refuerzo.controller";
@@ -21,6 +22,7 @@ router.get("/mias/pendientes", asyncHandler(misPendientes)); // para el badge de
 router.get("/", requireAdmin, asyncHandler(listarTareas));
 router.get("/resumen-empleados", requireAdmin, asyncHandler(resumenEmpleados));
 router.post("/:id/reasignar", requireAdmin, asyncHandler(reasignarTarea));
+router.post("/redistribuir", requireAdmin, asyncHandler(redistribuirTareas));
 router.post("/vincular", requireAdmin, asyncHandler(vincularTarea));
 
 // Gestión de una tarea (dueño o ADMIN; la autorización se valida en el controller)

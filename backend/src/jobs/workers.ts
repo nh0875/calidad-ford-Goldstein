@@ -1,4 +1,4 @@
-import { EstadoContacto, MessageDirection, Prisma, Semaforo } from "@prisma/client";
+import { EstadoContacto, MessageDirection, Prisma, Semaforo, TipoAviso } from "@prisma/client";
 import { DelayedError, Job, UnrecoverableError, Worker } from "bullmq";
 import { env } from "../config/env";
 import { cupoDisponibleHoy, dentroDeVentana, msHastaProximaApertura } from "../services/ventana-envio.service";
@@ -9,6 +9,18 @@ import { crearRqrAutomatico } from "../services/rqr.service";
 import { analizarRespuesta, esErrorCuota, esErrorReintenable } from "../services/sentiment.service";
 import { WhatsappApiError, sendTemplateMessage, sendTextMessage } from "../services/whatsapp.service";
 import { programarAgradecimiento, reemplazarPlaceholders } from "../services/agradecimiento.service";
+import {
+  analisisPrincipal,
+  consolidarTexto,
+  esSoloCortesia,
+  esSoloEmoji,
+  mensajesSinAnalizar,
+  programarAnalisis,
+  rangoSemaforo,
+  sentimientoSoloEmoji,
+} from "../services/analisis.service";
+import { crearAviso } from "../services/aviso.service";
+import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
 import { CLAVES_CONFIG, obtenerConfiguracion } from "../services/configuracion.service";
 import { QUEUE_NAMES } from "./queues";
 
@@ -37,6 +49,17 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
     return { omitido: true, motivo: `estado ${caso.estadoContacto}` };
   }
 
+  // Revalidar consentimiento AL MOMENTO DE ENVIAR (no solo al encolar): con el
+  // goteo por tope/ventana un job puede quedar demorado horas o días, y en ese
+  // lapso el cliente puede haber pedido la baja (opt-out) o el teléfono puede
+  // haber entrado a la lista de supresión. No se le manda nada.
+  if (caso.whatsappOptOut) {
+    return { omitido: true, motivo: "opt-out" };
+  }
+  if (estaSuprimido(caso.telefonosNorm, await telefonosSuprimidos())) {
+    return { omitido: true, motivo: "teléfono suprimido" };
+  }
+
   // Ventana horaria y tope diario: si estamos fuera de horario o ya se llegó al
   // tope del día, se re-agenda el job para la próxima apertura (NO cuenta como
   // intento ni fallo; el mensaje sale solo cuando abre la ventana / al día
@@ -58,12 +81,15 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
     );
   }
 
-  // Variables del template: nombre, modelo, fecha de salida del servicio
-  const variables = [
-    caso.nombrePropietario || "cliente",
-    caso.modelo || "su vehículo",
-    formatearFecha(caso.fechaSalida),
-  ];
+  // Variables del template, en el orden de los placeholders {{1}}, {{2}}, ...
+  //
+  // La plantilla aprobada hoy en Meta ("contacto_posventa", idioma "es") tiene
+  // el TEXTO FIJO, sin placeholders: por eso va vacío. La cantidad debe coincidir
+  // EXACTAMENTE con la aprobada; mandar de más hace fallar todo envío (error
+  // 132000 de Meta). Si algún día se aprueba una plantilla con variables,
+  // agregarlas acá en el mismo orden, por ejemplo:
+  //   [caso.nombrePropietario || "cliente", caso.modelo || "su vehículo", formatearFecha(caso.fechaSalida)]
+  const variables: string[] = [];
 
   let waMessageId: string;
   let templateName: string;
@@ -112,68 +138,153 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
 
 interface DatosAnalisis {
   casoId: string;
-  messageId: string;
+  // Compat: los jobs viejos encolados antes del cambio traían messageId. Ya no
+  // se usa (se analiza la tanda completa del caso), pero se acepta para que un
+  // job que quedó en Redis durante el despliegue no muera con error.
+  messageId?: string;
+}
+
+/** Marca la tanda como cubierta, para que la próxima corrida no la vuelva a analizar. */
+async function marcarAnalizados(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await prisma.whatsappMessage.updateMany({
+    where: { id: { in: ids } },
+    data: { analizadoEn: new Date() },
+  });
 }
 
 async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
-  const { casoId, messageId } = job.data;
+  const { casoId } = job.data;
 
   const caso = await prisma.caso.findUnique({ where: { id: casoId } });
-  const mensaje = await prisma.whatsappMessage.findUnique({ where: { id: messageId } });
-  if (!caso || !mensaje) {
-    throw new UnrecoverableError("El caso o el mensaje ya no existen en la base.");
+  if (!caso) {
+    throw new UnrecoverableError("El caso ya no existe en la base.");
   }
 
-  // Idempotencia: si este mensaje ya fue analizado (reintento, doble encolado), no repetir
-  const yaAnalizado = await prisma.sentimentAnalysis.findFirst({ where: { messageId } });
-  if (yaAnalizado) {
-    return { omitido: true, motivo: "mensaje ya analizado" };
+  // Se analiza TODA la tanda pendiente del cliente, no un mensaje suelto: el
+  // job se fue reprogramando con cada mensaje nuevo, así que acá ya está la
+  // respuesta completa. Ver analisis.service.ts para el porqué.
+  const mensajes = await mensajesSinAnalizar(casoId);
+  if (mensajes.length === 0) {
+    return { omitido: true, motivo: "no hay mensajes nuevos para analizar" };
   }
+  const idsTanda = mensajes.map((m) => m.id);
+  const ultimoId = idsTanda[idsTanda.length - 1];
+  const texto = consolidarTexto(mensajes);
+
+  // ¿Es la primera vez que clasificamos este caso, o el cliente siguió
+  // escribiendo después? Un seguimiento no suma a las estadísticas: solo puede
+  // ESCALAR el caso si lo que dice es peor que lo que ya sabíamos.
+  const principalPrevio = await analisisPrincipal(casoId);
+  const esSeguimiento = principalPrevio !== null;
+
+  // Cortesía posterior ("gracias", "ok", "👍"): se registra el mensaje pero no
+  // se gasta una llamada a la IA ni se ensucian los números. Solo aplica a los
+  // seguimientos: una primera respuesta corta sí hay que mirarla.
+  // OJO: se evalúa mensaje por mensaje sobre el texto ORIGINAL, no sobre el
+  // consolidado: cuando son varios, consolidarTexto() los numera ("(1) gracias")
+  // y eso no matchearía nunca contra la lista de cortesías.
+  if (esSeguimiento && mensajes.every((m) => esSoloCortesia(m.content))) {
+    await marcarAnalizados(idsTanda);
+    console.log(
+      `[analisis-sentimiento] caso ${caso.numeroOrden}: ${mensajes.length} mensaje(s) de cortesía posteriores, no se analizan`
+    );
+    return { omitido: true, motivo: "cortesía posterior" };
+  }
+
+  // Respuestas de SOLO emojis (típicamente una reacción 👍 a nuestro mensaje):
+  // se clasifican sin IA. Un pulgar arriba es VERDE; un emoji ambiguo/negativo
+  // (👎, 😮) es demasiado poco para clasificar solo y va a revisión manual.
+  const contenidos = mensajes.map((m) => m.content);
+  const soloEmoji = contenidos.every((c) => esSoloEmoji(c));
+  const semaforoEmoji = soloEmoji ? sentimientoSoloEmoji(contenidos) : null;
 
   // El webhook guarda las respuestas no textuales como "[mensaje de tipo audio]" etc.
-  // En esos casos no se llama a la IA: va directo a revisión manual.
-  const esNoTextual = /^\[mensaje de tipo .+\]$/.test(mensaje.content.trim());
-  if (esNoTextual) {
+  const esNoTextual = /^\[mensaje de tipo .+\]$/.test(texto.trim());
+  // Emoji-solo que no se pudo clasificar de forma clara (negativo o ambiguo).
+  const emojiSinClasificar = soloEmoji && semaforoEmoji === null;
+
+  if (esNoTextual || emojiSinClasificar) {
+    const motivo = esNoTextual ? "no-textual" : "reaccion-ambigua";
     await prisma.sentimentAnalysis.create({
       data: {
         casoId,
-        messageId,
+        messageId: ultimoId,
         semaforo: null,
         confianza: 0,
-        resumenIA: "Respuesta no textual, requiere revisión manual",
-        respuestaCrudaIA: { motivo: "no-textual", contenido: mensaje.content } as Prisma.InputJsonValue,
+        resumenIA: esNoTextual
+          ? "Respuesta no textual, requiere revisión manual"
+          : `El cliente reaccionó con ${texto.trim()} (sin sentimiento claro), requiere revisión manual`,
+        respuestaCrudaIA: { motivo, contenido: texto } as Prisma.InputJsonValue,
         requiereRQR: false,
         requiereRevisionManual: true,
+        esSeguimiento, // un audio/emoji posterior no pisa la clasificación que ya tenía el caso
+        mensajesAnalizados: mensajes.length,
       },
     });
-    console.log(`[analisis-sentimiento] caso ${caso.numeroOrden}: respuesta no textual, marcada para revisión manual`);
-    // Edge: respuesta no textual → igual se programa el agradecimiento (variante VERDE/AMARILLO)
+    await marcarAnalizados(idsTanda);
+    console.log(`[analisis-sentimiento] caso ${caso.numeroOrden}: ${motivo}, marcada para revisión manual`);
+    // Edge: respuesta no clasificable → igual se programa el agradecimiento (variante VERDE/AMARILLO)
     await programarAgradecimiento(casoId);
     return { revisionManual: true };
   }
 
   let resultado;
-  try {
-    resultado = await analizarRespuesta(mensaje.content, {
-      nombreCliente: caso.nombrePropietario,
-      modelo: caso.modelo,
-      asesor: caso.asesor,
-      fechaServicio: formatearFecha(caso.fechaSalida),
-      comentarioAsesor: caso.comentarioAsesor,
-    });
-  } catch (err) {
-    if (esErrorReintenable(err)) {
-      throw err; // BullMQ reintenta con backoff
+  if (semaforoEmoji === Semaforo.VERDE) {
+    // Reacción positiva (👍, ❤️, 🙏…): VERDE determinista, sin gastar una llamada
+    // a la IA ni abrir ningún RQR. Se arma un resultado con la misma forma que
+    // el de la IA para que el resto del flujo (escalada, agradecimiento) lo trate igual.
+    resultado = {
+      semaforo: Semaforo.VERDE,
+      severidad: null,
+      confianza: 1,
+      categoriaCausaRaiz: null,
+      resumen: `El cliente reaccionó de forma positiva (${texto.trim()}).`,
+      respuestaCruda: { motivo: "reaccion-emoji-positiva", contenido: texto },
+      requiereRQR: false,
+      requiereRevisionManual: false,
+    };
+    console.log(`[analisis-sentimiento] caso ${caso.numeroOrden}: reacción positiva ${texto.trim()} → VERDE (sin IA)`);
+  } else {
+    try {
+      resultado = await analizarRespuesta(texto, {
+        nombreCliente: caso.nombrePropietario,
+        modelo: caso.modelo,
+        asesor: caso.asesor,
+        fechaServicio: formatearFecha(caso.fechaSalida),
+        comentarioAsesor: caso.comentarioAsesor,
+      });
+    } catch (err) {
+      if (esErrorReintenable(err)) {
+        throw err; // BullMQ reintenta con backoff
+      }
+      throw new UnrecoverableError(
+        `Error definitivo llamando a la IA: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
-    throw new UnrecoverableError(
-      `Error definitivo llamando a la IA: ${err instanceof Error ? err.message : String(err)}`
-    );
   }
+
+  // Escalada: un seguimiento reemplaza a la clasificación vigente SOLO si es
+  // peor (el cliente dijo que estaba todo bien y después se quejó). Al revés no:
+  // un "gracias igual" después de una queja no borra la queja.
+  // Escalada REAL: el análisis principal previo YA estaba clasificado (semáforo
+  // no nulo) y ahora es peor. Si el previo estaba sin clasificar (null), esta es
+  // la primera clasificación de verdad: pasa a principal pero NO es "empeoró".
+  const previoClasificado = principalPrevio?.semaforo != null;
+  const escala =
+    esSeguimiento && previoClasificado && rangoSemaforo(resultado.semaforo) > rangoSemaforo(principalPrevio!.semaforo);
+  // Si el previo no estaba clasificado y este sí, igual debe pasar a ser el
+  // principal (que la clasificación real cuente en reportes).
+  const reemplazaPrincipalSinClasificar =
+    esSeguimiento && !previoClasificado && resultado.semaforo != null;
+  // Este análisis pasa a ser el principal si escaló o si reemplaza a uno sin clasificar.
+  const pasaAPrincipal = escala || reemplazaPrincipalSinClasificar;
+  const quedaComoSeguimiento = esSeguimiento && !pasaAPrincipal;
 
   const analisis = await prisma.sentimentAnalysis.create({
     data: {
       casoId,
-      messageId,
+      messageId: ultimoId,
       semaforo: resultado.semaforo,
       severidad: resultado.severidad,
       confianza: resultado.confianza,
@@ -182,28 +293,86 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
       respuestaCrudaIA: (resultado.respuestaCruda ?? {}) as Prisma.InputJsonValue,
       requiereRQR: resultado.requiereRQR,
       requiereRevisionManual: resultado.requiereRevisionManual,
+      esSeguimiento: quedaComoSeguimiento,
+      mensajesAnalizados: mensajes.length,
     },
   });
+  await marcarAnalizados(idsTanda);
+
+  // Invariante: un solo análisis principal por caso. Si este pasa a principal
+  // (escaló o reemplaza a uno sin clasificar), el anterior pasa a seguimiento.
+  if (pasaAPrincipal) {
+    await prisma.sentimentAnalysis.update({
+      where: { id: principalPrevio!.id },
+      data: { esSeguimiento: true },
+    });
+  }
+  // El aviso "empeoró" SOLO cuando fue una escalada real (previo ya clasificado).
+  if (escala) {
+    await crearAviso({
+      tipo: TipoAviso.ESCALADO,
+      area: caso.area,
+      casoId: caso.id,
+      titulo: `${caso.nombrePropietario} empeoró: ${principalPrevio!.semaforo ?? "sin clasificar"} → ${resultado.semaforo ?? "sin clasificar"}`,
+      detalle:
+        `El cliente ya había respondido y el caso estaba clasificado como ${principalPrevio!.semaforo ?? "sin clasificar"}. ` +
+        `Escribió de nuevo y ahora la clasificación es ${resultado.semaforo ?? "sin clasificar"}. ` +
+        `Resumen: ${resultado.resumen}`,
+    });
+    console.log(
+      `[analisis-sentimiento] caso ${caso.numeroOrden}: ESCALÓ de ${principalPrevio!.semaforo} a ${resultado.semaforo}`
+    );
+  }
 
   let numeroRQR: string | null = null;
   if (resultado.requiereRQR) {
-    const { rqr, accion } = await crearRqrAutomatico({ caso, analisis, textoCliente: mensaje.content });
+    const { rqr, accion } = await crearRqrAutomatico({ caso, analisis, textoCliente: texto });
     numeroRQR = rqr.numeroRQR;
     console.log(
       accion === "creado"
         ? `[analisis-sentimiento] caso ${caso.numeroOrden}: semáforo ${resultado.semaforo} → se abrió automáticamente el ${numeroRQR}`
         : `[analisis-sentimiento] caso ${caso.numeroOrden}: ya tenía un RQR abierto (${numeroRQR}) → se agregó la nueva respuesta a su bitácora`
     );
+    // Cartel rojo en pantalla: alguien tiene que agarrar este RQR.
+    await crearAviso({
+      tipo: TipoAviso.RQR_ABIERTO,
+      area: caso.area,
+      casoId: caso.id,
+      rqrId: rqr.id,
+      titulo:
+        accion === "creado"
+          ? `${rqr.numeroRQR} — se abrió un RQR de ${caso.nombrePropietario}`
+          : `${rqr.numeroRQR} — ${caso.nombrePropietario} volvió a reclamar`,
+      detalle: `${resultado.resumen} (asesor: ${caso.asesor}, sucursal: ${caso.sucursal})`,
+    });
   } else {
     console.log(
-      `[analisis-sentimiento] caso ${caso.numeroOrden}: semáforo ${resultado.semaforo ?? "SIN CLASIFICAR"} (confianza ${resultado.confianza})`
+      `[analisis-sentimiento] caso ${caso.numeroOrden}: semáforo ${resultado.semaforo ?? "SIN CLASIFICAR"} (confianza ${resultado.confianza}, ${mensajes.length} mensaje(s))`
     );
+    // Amarillo sin RQR: no amerita reclamo formal, pero conviene que alguien lo
+    // mire. Solo si es la clasificación que cuenta (no un seguimiento menor).
+    if (resultado.semaforo === Semaforo.AMARILLO && !quedaComoSeguimiento) {
+      await crearAviso({
+        tipo: TipoAviso.AMARILLO_SIN_RQR,
+        area: caso.area,
+        casoId: caso.id,
+        titulo: `${caso.nombrePropietario} quedó en amarillo (sin RQR)`,
+        detalle: `${resultado.resumen} (asesor: ${caso.asesor}, sucursal: ${caso.sucursal})`,
+      });
+    }
   }
 
   // Parte A: programar el agradecimiento (respeta opt-out, una-sola-vez, etc.)
   await programarAgradecimiento(casoId);
 
-  return { semaforo: resultado.semaforo, requiereRQR: resultado.requiereRQR, numeroRQR };
+  return {
+    semaforo: resultado.semaforo,
+    requiereRQR: resultado.requiereRQR,
+    numeroRQR,
+    mensajesConsolidados: mensajes.length,
+    esSeguimiento: quedaComoSeguimiento,
+    escalo: escala,
+  };
 }
 
 // ---------- Worker de agradecimiento (Parte A) ----------
@@ -218,6 +387,11 @@ async function procesarAgradecimiento(job: Job<DatosAgradecimiento>) {
   if (!caso || caso.eliminadoEn) return { omitido: "caso inexistente o eliminado" };
   if (caso.agradecimientoEnviadoEn) return { omitido: "ya se envió" }; // una sola vez
   if (caso.whatsappOptOut) return { omitido: "opt-out" }; // el opt-out gana
+  // La supresión global también bloquea el agradecimiento (un teléfono dado de
+  // baja no recibe nada, aunque el flag por-caso esté en false por ser un caso nuevo).
+  if (estaSuprimido(caso.telefonosNorm, await telefonosSuprimidos())) {
+    return { omitido: "teléfono suprimido" };
+  }
 
   // Semáforo del último análisis (null = no textual / sin clasificar → variante VERDE/AMARILLO)
   const analisis = await prisma.sentimentAnalysis.findFirst({
@@ -261,22 +435,33 @@ async function procesarAgradecimiento(job: Job<DatosAgradecimiento>) {
     throw err; // rate limit / 5xx / timeout → BullMQ reintenta con backoff
   }
 
-  await prisma.$transaction([
-    prisma.whatsappMessage.create({
-      data: {
-        casoId: caso.id,
-        direction: MessageDirection.SALIENTE,
-        content: mensaje,
-        waMessageId,
-        status: "enviado",
-        esAgradecimiento: true, // lo distingue del template inicial
-      },
-    }),
-    prisma.caso.update({
-      where: { id: caso.id },
-      data: { agradecimientoEnviadoEn: new Date() },
-    }),
-  ]);
+  // El mensaje YA salió: si la escritura en base falla, NO se debe reintentar
+  // el job (el reintento reenviaría el agradecimiento al cliente). Se lanza
+  // UnrecoverableError, igual que el worker de template.
+  try {
+    await prisma.$transaction([
+      prisma.whatsappMessage.create({
+        data: {
+          casoId: caso.id,
+          direction: MessageDirection.SALIENTE,
+          content: mensaje,
+          waMessageId,
+          status: "enviado",
+          esAgradecimiento: true, // lo distingue del template inicial
+        },
+      }),
+      prisma.caso.update({
+        where: { id: caso.id },
+        data: { agradecimientoEnviadoEn: new Date() },
+      }),
+    ]);
+  } catch (err) {
+    throw new UnrecoverableError(
+      `El agradecimiento se envió (id ${waMessageId}) pero no se pudo registrar en la base: ${
+        err instanceof Error ? err.message.slice(0, 300) : String(err)
+      }`
+    );
+  }
 
   console.log(`[agradecimiento] enviado a caso ${caso.numeroOrden} (semáforo ${semaforo ?? "s/c"})`);
   return { enviado: true, semaforo };
@@ -337,6 +522,20 @@ export function startWorkers() {
       },
     }
   );
+
+  // Race: un mensaje que llega MIENTRAS el análisis está activo no se puede
+  // re-encolar (BullMQ deduplica el add por jobId mientras el job está tomado).
+  // Al terminar, con el lock ya liberado, se re-chequea: si quedaron mensajes
+  // sin analizar, se reprograma. Así ningún mensaje queda sin clasificar.
+  analisisWorker.on("completed", async (job) => {
+    const casoId = job?.data?.casoId;
+    if (!casoId) return;
+    try {
+      if ((await mensajesSinAnalizar(casoId)).length > 0) await programarAnalisis(casoId);
+    } catch (err) {
+      console.error(`[analisis-sentimiento] no se pudo reprogramar tras completar el caso ${casoId}:`, err);
+    }
+  });
 
   const agradecimientoWorker = new Worker<DatosAgradecimiento>(
     QUEUE_NAMES.AGRADECIMIENTO,

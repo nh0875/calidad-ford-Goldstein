@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { asyncHandler } from "../middlewares/asyncHandler";
 import { requireAuth } from "../middlewares/auth";
 import { rateLimitGlobal } from "../middlewares/rateLimit";
 import healthRoutes from "./health.routes";
@@ -20,6 +21,7 @@ import configuracionRoutes from "./configuracion.routes";
 import refuerzoRoutes from "./refuerzo.routes";
 import supresionRoutes from "./supresion.routes";
 import normalizacionRoutes from "./normalizacion.routes";
+import avisoRoutes from "./aviso.routes";
 
 const router = Router();
 
@@ -38,7 +40,10 @@ router.use(rateLimitGlobal);
 router.use("/auth", authRoutes);
 
 // ---------- A partir de acá, todo requiere sesión iniciada ----------
-router.use(requireAuth);
+// requireAuth es async (consulta denylist + base): se envuelve en asyncHandler
+// para que un fallo de Redis/DB se derive al manejador de errores y no quede
+// como una promesa rechazada sin capturar (que podría voltear el proceso).
+router.use(asyncHandler(requireAuth));
 
 router.use("/uploads", uploadRoutes);
 router.use("/casos", casoRoutes);
@@ -56,5 +61,6 @@ router.use("/configuracion", configuracionRoutes); // textos de mensajes automá
 router.use("/refuerzos", refuerzoRoutes); // tareas de refuerzo de encuesta Ford
 router.use("/supresion", supresionRoutes); // lista de supresión por teléfono (solo ADMIN)
 router.use("/normalizacion", normalizacionRoutes); // normalización de asesores/sucursales (solo ADMIN)
+router.use("/avisos", avisoRoutes); // cartel rojo en pantalla (RQR abierto, escaladas, amarillos)
 
 export default router;

@@ -94,9 +94,17 @@ cd frontend && npm install && npm run dev   # proxy /api -> localhost:3000 ya co
 
 La pantalla `/upload` implementa la migración desde el Excel real en 3 pasos:
 
-1. **Archivo y sucursal**: sucursal (no viene en el Excel) + año (se combina con el nombre de cada hoja: "ENERO" + 2026 → período `2026-01`) + el .xlsx.
-2. **Hojas y columnas**: el backend detecta cada hoja (mes), ubica la fila de encabezados buscándola en las primeras 10 filas, separa las filas de resumen/KPIs previas (ORDENES, SATISFECHOS, RQR, NC, INTERNOS, TASA RESPUESTA) y las muestra para validar la lectura. El mapeo columna→campo se sugiere automáticamente, es editable por hoja, se puede aplicar a todas y se recuerda en el navegador (localStorage) para la próxima carga.
-3. **Resultado**: casos insertados, duplicados omitidos (misma orden + sucursal + período), filas con error, e históricos clasificados con desglose por semáforo.
+1. **Archivo y sucursal**: sucursal (no viene en el Excel) + año + el archivo Excel. Acepta **`.xlsx` y `.xls`** (el reporte real se descarga como `.xls` clásico OLE2): se sube tal cual, sin borrarle columnas ni convertirlo.
+2. **Hojas y columnas**: el backend detecta cada hoja, ubica la fila de encabezados buscándola en las primeras 10 filas, separa las filas de resumen/KPIs previas (ORDENES, SATISFECHOS, RQR, NC, INTERNOS, TASA RESPUESTA) y las muestra para validar la lectura. El mapeo columna→campo se sugiere automáticamente, es editable por hoja, se puede aplicar a todas y se recuerda en el navegador (localStorage) para la próxima carga.
+3. **Resultado**: casos insertados, duplicados omitidos, **órdenes repetidas rechazadas y listadas**, filas con error, e históricos clasificados con desglose por semáforo.
+
+El formato real del reporte de Contacto Posventa (descarga directa, hoja única "Normal") trae ~40 columnas; el sistema mapea las que necesita e **ignora el resto** (DN, ID Cita, Motorización, Otro Teléfono, Conductor, Status, usuarios/fechas de auditoría, etc.). Detalles a tener en cuenta:
+
+- **`.xls` clásico**: se valida por firma de contenido (OLE2 `D0CF11E0…`, además del ZIP `PK` del `.xlsx`), no solo por extensión.
+- **Número de orden**: la columna real es `Orden de servicio` → `numeroOrden`. Las filas "Concluido sin OR" vienen sin orden y quedan como `S/N`. Ver [Órdenes únicas](#órdenes-únicas).
+- **Período**: si el nombre de la hoja no dice el mes (la hoja se llama "Normal"), se deriva del **mes más frecuente** de las fechas de programación (ej. `2026-07`). La usuaria no tiene que tipearlo.
+- **Estado**: la columna `Status` del reporte (`Concluido` / `Concluido sin OR`) NO es el estado del sistema y se ignora; todos los casos entran **PENDIENTE**, listos para contactar.
+- **Columnas sin destino**: `Servicio` (tipo de servicio) y `Fecha Creación de Agenda` no tienen campo en el modelo y hoy se ignoran; `Comentario del Asesor` sí se guarda (da contexto a la IA). La columna de consentimiento `Acepto el envío de la encuesta` tampoco se usa todavía (ver nota al pie del módulo).
 
 Reglas de importación:
 
@@ -107,6 +115,26 @@ Reglas de importación:
 
 Endpoints: `POST /api/uploads` (preview, no persiste), `POST /api/uploads/confirm`, `GET /api/uploads` (historial con KPIs del archivo original), `GET /api/casos` (paginado; filtros: sucursal, asesor, estadoContacto, origenAgendamiento, periodo, fechaDesde/fechaHasta).
 
+### Alta manual de un caso
+
+Botón **"Agregar caso"** en `/casos` (`POST /api/casos`, disponible para ADMIN y CALIDAD), para el cliente que no vino en el Excel: llamó por teléfono, se traspapeló, entró fuera de plazo.
+
+- **Misma normalización que la importación**: el asesor se parte en nombre + código (`"CARLA CAMPORA - 140445"` → `Carla Campora` / `140445`), la sucursal se lleva a Title Case, y se guardan los valores originales en `asesorRaw`/`sucursalRaw`. Los desplegables ofrecen los asesores y sucursales que ya existen (con la opción de escribir uno nuevo), así el ranking no se parte en dos por una tilde.
+- **Teléfono obligatorio y validado**: tiene que normalizar a E.164 (`telefonosNorm`), si no se rechaza — un caso sin número que se pueda marcar no sirve para nada.
+- **Antiduplicados**: rechaza (409) si ya existe un caso activo con **el mismo número de orden** (mensaje que nombra el caso existente), o la misma patente en la misma fecha. Ver [Órdenes únicas](#órdenes-únicas).
+- **Área**: un usuario restringido a VENTAS o POSVENTA solo crea en la suya (el backend la fuerza, ignorando lo que mande el navegador); ADMIN y área AMBAS eligen.
+- **Carga sintética**: como todo caso pertenece a una carga (`uploadId` es NOT NULL), se reusa o crea un `ExcelUpload` llamado `Carga manual` por sucursal + período, así los reportes por período siguen funcionando sin migrar el esquema.
+- El caso nace **PENDIENTE**: no se le manda nada hasta que se lo seleccione y se confirme el envío. Queda registrado en auditoría como `CASO_CREADO_MANUAL`.
+
+### Órdenes únicas
+
+Un número de orden identifica un servicio: **no puede repetirse**. La regla vale para las dos vías de carga y para toda la base (no por sucursal ni por mes).
+
+- **Carga manual**: si el número de orden ya existe en un caso activo, la creación se rechaza con 409 y un mensaje que nombra el caso que ya lo tiene ("Ya hay un caso con el número de orden 123456 (Vanina, Mendoza)…").
+- **Carga masiva (Excel)**: las filas cuyo número de orden ya existe —en la base o repetido dentro del mismo archivo— **no se cargan**, y la pantalla de importación las lista aparte ("Órdenes repetidas (no cargadas): …") además de contarlas. El resto del archivo se importa normalmente.
+- **Excepción `S/N`**: los casos sin número de orden (manual sin orden, o meses del Excel viejo sin columna ORDEN) usan `numeroOrden = "S/N"`; puede haber varios. A esas filas se les aplica el criterio patente+fecha / nombre+fecha, acotado a sucursal+período.
+- **Garantía dura**: la migración `20260724210000` crea un índice único **parcial** `Caso_numeroOrden_activo_key` sobre `numeroOrden` `WHERE eliminadoEn IS NULL AND numeroOrden <> 'S/N' AND <> ''`. Aunque dos altas simultáneas esquiven el chequeo de la aplicación, la base rechaza la segunda (el controller lo traduce a un 409 claro). Un caso **dado de baja** libera su orden: se puede volver a cargar.
+
 ## Envío y recepción de WhatsApp (Meta Cloud API)
 
 La pantalla `/casos` lista los casos con filtros y permite disparar campañas:
@@ -115,7 +143,53 @@ La pantalla `/casos` lista los casos con filtros y permite disparar campañas:
 - **Flujo**: preview (`GET /api/campanas/preview`, solo cuenta) → confirmación → envío (`POST /api/campanas/enviar`, encola en `whatsapp-envio` con delay entre mensajes por rate limit) → progreso (`GET /api/campanas/progreso`, polling).
 - **Worker**: envía el template (variables: nombre, modelo, fecha de salida) al `whatsapp` del caso (o `celular` como respaldo), guarda el `WhatsappMessage` saliente y pasa el caso a ENVIADO. Reintenta hasta 3 veces con backoff exponencial ante rate limit/timeout/5xx; ante número inválido (ej. código 131026) marca ERROR directo con el motivo en `Caso.ultimoErrorEnvio`.
 - **Webhook** `GET|POST /api/webhooks/whatsapp`: verificación inicial de Meta (`hub.challenge` + `META_WEBHOOK_VERIFY_TOKEN`), respuestas entrantes (asocia por teléfono contra `whatsapp` y `celular`, pasa el caso a RESPONDIDO y encola el análisis de sentimiento), acuses de entrega/lectura, y mensajes de números desconocidos guardados en `MensajeHuerfano` para revisión manual.
+### Respuestas partidas en varios mensajes
+
+Un cliente rara vez contesta con un solo mensaje. Lo habitual es `"Hola"` / `"la atención fue muy buena"` / `"pero tardaron 3 días de más"`. Analizando mensaje por mensaje eso daba **tres** clasificaciones: un saludo sin sentido, un VERDE y un AMARILLO. Consecuencias: tres llamadas a la IA, el mismo cliente contando como tres respuestas en el reporte y en el ranking del asesor, y el último fragmento decidiendo el semáforo del caso.
+
+- **Ventana de consolidación** (`DELAY_ANALISIS_MS`, 90 s por defecto): el análisis no se dispara por mensaje. Cada mensaje nuevo **reprograma** el mismo job (`analisis-<casoId>`), así que corre recién cuando el cliente estuvo ese tiempo sin escribir, y analiza **toda la tanda junta en una sola llamada**. `WhatsappMessage.analizadoEn` marca los mensajes ya cubiertos; `SentimentAnalysis.mensajesAnalizados` deja registro de cuántos se consolidaron.
+- **Un caso, una clasificación**: `SentimentAnalysis.esSeguimiento` distingue la clasificación que cuenta (`false`) de lo que el cliente escribió después (`true`). Reportes, dashboard, rankings, listados y revisión manual filtran por `esSeguimiento: false`, así que un cliente conversador vale por uno.
+- **Solo se puede empeorar**: si una respuesta posterior es peor que la vigente (VERDE → AMARILLO → ROJO), **escala**: pasa a ser la clasificación del caso, la anterior queda como seguimiento y se genera un aviso. Al revés no: un `"gracias igual"` o un `"al final lo solucionaron"` después de una queja **no** borra la queja. Invariante: como máximo un análisis principal por caso.
+- **Cortesía posterior**: `"ok"`, `"muchas gracias"`, `"👍"` que llegan *después* de que el caso ya tiene su clasificación se registran pero no se analizan — no gastan cuota de IA ni ensucian los números. La lista es deliberadamente corta y sin palabras con carga (`bien`, `muy`, `excelente`, `perfecto` **no** están): `"todo bien"` o `"ok pero cuándo me devuelven el auto"` sí se analizan. La **primera** respuesta del cliente siempre se analiza, aunque sea corta.
+- La migración `20260724180000` hace el backfill: los casos que ya tenían varios análisis conservan como principal **el más grave** (a igual gravedad, el más reciente) y el resto pasa a seguimiento, así los números históricos dejan de contar dos veces al mismo cliente.
+
+### Reacciones y respuestas de solo emoji
+
+Un cliente que reacciona con 👍 (reacción de WhatsApp) o contesta solo con emojis no manda texto que la IA pueda leer bien: `type: "reaction"` llegaba como `[mensaje de tipo reaction]` y terminaba en revisión manual, sin semáforo.
+
+- El webhook ahora reconoce `type: "reaction"` y toma el emoji como contenido (`webhook.controller.ts`). Quitar una reacción (emoji vacío) se ignora: no crea mensaje ni pasa el caso a RESPONDIDO.
+- Las respuestas de **solo emojis** se clasifican **sin IA**, de forma determinista (`sentimientoSoloEmoji`): al menos un emoji positivo y ninguno negativo → **VERDE** directo (sin RQR, confianza 1). Un pulgar arriba es verde, siempre.
+- Un emoji **negativo o ambiguo** suelto (👎, 😮, 😢) es demasiado poco para clasificar o abrir un reclamo: va a **revisión manual** para que lo mire una persona. Nunca abre un ROJO automático.
+- Si la respuesta mezcla emoji y texto (`"gracias 👍"`, `"todo bien 🙂"`), no es "solo emoji" y la lee la IA normalmente.
+
+### Casos para revisar a mano (`/revision-manual`)
+
+Cuando la IA no puede clasificar sola una respuesta (audio/imagen, reacción ambigua, o una primera respuesta demasiado corta), el caso queda marcado `requiereRevisionManual`. La pantalla **Revisión manual** (en el menú, con badge de cantidad; también se llega desde la tarjeta "Revisión manual" del reporte y desde el dashboard) lista esos casos con lo que efectivamente dijo el cliente, y permite fijar el semáforo a mano con un clic. Al clasificar, el caso sale de la bandeja y su semáforo cuenta en los reportes.
+
+- **Por área**: un usuario restringido solo ve y corrige los de su área (el badge, la bandeja y el PATCH la respetan; corregir uno ajeno da 403). ADMIN y área AMBAS ven todo.
+- Endpoints: `GET /api/sentiment-analysis/revision-manual` (bandeja), `GET /api/sentiment-analysis/revision-manual/pendientes` (contador del badge), `PATCH /api/sentiment-analysis/:id` (fijar semáforo / marcar resuelto).
+
+### Reparto de refuerzos Ford por área y provincia
+
+Las tareas de refuerzo (seguimiento de la encuesta Ford) se reparten **solas** al importar el export de Ford, de forma equilibrada (al que menos carga tiene) y **sin mezclar**:
+
+- **Área**: una tarea de un caso de VENTAS solo se asigna a usuarios de VENTAS o AMBAS; una de POSVENTA, a POSVENTA o AMBAS. El área del caso se toma del contacto importado; el export de Ford trae una columna `Tipo de encuesta` donde POSVENTA aparece como **"Servicio"** — el sistema la mapea (`clasificarAreaFord`: `Servicio`→POSVENTA, `ventas`/`venta`/`sales`→VENTAS) y la usa para detectar cruces incorrectos.
+- **Provincia (sucursal)**: cada usuario tiene una **provincia** (`Usuario.sucursal`: "San Juan", "Mendoza", … o *vacío = todas*). Una tarea de un caso de Mendoza solo se asigna a alguien que atienda Mendoza (o todas). Se elige al crear/editar el usuario en **Usuarios**; el ADMIN no está limitado.
+- **Reasignación**: el reparto automático se puede corregir. Botón **"Redistribuir sus tareas"** (empleado no disponible → sus tareas abiertas van al resto, respetando área+provincia) y **"Mover a…"** por tarea. El backend rechaza mover una tarea a alguien de otra área o provincia.
+- La elegibilidad la controla `participaEnRefuerzos` (no el rol): un ADMIN que también gestiona casos recibe tareas si participa; para que solo supervise, se pone en false.
+
+### Avisos en pantalla (cartel rojo)
+
+Un RQR que se abre solo, de madrugada, antes lo veía únicamente quien se acordara de entrar a la pantalla de RQR. Ahora se crea un **aviso** y la app lo muestra como cartel rojo **arriba de todo, en todas las pantallas** (`CartelAvisos` en el layout, refresco cada 60 s). No se manda ningún mail: el aviso vive adentro del sistema, que es donde se trabaja.
+
+- **Cuándo se crea**: se abrió (o se reabrió) un RQR automático, un cliente **escaló** tras haber respondido bien, o quedó un **amarillo sin RQR** que conviene mirar.
+- **Cuándo se apaga**: cuando alguien lo marca visto (individual o "marcar todos"), o **solo** cuando el RQR asociado se cierra. Un caso borrado se lleva sus avisos.
+- **Por área**: un usuario restringido a VENTAS o POSVENTA solo ve los de la suya, y no puede apagar uno ajeno ni mandando el id a mano (404). ADMIN y área AMBAS ven todo.
+- **Sin repetidos**: si el mismo caso vuelve a disparar el mismo tipo de aviso, se refresca el existente en vez de apilar carteles.
+- Endpoints: `GET /api/avisos`, `POST /api/avisos/:id/visto`, `POST /api/avisos/vistos`.
+
 - **Cron diario** (BullMQ repeatable, 08:00 AR): los casos ENVIADO sin respuesta hace más de `DIAS_SIN_RESPUESTA_PARA_NC` días pasan a NO_RESPONDIO. Corrida manual: `docker compose exec backend npx tsx src/scripts/marcar-no-respondio.ts`.
+- **Reintento de un envío fallido** (`POST /api/campanas/reintentar/:casoId` + botón **"Reintentar"** en la fila del caso): un envío que falla deja el caso en ERROR, y las campañas solo alcanzan casos PENDIENTE — sin esto el caso quedaba varado y la única salida era tocar la base a mano. El reintento vuelve a ponerlo PENDIENTE y encola solo ese caso, respetando las mismas reglas (área, baja del cliente, lista de supresión, ventana horaria y tope diario). Además, `encolarCampana` borra de Redis el job **ya terminado** del caso antes de reencolar: el `jobId` es fijo por caso y BullMQ conserva los fallidos 24 hs, así que sin esa limpieza el reintento se descartaba en silencio (la API decía "encolado" y no salía nada). Los jobs que siguen esperando o enviándose no se tocan, para que el dedupe siga evitando dobles envíos por doble click.
 
 Para probar sin credenciales reales hay un mock de la Graph API: `docker compose exec -d backend npx tsx src/scripts/mock-meta.ts` con `META_GRAPH_BASE_URL=http://127.0.0.1:4999/v20.0` (los números terminados en 4001 simulan "número inválido"). Con credenciales reales, configurar en Meta la URL del webhook `https://<dominio>/api/webhooks/whatsapp` con el mismo `META_WEBHOOK_VERIFY_TOKEN` del `.env`.
 

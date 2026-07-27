@@ -28,9 +28,11 @@ export function normalizarTelefonoAR(valor: unknown): string | null {
     }
   }
 
-  // Un número argentino sin prefijos tiene 10 dígitos (área + abonado).
-  // Aceptamos 8-10 por si falta el código de área en cargas viejas.
-  if (digitos.length < 8 || digitos.length > 11) return null;
+  // Un móvil argentino sin prefijos tiene EXACTAMENTE 10 dígitos (área + abonado).
+  // Se exige esa longitud: un número más corto (le falta el código de área) es
+  // inservible para WhatsApp —no entrega, o peor, matchea a otra persona— así
+  // que conviene rechazarlo en la carga y avisar, no crear un caso incontactable.
+  if (digitos.length !== 10) return null;
 
   return `+549${digitos}`;
 }

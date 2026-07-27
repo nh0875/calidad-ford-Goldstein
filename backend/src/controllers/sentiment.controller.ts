@@ -1,9 +1,10 @@
 import { Request, Response } from "express";
-import { Prisma, Semaforo } from "@prisma/client";
+import { AreaTrabajo, Prisma, Semaforo } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { CATEGORIAS_CAUSA_RAIZ } from "../services/sentiment.service";
 import { ACCIONES, auditar } from "../services/audit.service";
+import { parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
 
 const INCLUDE_CASO = {
   caso: {
@@ -14,6 +15,9 @@ const INCLUDE_CASO = {
       modelo: true,
       asesor: true,
       sucursal: true,
+      area: true,
+      whatsapp: true,
+      celular: true,
       tieneRqrAbierto: true,
     },
   },
@@ -44,16 +48,23 @@ const listQuerySchema = z.object({
     .optional(),
 });
 
-function construirWhere(q: z.infer<typeof listQuerySchema>): Prisma.SentimentAnalysisWhereInput {
+function construirWhere(
+  q: z.infer<typeof listQuerySchema>,
+  areaWhere: { area?: AreaTrabajo } = {}
+): Prisma.SentimentAnalysisWhereInput {
   return {
+    // Un caso = una clasificación. Los análisis de seguimiento (mensajes que el
+    // cliente mandó después) no se listan como si fueran casos distintos.
+    esSeguimiento: false,
     ...(q.semaforo ? { semaforo: q.semaforo } : {}),
     ...(q.categoriaCausaRaiz ? { categoriaCausaRaiz: q.categoriaCausaRaiz } : {}),
     ...(q.requiereRevisionManual !== undefined
       ? { requiereRevisionManual: q.requiereRevisionManual }
       : {}),
-    // Excluye análisis de casos borrados lógicamente
+    // Excluye análisis de casos borrados lógicamente + restricción por área
     caso: {
       eliminadoEn: null,
+      ...areaWhere,
       ...(q.sucursal ? { sucursal: { equals: q.sucursal, mode: "insensitive" } } : {}),
       ...(q.asesor ? { asesor: { contains: q.asesor, mode: "insensitive" } } : {}),
     },
@@ -76,7 +87,7 @@ export async function listSentimentAnalysis(req: Request, res: Response) {
     });
   }
   const q = parsed.data;
-  const where = construirWhere(q);
+  const where = construirWhere(q, whereArea(req.usuario!, parsearAreaQuery(req.query.area)));
 
   const [total, data] = await Promise.all([
     prisma.sentimentAnalysis.count({ where }),
@@ -101,15 +112,39 @@ export async function listSentimentAnalysis(req: Request, res: Response) {
 }
 
 // ---------- GET /api/sentiment-analysis/revision-manual ----------
+// Bandeja de casos que la IA no pudo clasificar sola: respuestas no textuales
+// (audio, imagen), reacciones ambiguas, o primeras respuestas demasiado cortas.
+// Es la lista de "qué tengo que mirar a mano".
 
-export async function listRevisionManual(_req: Request, res: Response) {
+export async function listRevisionManual(req: Request, res: Response) {
+  // Restricción por área: un usuario de VENTAS no ve la bandeja de POSVENTA.
+  const areaWhere = whereArea(req.usuario!, parsearAreaQuery(req.query.area));
   const data = await prisma.sentimentAnalysis.findMany({
-    where: { requiereRevisionManual: true, caso: { eliminadoEn: null } },
+    where: {
+      esSeguimiento: false,
+      requiereRevisionManual: true,
+      caso: { eliminadoEn: null, ...areaWhere },
+    },
     orderBy: { analyzedAt: "asc" }, // los más viejos primero: son los que más esperan
     take: 200,
     include: INCLUDE_CASO,
   });
   res.json({ data, total: data.length });
+}
+
+// ---------- GET /api/sentiment-analysis/revision-manual/pendientes ----------
+// Solo el número, para el badge del menú (barato: se consulta al navegar).
+
+export async function contarRevisionManual(req: Request, res: Response) {
+  const areaWhere = whereArea(req.usuario!, parsearAreaQuery(req.query.area));
+  const pendientes = await prisma.sentimentAnalysis.count({
+    where: {
+      esSeguimiento: false,
+      requiereRevisionManual: true,
+      caso: { eliminadoEn: null, ...areaWhere },
+    },
+  });
+  res.json({ pendientes });
 }
 
 // ---------- PATCH /api/sentiment-analysis/:id ----------
@@ -133,9 +168,16 @@ export async function patchSentimentAnalysis(req: Request, res: Response) {
     });
   }
 
-  const existente = await prisma.sentimentAnalysis.findUnique({ where: { id: req.params.id } });
+  const existente = await prisma.sentimentAnalysis.findUnique({
+    where: { id: req.params.id },
+    include: { caso: { select: { area: true } } },
+  });
   if (!existente) {
     return res.status(404).json({ message: "No se encontró ese análisis." });
+  }
+  // Un usuario restringido no puede corregir la clasificación de otra área.
+  if (existente.caso && !puedeAcceder(req.usuario!, existente.caso.area)) {
+    return res.status(403).json({ message: "Ese caso es de otra área: no lo podés gestionar." });
   }
 
   const cambios = parsed.data;

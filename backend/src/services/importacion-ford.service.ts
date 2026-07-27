@@ -28,6 +28,7 @@ const SELECT_CASO = {
   whatsappOptOut: true,
   eliminadoEn: true,
   area: true,
+  sucursal: true,
 } as const;
 
 type CasoMatch = {
@@ -35,6 +36,7 @@ type CasoMatch = {
   numeroOrden: string;
   nombrePropietario: string;
   area: AreaTrabajo;
+  sucursal: string; // provincia, para repartir la tarea a alguien de esa sucursal
   criterio: "orden" | "vin" | "telefono" | "email";
 };
 
@@ -49,21 +51,25 @@ async function buscarCaso(campos: Partial<Record<CampoFord, string>>): Promise<C
   const buscar = (where: object) =>
     prisma.caso.findFirst({ where: { ...where, eliminadoEn: null }, orderBy: { createdAt: "desc" }, select: SELECT_CASO });
 
+  const armar = (c: { id: string; numeroOrden: string; nombrePropietario: string; area: AreaTrabajo; sucursal: string }, criterio: CasoMatch["criterio"]): CasoMatch => ({
+    id: c.id, numeroOrden: c.numeroOrden, nombrePropietario: c.nombrePropietario, area: c.area, sucursal: c.sucursal, criterio,
+  });
+
   if (orden) {
     const c = await buscar({ numeroOrden: orden });
-    if (c) return { id: c.id, numeroOrden: c.numeroOrden, nombrePropietario: c.nombrePropietario, area: c.area, criterio: "orden" };
+    if (c) return armar(c, "orden");
   }
   if (vin) {
     const c = await buscar({ chasisVIN: { equals: vin, mode: "insensitive" } });
-    if (c) return { id: c.id, numeroOrden: c.numeroOrden, nombrePropietario: c.nombrePropietario, area: c.area, criterio: "vin" };
+    if (c) return armar(c, "vin");
   }
   if (tel) {
     const c = await buscar({ OR: [{ whatsapp: tel }, { celular: tel }] });
-    if (c) return { id: c.id, numeroOrden: c.numeroOrden, nombrePropietario: c.nombrePropietario, area: c.area, criterio: "telefono" };
+    if (c) return armar(c, "telefono");
   }
   if (email) {
     const c = await buscar({ emailPropietario: { equals: email, mode: "insensitive" } });
-    if (c) return { id: c.id, numeroOrden: c.numeroOrden, nombrePropietario: c.nombrePropietario, area: c.area, criterio: "email" };
+    if (c) return armar(c, "email");
   }
   return null;
 }
@@ -146,12 +152,23 @@ export async function importarEncuestaFord(params: {
     },
   });
 
-  // Un repartidor por área: las tareas de un caso VENTAS se reparten solo entre
-  // usuarios de VENTAS o AMBAS, y las de POSVENTA solo entre POSVENTA o AMBAS.
-  const repartidores: Record<AreaTrabajo, Repartidor> = {
-    [AreaTrabajo.VENTAS]: new Repartidor(await usuariosElegiblesConCarga(AreaTrabajo.VENTAS)),
-    [AreaTrabajo.POSVENTA]: new Repartidor(await usuariosElegiblesConCarga(AreaTrabajo.POSVENTA)),
+  // Un repartidor por combinación ÁREA + PROVINCIA (sucursal), construido a
+  // demanda: las tareas de un caso VENTAS de Mendoza se reparten solo entre
+  // usuarios de (VENTAS o AMBAS) que atiendan Mendoza (o todas las provincias).
+  // Las sucursales son dinámicas (salen de los casos), por eso no se pre-arma
+  // un set fijo: se cachea por clave a medida que aparecen.
+  const cacheRepartidores = new Map<string, Repartidor>();
+  const repartidorPara = async (area: AreaTrabajo, sucursal: string): Promise<Repartidor> => {
+    const clave = `${area}|${sucursal.trim().toLowerCase()}`;
+    let r = cacheRepartidores.get(clave);
+    if (!r) {
+      r = new Repartidor(await usuariosElegiblesConCarga(area, sucursal));
+      cacheRepartidores.set(clave, r);
+    }
+    return r;
   };
+  // ¿Hay ALGÚN usuario elegible en el sistema? (para el aviso "no había empleados").
+  const hayAlgunElegible = (await usuariosElegiblesConCarga()).length > 0;
 
   const resumen: ResumenFord = {
     uploadId: upload.id,
@@ -167,7 +184,7 @@ export async function importarEncuestaFord(params: {
     porCriterio: {},
     sinMatchear: [],
     noReconocidos: [],
-    hayUsuariosElegibles: repartidores.VENTAS.hayUsuarios || repartidores.POSVENTA.hayUsuarios,
+    hayUsuariosElegibles: hayAlgunElegible,
     porArea: { VENTAS: 0, POSVENTA: 0 },
     sinMatchearPorArea: { VENTAS: 0, POSVENTA: 0 },
     conflictosArea: [],
@@ -242,6 +259,21 @@ export async function importarEncuestaFord(params: {
     resumen.matcheados++;
     resumen.porCriterio[match.criterio] = (resumen.porCriterio[match.criterio] ?? 0) + 1;
 
+    // No DEGRADAR un caso que ya respondió: si el caso está RESPONDIDA y este
+    // export (posiblemente más viejo) trae otro estado, se ignora la fila (no se
+    // pisa el estado ni se recrea un recordatorio). Un RESPONDIDA nuevo sí pisa.
+    const casoActual = await prisma.caso.findUnique({
+      where: { id: match.id },
+      select: { encuestaFordEstado: true },
+    });
+    if (
+      casoActual?.encuestaFordEstado === EncuestaFordEstado.RESPONDIDA &&
+      clasif.categoria !== EncuestaFordEstado.RESPONDIDA
+    ) {
+      resumen.duplicados++;
+      continue;
+    }
+
     // Actualizar el estado de encuesta Ford del caso
     const fechaRespuesta = clasif.categoria === EncuestaFordEstado.RESPONDIDA ? parsearFechaFord(campos.fechaRespuesta) : null;
     await prisma.caso.update({
@@ -314,8 +346,8 @@ export async function importarEncuestaFord(params: {
         continue;
       }
 
-      // Reparto según el área del caso matcheado.
-      const asignadoAId = repartidores[match.area].siguiente();
+      // Reparto según el área Y la provincia (sucursal) del caso matcheado.
+      const asignadoAId = (await repartidorPara(match.area, match.sucursal)).siguiente();
       if (!asignadoAId) resumen.sinAsignar++;
 
       const tarea = await prisma.tareaRefuerzo.create({
@@ -358,6 +390,13 @@ export async function importarEncuestaFord(params: {
       conflictosArea: resumen.conflictosArea.length,
       areaNoReconocida: resumen.areaNoReconocida.length,
     },
+  });
+
+  // La carga terminó: se marca COMPLETADO (si no, queda en PROCESANDO para
+  // siempre en el historial de cargas).
+  await prisma.excelUpload.update({
+    where: { id: upload.id },
+    data: { status: "COMPLETADO" },
   });
 
   return resumen;

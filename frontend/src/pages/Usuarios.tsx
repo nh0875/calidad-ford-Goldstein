@@ -20,6 +20,7 @@ interface UsuarioFila {
   email: string;
   rol: "ADMIN" | "CALIDAD";
   area: AreaUsuario;
+  sucursal: string | null; // provincia; null = todas
   activo: boolean;
   participaEnRefuerzos: boolean;
   createdAt: string;
@@ -27,6 +28,7 @@ interface UsuarioFila {
 
 const ROL_LABEL: Record<string, string> = { ADMIN: "Administrador", CALIDAD: "Calidad" };
 const AREAS_USUARIO: AreaUsuario[] = ["AMBAS", "VENTAS", "POSVENTA"];
+const TODAS_PROVINCIAS = "__todas__"; // valor del select "Todas" (el back recibe "")
 
 export default function Usuarios() {
   const usuarioActual = getUsuario();
@@ -40,7 +42,16 @@ export default function Usuarios() {
   const [password, setPassword] = useState("");
   const [rol, setRol] = useState<"ADMIN" | "CALIDAD">("CALIDAD");
   const [areaNueva, setAreaNueva] = useState<AreaUsuario>("AMBAS");
+  const [sucursalNueva, setSucursalNueva] = useState(""); // "" = todas las provincias
   const [creando, setCreando] = useState(false);
+
+  // Provincias existentes (de los casos), para el selector de provincia.
+  const [sucursales, setSucursales] = useState<string[]>([]);
+  useEffect(() => {
+    apiGet<{ sucursales: string[] }>("/api/casos/opciones")
+      .then((r) => setSucursales(r.sucursales ?? []))
+      .catch(() => {});
+  }, []);
 
   // Restablecer contraseña (inline por fila)
   const [resetAbierto, setResetAbierto] = useState<string | null>(null);
@@ -73,6 +84,7 @@ export default function Usuarios() {
         password,
         rol,
         area: areaNueva,
+        sucursal: sucursalNueva.trim(), // "" = todas las provincias
       });
       setMensaje(message);
       setNombre("");
@@ -80,6 +92,7 @@ export default function Usuarios() {
       setPassword("");
       setRol("CALIDAD");
       setAreaNueva("AMBAS");
+      setSucursalNueva("");
       await cargar();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos crear el usuario.");
@@ -150,6 +163,20 @@ export default function Usuarios() {
     }
   }
 
+  async function cambiarSucursal(u: UsuarioFila, valorSelect: string) {
+    const nueva = valorSelect === TODAS_PROVINCIAS ? "" : valorSelect;
+    if (nueva === (u.sucursal ?? "")) return;
+    setError(null);
+    setMensaje(null);
+    try {
+      const { message } = await apiPatchJson<{ message: string }>(`/api/usuarios/${u.id}`, { sucursal: nueva });
+      setMensaje(message);
+      await cargar();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No pudimos cambiar la provincia.");
+    }
+  }
+
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       {error && <Alert tono="error">{error}</Alert>}
@@ -183,15 +210,37 @@ export default function Usuarios() {
               <option value="ADMIN">Administrador</option>
             </Select>
           </Campo>
-          <Campo etiqueta="Área" hint="El ADMIN ve todo igual">
-            <Select value={areaNueva} onChange={(e) => setAreaNueva(e.target.value as AreaUsuario)}>
-              {AREAS_USUARIO.map((a) => (
-                <option key={a} value={a}>
-                  {etiquetaArea(a)}
-                </option>
-              ))}
-            </Select>
-          </Campo>
+          {/* El administrador ve/gestiona todo: no se le pide área ni provincia. */}
+          {rol === "ADMIN" ? (
+            <Campo etiqueta="Alcance">
+              <Input disabled value="Todas las áreas y provincias" />
+            </Campo>
+          ) : (
+            <>
+              <Campo etiqueta="Área" hint="Qué gestiona (Ventas / Posventa / Ambas)">
+                <Select value={areaNueva} onChange={(e) => setAreaNueva(e.target.value as AreaUsuario)}>
+                  {AREAS_USUARIO.map((a) => (
+                    <option key={a} value={a}>
+                      {etiquetaArea(a)}
+                    </option>
+                  ))}
+                </Select>
+              </Campo>
+              <Campo etiqueta="Provincia" hint="Dejar vacío = todas. Un refuerzo de otra provincia no se le asigna.">
+                <Input
+                  list="provincias-lista"
+                  value={sucursalNueva}
+                  onChange={(e) => setSucursalNueva(e.target.value)}
+                  placeholder="Todas las provincias"
+                />
+                <datalist id="provincias-lista">
+                  {sucursales.map((s) => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
+              </Campo>
+            </>
+          )}
           <div className="sm:col-span-2 lg:col-span-4">
             <button type="submit" disabled={creando} className={claseBoton("primario")}>
               {creando ? "Creando…" : "Crear usuario"}
@@ -212,6 +261,7 @@ export default function Usuarios() {
               <th className="px-3 py-2">Email</th>
               <th className="px-3 py-2">Rol</th>
               <th className="px-3 py-2">Área</th>
+              <th className="px-3 py-2">Provincia</th>
               <th className="px-3 py-2">Estado</th>
               <th className="px-3 py-2">Refuerzos</th>
               <th className="px-3 py-2">Acciones</th>
@@ -234,6 +284,29 @@ export default function Usuarios() {
                         {AREAS_USUARIO.map((a) => (
                           <option key={a} value={a}>
                             {etiquetaArea(a)}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    {u.rol === "ADMIN" ? (
+                      <span className="text-xs text-ink-muted" title="El administrador ve todas las provincias">
+                        todas
+                      </span>
+                    ) : (
+                      <Select
+                        value={u.sucursal ?? TODAS_PROVINCIAS}
+                        onChange={(e) => cambiarSucursal(u, e.target.value)}
+                      >
+                        <option value={TODAS_PROVINCIAS}>Todas</option>
+                        {/* La provincia actual, aunque no esté en la lista de casos */}
+                        {u.sucursal && !sucursales.includes(u.sucursal) && (
+                          <option value={u.sucursal}>{u.sucursal}</option>
+                        )}
+                        {sucursales.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
                           </option>
                         ))}
                       </Select>
@@ -283,7 +356,7 @@ export default function Usuarios() {
                 </tr>
                 {resetAbierto === u.id && (
                   <tr className="border-b border-gray-100 bg-accent-light/50">
-                    <td colSpan={7} className="px-3 py-3">
+                    <td colSpan={8} className="px-3 py-3">
                       <div className="flex items-end gap-2">
                         <Campo etiqueta={`Nueva contraseña para ${u.nombre}`}>
                           <Input
@@ -313,7 +386,7 @@ export default function Usuarios() {
             ))}
             {usuarios && usuarios.length === 0 && (
               <tr>
-                <td colSpan={6}>
+                <td colSpan={8}>
                   <EmptyState icono={UsersIcon} titulo="Todavía no hay usuarios cargados" />
                 </td>
               </tr>

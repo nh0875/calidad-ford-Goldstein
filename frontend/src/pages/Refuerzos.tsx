@@ -2,16 +2,25 @@
 // CALIDAD ve "Mis casos a reforzar"; ADMIN además tiene la vista de administración
 // (todas las tareas, reparto, reasignación, mini-reporte por empleado).
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ClipboardCheck, Mail, SearchX } from "lucide-react";
+import { AlertTriangle, ClipboardCheck, Info, Mail, SearchX, Shuffle } from "lucide-react";
 import { apiGet, apiPatchJson, apiPostJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
 import { fechaCorta } from "../lib/categorias";
+import { etiquetaArea, tonoArea } from "../lib/area";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge, PuntoSemaforo } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
 import { Campo, Select, Textarea } from "../components/ui/Field";
 import { EmptyState } from "../components/ui/EmptyState";
+
+// Compara provincias sin distinguir mayúsculas ni acentos (igual que el backend).
+function normProv(s: string | null | undefined): string {
+  return (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+function provinciaLabel(s: string | null | undefined): string {
+  return s && s.trim() ? s : "Todas";
+}
 
 interface Tarea {
   id: string;
@@ -30,6 +39,7 @@ interface Tarea {
     celular: string;
     emailPropietario: string | null;
     modelo: string;
+    area: string;
     sucursal: string;
     fechaSalida: string | null;
     fechaProgramacion: string;
@@ -227,9 +237,18 @@ function Dato({ etiqueta, valor, resaltar }: { etiqueta: string; valor: string; 
 // ---------- Vista de administración (ADMIN) ----------
 
 interface EmpleadoResumen {
-  id: string; nombre: string; activo: boolean; participaEnRefuerzos: boolean;
+  id: string; nombre: string; rol: "ADMIN" | "CALIDAD"; activo: boolean; participaEnRefuerzos: boolean;
+  area: string; sucursal: string | null;
   asignadas: number; completadas: number; abiertas: number; pctCompletadas: number;
   resultados: Record<string, number>;
+}
+
+// ¿Puede este empleado tomar esta tarea? (misma área y misma provincia, o "todas")
+function empleadoElegible(e: EmpleadoResumen, t: Tarea): boolean {
+  if (!e.activo) return false;
+  const areaOk = e.area === "AMBAS" || e.area === t.caso.area;
+  const provOk = !e.sucursal || normProv(e.sucursal) === normProv(t.caso.sucursal);
+  return areaOk && provOk;
 }
 
 function AdminTareas() {
@@ -272,46 +291,117 @@ function AdminTareas() {
     }
   }
 
+  const [redistribuyendo, setRedistribuyendo] = useState(false);
+
+  // Reparto en masa: sin `deUsuarioId` reparte las SIN asignar; con `deUsuarioId`
+  // vacía las tareas de ese empleado (no disponible) entre el resto del equipo.
+  async function redistribuir(deUsuarioId?: string, nombre?: string) {
+    if (deUsuarioId && !window.confirm(`¿Repartir todas las tareas abiertas de ${nombre} entre el resto del equipo?`)) return;
+    setError(null); setMensaje(null); setRedistribuyendo(true);
+    try {
+      const { message } = await apiPostJson<{ message: string }>("/api/refuerzos/redistribuir", deUsuarioId ? { deUsuarioId } : {});
+      setMensaje(message);
+      await cargar();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No pudimos redistribuir las tareas.");
+    } finally {
+      setRedistribuyendo(false);
+    }
+  }
+
   const inactivosConTareas = tareas.filter((t) => t.asignadoA && !t.asignadoA.activo);
 
   return (
     <div className="space-y-4">
       {error && <Alert tono="error">{error}</Alert>}
       {mensaje && <Alert tono="exito">{mensaje}</Alert>}
+
+      {/* Cómo funciona el reparto (para que no sea ambiguo) */}
+      <Alert tono="info">
+        <div className="flex items-start gap-1.5">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>
+            Los casos se reparten <strong>solos</strong> al importar la encuesta Ford, equilibrados y{" "}
+            <strong>sin mezclar área ni provincia</strong> (un caso de Posventa/Mendoza solo va a alguien de
+            Posventa que atienda Mendoza). Acá ves el reparto y podés ajustarlo: si alguien no está disponible,
+            usá <strong>"Repartir sus casos"</strong> para pasarle sus tareas al resto de su misma área y provincia.
+          </span>
+        </div>
+      </Alert>
+
       {sinAsignar > 0 && (
         <Alert tono="advertencia">
-          <AlertTriangle className="mr-1 inline h-4 w-4" /> Hay {sinAsignar} tarea(s) SIN asignar (no había empleados elegibles al importar). Reasignalas abajo.
+          <div className="flex flex-wrap items-center gap-3">
+            <span>
+              <AlertTriangle className="mr-1 inline h-4 w-4" /> Hay {sinAsignar} caso(s) <strong>sin asignar</strong>{" "}
+              (no había nadie de esa área/provincia al importar).
+            </span>
+            <button
+              onClick={() => redistribuir()}
+              disabled={redistribuyendo}
+              className={claseBoton("primario", "!py-1.5")}
+            >
+              <Shuffle className="mr-1 inline h-4 w-4" aria-hidden="true" />
+              {redistribuyendo ? "Repartiendo…" : "Repartir los sin asignar"}
+            </button>
+          </div>
         </Alert>
       )}
       {inactivosConTareas.length > 0 && (
         <Alert tono="advertencia">
-          <AlertTriangle className="mr-1 inline h-4 w-4" /> Hay {inactivosConTareas.length} tarea(s) asignadas a usuarios inactivos. Reasignalas.
+          <AlertTriangle className="mr-1 inline h-4 w-4" /> Hay {inactivosConTareas.length} caso(s) asignados a empleados
+          inactivos. Usá "Repartir sus casos" en la fila de esa persona para moverlos.
         </Alert>
       )}
 
-      {/* Mini-reporte por empleado */}
+      {/* Reparto por empleado (con su área y provincia) */}
       <Card padding="p-0" className="overflow-x-auto">
+        <div className="border-b bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+          Equipo — carga por empleado
+        </div>
         <table className="min-w-full text-sm">
           <thead>
             <tr className="border-b bg-gray-50 text-left text-xs uppercase text-ink-muted">
               <th className="px-3 py-2">Empleado</th>
+              <th className="px-3 py-2">Área</th>
+              <th className="px-3 py-2">Provincia</th>
               <th className="px-3 py-2 text-right">Abiertas</th>
-              <th className="px-3 py-2 text-right">Asignadas</th>
               <th className="px-3 py-2 text-right">Completadas</th>
               <th className="px-3 py-2 text-right">% Compl.</th>
               <th className="px-3 py-2">Estado</th>
+              <th className="px-3 py-2">Acción</th>
             </tr>
           </thead>
           <tbody>
             {empleados.map((e) => (
               <tr key={e.id} className="border-b border-gray-100">
-                <td className="px-3 py-2 text-ink">{e.nombre}</td>
+                <td className="px-3 py-2 text-ink">
+                  {e.nombre}
+                  {e.rol === "ADMIN" && <span className="ml-1 text-xs text-ink-muted">(admin)</span>}
+                </td>
+                <td className="px-3 py-2">
+                  <Badge tono={tonoArea(e.area)} className="cursor-default">{etiquetaArea(e.area)}</Badge>
+                </td>
+                <td className="px-3 py-2 text-ink-muted">{provinciaLabel(e.sucursal)}</td>
                 <td className="px-3 py-2 text-right font-medium text-ink">{e.abiertas}</td>
-                <td className="px-3 py-2 text-right text-ink-muted">{e.asignadas}</td>
                 <td className="px-3 py-2 text-right text-ink-muted">{e.completadas}</td>
                 <td className="px-3 py-2 text-right text-ink-muted">{e.pctCompletadas}%</td>
                 <td className="px-3 py-2">
                   {!e.activo ? <Badge tono="rojo">Inactivo</Badge> : !e.participaEnRefuerzos ? <Badge tono="gris">No participa</Badge> : <Badge tono="verde">Activo</Badge>}
+                </td>
+                <td className="px-3 py-2">
+                  {/* "No disponible": pasa sus casos abiertos al resto de su misma área+provincia. */}
+                  {e.abiertas > 0 && (
+                    <button
+                      onClick={() => redistribuir(e.id, e.nombre)}
+                      disabled={redistribuyendo}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-accent-dark hover:underline disabled:opacity-50"
+                      title={`Pasar los ${e.abiertas} caso(s) abiertos de ${e.nombre} al resto del equipo de su misma área y provincia (ej. si no está disponible)`}
+                    >
+                      <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
+                      Repartir sus casos
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -341,36 +431,56 @@ function AdminTareas() {
             <tr className="border-b bg-gray-50 text-left text-xs uppercase text-ink-muted">
               <th className="px-3 py-2">Cliente</th>
               <th className="px-3 py-2">Tipo</th>
+              <th className="px-3 py-2">Área</th>
+              <th className="px-3 py-2">Provincia</th>
               <th className="px-3 py-2">Estado</th>
-              <th className="px-3 py-2">Asignada a</th>
-              <th className="px-3 py-2">Reasignar</th>
+              <th className="px-3 py-2">Asignado a</th>
+              <th className="px-3 py-2">Mover a</th>
             </tr>
           </thead>
           <tbody>
-            {tareas.map((t) => (
-              <tr key={t.id} className="border-b border-gray-100">
-                <td className="px-3 py-2 text-ink">{t.caso.nombrePropietario}<span className="ml-1 text-xs text-ink-muted">#{t.caso.numeroOrden}</span></td>
-                <td className="px-3 py-2"><Badge tono={TIPO_INFO[t.tipo].tono}>{TIPO_INFO[t.tipo].label}</Badge></td>
-                <td className="px-3 py-2 text-ink-muted">{t.estado.replace("_", " ")}</td>
-                <td className="px-3 py-2">
-                  {t.asignadoA ? (
-                    <span className={!t.asignadoA.activo ? "text-red-700" : "text-ink"}>{t.asignadoA.nombre}{!t.asignadoA.activo && " (inactivo)"}</span>
-                  ) : (
-                    <Badge tono="amarillo">Sin asignar</Badge>
-                  )}
-                </td>
-                <td className="px-3 py-2">
-                  {t.estado !== "COMPLETADA" && t.estado !== "CANCELADA" && (
-                    <Select defaultValue="" onChange={(e) => reasignar(t.id, e.target.value)} className="!py-1 text-xs">
-                      <option value="">Mover a…</option>
-                      {empleados.filter((e) => e.activo).map((e) => <option key={e.id} value={e.id}>{e.nombre}</option>)}
-                    </Select>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {tareas.map((t) => {
+              const activa = t.estado !== "COMPLETADA" && t.estado !== "CANCELADA";
+              const elegibles = empleados.filter((e) => empleadoElegible(e, t) && e.id !== t.asignadoA?.id);
+              return (
+                <tr key={t.id} className="border-b border-gray-100">
+                  <td className="px-3 py-2 text-ink">{t.caso.nombrePropietario}<span className="ml-1 text-xs text-ink-muted">#{t.caso.numeroOrden}</span></td>
+                  <td className="px-3 py-2"><Badge tono={TIPO_INFO[t.tipo].tono}>{TIPO_INFO[t.tipo].label}</Badge></td>
+                  <td className="px-3 py-2">
+                    <Badge tono={tonoArea(t.caso.area)} className="cursor-default">{etiquetaArea(t.caso.area)}</Badge>
+                  </td>
+                  <td className="px-3 py-2 text-ink-muted">{provinciaLabel(t.caso.sucursal)}</td>
+                  <td className="px-3 py-2 text-ink-muted">{t.estado.replace("_", " ")}</td>
+                  <td className="px-3 py-2">
+                    {t.asignadoA ? (
+                      <span className={!t.asignadoA.activo ? "text-red-700" : "text-ink"}>{t.asignadoA.nombre}{!t.asignadoA.activo && " (inactivo)"}</span>
+                    ) : (
+                      <Badge tono="amarillo">Sin asignar</Badge>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    {activa &&
+                      (elegibles.length > 0 ? (
+                        <Select defaultValue="" onChange={(e) => reasignar(t.id, e.target.value)} className="!py-1 text-xs">
+                          <option value="">Mover a…</option>
+                          {elegibles.map((e) => (
+                            <option key={e.id} value={e.id}>
+                              {e.nombre}
+                              {e.rol === "ADMIN" ? " (admin)" : ""}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <span className="text-xs text-ink-muted" title="No hay otro empleado de esa área y provincia">
+                          sin equipo
+                        </span>
+                      ))}
+                  </td>
+                </tr>
+              );
+            })}
             {tareas.length === 0 && (
-              <tr><td colSpan={5}><EmptyState icono={SearchX} titulo="No hay tareas con estos filtros" /></td></tr>
+              <tr><td colSpan={7}><EmptyState icono={SearchX} titulo="No hay tareas con estos filtros" /></td></tr>
             )}
           </tbody>
         </table>

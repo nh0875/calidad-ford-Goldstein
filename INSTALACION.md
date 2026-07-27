@@ -202,48 +202,35 @@ Docker Desktop es una aplicación de escritorio: **necesita una sesión de usuar
 
 ---
 
-## Paso 9 — Programar el arranque y el vigilante
+## Paso 9 — Dejar el sistema desatendido (un solo comando)
 
-Dos tareas: una levanta todo al prender la PC, la otra vigila cada 5 minutos y repara lo que se caiga.
+Para que el sistema **arranque y se repare solo** (Docker + ngrok) sin que la usuaria toque nada, hay un único script que lo configura y lo verifica todo. Reemplaza a los pasos manuales sueltos, para que la instalación **no pueda quedar a medias**.
 
-1. **Editar las rutas** en los dos scripts (Bloc de notas), en el bloque del principio:
-   - `scripts\windows\iniciar-sistema.bat` → `PROJECT_DIR`, `NGROK_PATH` (la del Paso 7), `NGROK_DOMAIN`, `PORT`.
-   - `scripts\windows\vigilante.ps1` → `$ProjectDir`, `$NgrokExe`, `$NgrokDomain`, `$Puerto`.
+Abrir PowerShell **como administrador**, en la carpeta del proyecto, y correr:
 
-2. **Registrar las dos tareas** — abrir PowerShell **como administrador**, en la carpeta del proyecto:
-
-   ```powershell
-   $proyecto = (Get-Location).Path
-
-   # --- Tarea 1: arranque al iniciar sesión ---
-   $a1 = New-ScheduledTaskAction -Execute "$proyecto\scripts\windows\iniciar-sistema.bat"
-   $t1 = New-ScheduledTaskTrigger -AtLogOn
-   Register-ScheduledTask -TaskName "Sistema de Calidad - Arranque" `
-     -Action $a1 -Trigger $t1 -RunLevel Highest -Force
-
-   # --- Tarea 2: vigilante cada 5 minutos ---
-   $ps = "$proyecto\scripts\windows\vigilante.ps1"
-   $a2 = New-ScheduledTaskAction -Execute "powershell.exe" `
-     -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ps`""
-   $t2 = New-ScheduledTaskTrigger -AtLogOn
-   $t2.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
-     -RepetitionInterval (New-TimeSpan -Minutes 5)).Repetition
-   $s2 = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-     -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
-   Register-ScheduledTask -TaskName "Sistema de Calidad - Vigilante" `
-     -Action $a2 -Trigger $t2 -Settings $s2 -RunLevel Highest -Force
-   ```
-
-**Cómo verificar:**
 ```powershell
-Get-ScheduledTask -TaskName "Sistema de Calidad*" | Select-Object TaskName, State
-Start-ScheduledTask -TaskName "Sistema de Calidad - Vigilante"
-Start-Sleep 30
-Get-Content .\scripts\windows\vigilante.log -Tail 5
+.\scripts\windows\configurar-pc.ps1
 ```
-El log tiene que mostrar una línea `[OK] Todo en orden...` (si todo está sano) o las acciones que hizo. **No debe abrirse ninguna ventana.**
 
-**Si falla:** si el log no aparece, revisá que la ruta del `-File` sea correcta y que la tarea esté configurada como **"Ejecutar sólo cuando el usuario haya iniciado sesión"** (Docker no funciona en sesión 0).
+El script, de forma idempotente (se puede repetir sin romper nada):
+
+- Verifica que Docker Desktop y ngrok estén instalados, y que ngrok tenga **authtoken**.
+- Configura Docker Desktop para arrancar al iniciar sesión.
+- **Registra el vigilante** (tarea cada 5 min, al iniciar sesión, con privilegios máximos) que repara Docker y ngrok si se caen.
+- Levanta todo (primera corrida) y verifica en vivo que ngrok y la app respondan.
+- Chequea el **auto-login** de Windows y avisa si falta (es lo único que no puede hacer solo, porque necesita la contraseña de la PC).
+
+Al terminar imprime un **checklist**: si dice `TODO CUBIERTO`, la usuaria no tiene que tocar nada. Si falta algo (típicamente el auto-login), lo resolvés y volvés a verificar:
+
+```powershell
+.\scripts\windows\configurar-pc.ps1 -SoloVerificar
+```
+
+> **El auto-login es obligatorio** (Paso 8). Docker Desktop necesita una sesión iniciada; si la PC reinicia y queda en la pantalla de login, nada arranca. El script lo detecta pero no lo activa solo (te pide hacerlo con `netplwiz`).
+
+**Monitoreo:** `scripts\windows\vigilante.log` deja registrado qué reparó y cuándo. Una línea `[OK] Todo en orden…` significa que la última corrida encontró todo sano.
+
+**Comprobación final** — reiniciá la PC y, sin tocar nada, esperá 2-3 minutos: el sistema tiene que quedar accesible en `https://<TU-DOMINIO>.ngrok-free.dev`. Ese es el test real de que quedó desatendido.
 
 ---
 

@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import {
+  AreaTrabajo,
   EstadoTareaRefuerzo,
   Prisma,
   ResultadoTareaRefuerzo,
@@ -8,7 +9,7 @@ import {
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { ACCIONES, auditar } from "../services/audit.service";
-import { Repartidor, contarPendientesDe, usuariosElegiblesConCarga } from "../services/refuerzo.service";
+import { Repartidor, contarPendientesDe, mismaProvincia, usuariosElegiblesConCarga } from "../services/refuerzo.service";
 import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
 import { parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
 
@@ -22,6 +23,7 @@ const INCLUDE_TAREA = {
       celular: true,
       emailPropietario: true,
       modelo: true,
+      area: true,
       sucursal: true,
       telefonosNorm: true,
       fechaSalida: true,
@@ -29,6 +31,7 @@ const INCLUDE_TAREA = {
       tieneRqrAbierto: true,
       encuestaFordEstado: true,
       analisis: {
+        where: { esSeguimiento: false }, // la clasificación que cuenta del caso
         orderBy: { analyzedAt: "desc" as const },
         take: 1,
         select: { semaforo: true },
@@ -117,9 +120,11 @@ export async function listarTareas(req: Request, res: Response) {
 // Mini-reporte por empleado (solo ADMIN)
 export async function resumenEmpleados(req: Request, res: Response) {
   const areaCaso = { eliminadoEn: null, ...whereArea(req.usuario!, parsearAreaQuery(req.query.area)) };
+  // Empleados que hacen (o pueden hacer) refuerzos: los CALIDAD, más cualquiera
+  // que participe (ej. un admin que también gestiona casos).
   const usuarios = await prisma.usuario.findMany({
-    where: { rol: "CALIDAD" },
-    select: { id: true, nombre: true, activo: true, participaEnRefuerzos: true, area: true },
+    where: { OR: [{ rol: "CALIDAD" }, { participaEnRefuerzos: true }] },
+    select: { id: true, nombre: true, rol: true, activo: true, participaEnRefuerzos: true, area: true, sucursal: true },
     orderBy: { nombre: "asc" },
   });
 
@@ -138,9 +143,13 @@ export async function resumenEmpleados(req: Request, res: Response) {
     const estados = porEstado.filter((e) => e.asignadoAId === u.id);
     const asignadas = estados.reduce((a, e) => a + e._count._all, 0);
     const completadas = estados.filter((e) => e.estado === "COMPLETADA").reduce((a, e) => a + e._count._all, 0);
+    const canceladas = estados.filter((e) => e.estado === "CANCELADA").reduce((a, e) => a + e._count._all, 0);
     const abiertas = estados
       .filter((e) => e.estado === "PENDIENTE" || e.estado === "EN_GESTION")
       .reduce((a, e) => a + e._count._all, 0);
+    // % sobre tareas gestionables: una tarea CANCELADA no cuenta en contra del
+    // avance del asesor (no era suya para completar).
+    const denominador = asignadas - canceladas;
     const resultados: Record<string, number> = {};
     for (const r of porResultado.filter((x) => x.asignadoAId === u.id)) {
       if (r.resultado) resultados[r.resultado] = r._count._all;
@@ -148,13 +157,17 @@ export async function resumenEmpleados(req: Request, res: Response) {
     return {
       id: u.id,
       nombre: u.nombre,
+      rol: u.rol,
       activo: u.activo,
-      area: u.area,
+      // El ADMIN no está limitado: se muestra como "todas".
+      area: u.rol === "ADMIN" ? "AMBAS" : u.area,
+      sucursal: u.rol === "ADMIN" ? null : u.sucursal,
       participaEnRefuerzos: u.participaEnRefuerzos,
       asignadas,
       completadas,
+      canceladas,
       abiertas,
-      pctCompletadas: asignadas > 0 ? Math.round((completadas / asignadas) * 1000) / 10 : 0,
+      pctCompletadas: denominador > 0 ? Math.round((completadas / denominador) * 1000) / 10 : 0,
       resultados,
     };
   });
@@ -252,7 +265,7 @@ export async function reasignarTarea(req: Request, res: Response) {
 
   const tarea = await prisma.tareaRefuerzo.findUnique({
     where: { id: req.params.id },
-    include: { caso: { select: { area: true } } },
+    include: { caso: { select: { area: true, sucursal: true } } },
   });
   if (!tarea) return res.status(404).json({ message: "No se encontró la tarea." });
 
@@ -260,10 +273,17 @@ export async function reasignarTarea(req: Request, res: Response) {
   if (!nuevo || !nuevo.activo) {
     return res.status(400).json({ message: "El empleado elegido no existe o está desactivado." });
   }
+  const esAdmin = nuevo.rol === "ADMIN";
   // No se puede reasignar a alguien de otra área (rompería el aislamiento).
-  if (nuevo.rol !== "ADMIN" && nuevo.area !== "AMBAS" && nuevo.area !== tarea.caso.area) {
+  if (!esAdmin && nuevo.area !== "AMBAS" && nuevo.area !== tarea.caso.area) {
     return res.status(400).json({
       message: `El empleado elegido es de otra área (la tarea es de ${tarea.caso.area}). Elegí a alguien de esa área o de AMBAS.`,
+    });
+  }
+  // Tampoco a alguien de otra provincia (a menos que atienda todas: sucursal null).
+  if (!esAdmin && nuevo.sucursal && !mismaProvincia(nuevo.sucursal, tarea.caso.sucursal)) {
+    return res.status(400).json({
+      message: `El empleado elegido atiende otra provincia (${nuevo.sucursal}); la tarea es de ${tarea.caso.sucursal}. Elegí a alguien de esa provincia o que atienda todas.`,
     });
   }
 
@@ -281,6 +301,90 @@ export async function reasignarTarea(req: Request, res: Response) {
   });
 
   res.json({ message: `Tarea reasignada a ${nuevo.nombre}.`, data: actualizada });
+}
+
+// ---------- POST /api/refuerzos/redistribuir ----------
+// Reparto en masa, para no reasignar tarea por tarea:
+//  - con `deUsuarioId`: "este empleado no está disponible" → todas sus tareas
+//    ABIERTAS se reparten entre el resto del equipo, equilibrado y por área.
+//  - sin `deUsuarioId`: reparte las tareas ABIERTAS que quedaron SIN asignar.
+// El reparto usa el mismo Repartidor que la importación (al que menos carga
+// tiene primero), así queda parejo. Solo ADMIN.
+
+const redistribuirSchema = z.object({
+  deUsuarioId: z.string().trim().min(1).optional(),
+});
+
+export async function redistribuirTareas(req: Request, res: Response) {
+  const parsed = redistribuirSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ message: "Datos inválidos." });
+  const deUsuarioId = parsed.data.deUsuarioId;
+
+  // Tareas origen: abiertas, de casos no borrados. De un empleado, o las sin asignar.
+  const tareas = await prisma.tareaRefuerzo.findMany({
+    where: {
+      estado: { in: [EstadoTareaRefuerzo.PENDIENTE, EstadoTareaRefuerzo.EN_GESTION] },
+      caso: { eliminadoEn: null },
+      ...(deUsuarioId ? { asignadoAId: deUsuarioId } : { asignadoAId: null }),
+    },
+    select: { id: true, caso: { select: { area: true, sucursal: true } } },
+  });
+
+  if (tareas.length === 0) {
+    return res.json({
+      message: deUsuarioId
+        ? "Ese empleado no tiene tareas abiertas para redistribuir."
+        : "No hay tareas sin asignar para repartir.",
+      reasignadas: 0,
+      sinEquipo: 0,
+    });
+  }
+
+  // Un repartidor por combinación ÁREA + PROVINCIA (sucursal), a demanda,
+  // EXCLUYENDO al empleado que se está vaciando (para no devolverle sus propias
+  // tareas). El conteo de "abiertas" ya refleja la carga actual, así queda parejo.
+  const cachePools = new Map<string, Repartidor>();
+  const poolPara = async (area: AreaTrabajo, sucursal: string): Promise<Repartidor> => {
+    const clave = `${area}|${sucursal.trim().toLowerCase()}`;
+    let r = cachePools.get(clave);
+    if (!r) {
+      const elegibles = (await usuariosElegiblesConCarga(area, sucursal)).filter((u) => u.id !== deUsuarioId);
+      r = new Repartidor(elegibles);
+      cachePools.set(clave, r);
+    }
+    return r;
+  };
+
+  let reasignadas = 0;
+  let sinEquipo = 0; // tareas cuya área+provincia no tiene a nadie más a quien pasarlas
+  for (const t of tareas) {
+    const destino = (await poolPara(t.caso.area, t.caso.sucursal)).siguiente();
+    if (!destino) {
+      sinEquipo++;
+      // Al VACIAR a un empleado (deUsuarioId) sin reemplazo en su área+provincia,
+      // la tarea NO puede quedarse con él (se va / no está disponible): se pasa a
+      // SIN ASIGNAR para que aparezca como tal y se pueda repartir después. Si no
+      // se vacía a nadie (reparto de "sin asignar"), ya está en null: no se toca.
+      if (deUsuarioId) {
+        await prisma.tareaRefuerzo.update({ where: { id: t.id }, data: { asignadoAId: null } });
+      }
+      continue;
+    }
+    await prisma.tareaRefuerzo.update({ where: { id: t.id }, data: { asignadoAId: destino } });
+    reasignadas++;
+  }
+
+  await auditar(req, {
+    accion: ACCIONES.TAREAS_REDISTRIBUIDAS,
+    entidad: "TareaRefuerzo",
+    detalles: { deUsuarioId: deUsuarioId ?? null, reasignadas, sinEquipo },
+  });
+
+  let message = `Se repartieron ${reasignadas} tarea(s) entre el equipo.`;
+  if (sinEquipo > 0) {
+    message += ` ${sinEquipo} quedaron sin asignar porque no hay otro empleado disponible para su área/provincia.`;
+  }
+  res.json({ message, reasignadas, sinEquipo });
 }
 
 // ---------- POST /api/refuerzos/vincular ----------
@@ -309,8 +413,8 @@ export async function vincularTarea(req: Request, res: Response) {
   });
   if (existente) return res.status(409).json({ message: "Ese caso ya tiene una tarea de refuerzo abierta." });
 
-  // Reparto entre usuarios del área del caso (o AMBAS).
-  const repartidor = new Repartidor(await usuariosElegiblesConCarga(caso.area));
+  // Reparto entre usuarios del área Y la provincia (sucursal) del caso.
+  const repartidor = new Repartidor(await usuariosElegiblesConCarga(caso.area, caso.sucursal));
   const asignadoAId = repartidor.siguiente();
 
   const tarea = await prisma.tareaRefuerzo.create({

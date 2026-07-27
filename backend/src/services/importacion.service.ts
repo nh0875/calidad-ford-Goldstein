@@ -5,6 +5,7 @@ import {
   HojaParseada,
   abrirWorkbook,
   derivarPeriodo,
+  derivarPeriodoDeFilas,
   normalizarTexto,
   parsearEntero,
   parsearFecha,
@@ -79,6 +80,10 @@ export interface ResultadoHoja {
   totalFilas: number;
   insertados: number;
   duplicados: number;
+  // Números de orden que ya existían (en la base o repetidos dentro del mismo
+  // archivo) y por eso NO se cargaron. Se listan para avisarle al usuario cuáles
+  // están mal, en vez de omitirlos en silencio.
+  ordenesDuplicadas: string[];
   errores: ErrorFila[];
   historicosConSentimiento: number;
   semaforo: { VERDE: number; AMARILLO: number; ROJO: number };
@@ -106,6 +111,12 @@ export function mapearEstadoContacto(valor: unknown): EstadoContacto {
     default:
       return EstadoContacto.PENDIENTE;
   }
+}
+
+// Resume una lista de órdenes para el mensaje: las primeras y "y N más".
+function resumirOrdenes(ordenes: string[], max = 10): string {
+  if (ordenes.length <= max) return ordenes.join(", ");
+  return `${ordenes.slice(0, max).join(", ")} y ${ordenes.length - max} más`;
 }
 
 function mapearOrigenAgendamiento(valor: unknown): OrigenAgendamiento {
@@ -174,6 +185,7 @@ export async function importarHojas(params: ParamsImportacion): Promise<{
     insertados: number;
     duplicados: number;
     conError: number;
+    ordenesDuplicadas: string[];
     historicosConSentimiento: number;
     semaforo: { VERDE: number; AMARILLO: number; ROJO: number };
     suprimidos: number;
@@ -200,6 +212,7 @@ export async function importarHojas(params: ParamsImportacion): Promise<{
     insertados: resultados.reduce((a, r) => a + r.insertados, 0),
     duplicados: resultados.reduce((a, r) => a + r.duplicados, 0),
     conError: resultados.reduce((a, r) => a + r.errores.length, 0),
+    ordenesDuplicadas: resultados.flatMap((r) => r.ordenesDuplicadas),
     historicosConSentimiento: resultados.reduce((a, r) => a + r.historicosConSentimiento, 0),
     semaforo: {
       VERDE: resultados.reduce((a, r) => a + r.semaforo.VERDE, 0),
@@ -227,6 +240,7 @@ async function importarHoja(
     totalFilas: 0,
     insertados: 0,
     duplicados: 0,
+    ordenesDuplicadas: [],
     errores: [],
     historicosConSentimiento: 0,
     semaforo: { VERDE: 0, AMARILLO: 0, ROJO: 0 },
@@ -236,16 +250,6 @@ async function importarHoja(
 
   // La sucursal es única para toda la carga: se normaliza una sola vez.
   const sucursalNorm = aplicarAlias(parsearSucursal(params.sucursal), ctx.aliasSucursal);
-
-  // Período: explícito o derivado del nombre de la hoja ("ENERO" + 2026 -> "2026-01")
-  const periodo = hoja.periodo ?? derivarPeriodo(hoja.nombre, params.anio);
-  if (!periodo) {
-    base.mensaje =
-      `No se pudo deducir el mes a partir del nombre de la hoja "${hoja.nombre}". ` +
-      `Indicá el período a mano (formato AAAA-MM, por ejemplo 2026-03) y volvé a intentar.`;
-    return base;
-  }
-  base.periodo = periodo;
 
   const errorMapping = validarMapping(hoja.mapping);
   if (errorMapping) {
@@ -260,6 +264,21 @@ async function importarHoja(
   }
 
   base.totalFilas = parseada.filas.length;
+
+  // Período: explícito > nombre de la hoja ("ENERO" + 2026 -> "2026-01") > mes
+  // más frecuente de las fechas de los datos (para hojas sin mes en el nombre,
+  // como la única hoja "Normal" del reporte real).
+  const periodo =
+    hoja.periodo ??
+    derivarPeriodo(hoja.nombre, params.anio) ??
+    derivarPeriodoDeFilas(parseada.filas, hoja.mapping);
+  if (!periodo) {
+    base.mensaje =
+      `No se pudo deducir el mes de la hoja "${hoja.nombre}" (ni por el nombre ni por las fechas). ` +
+      `Indicá el período a mano (formato AAAA-MM, por ejemplo 2026-03) y volvé a intentar.`;
+    return base;
+  }
+  base.periodo = periodo;
   const porCampo = invertirMapping(hoja.mapping);
   const valorDe = (fila: Record<string, unknown>, campo: CampoCaso): unknown => {
     const columna = porCampo[campo];
@@ -270,23 +289,35 @@ async function importarHoja(
     return v === null || v === undefined ? "" : String(v).trim();
   };
 
-  // Claves de duplicado ya cargadas para esta sucursal + período. La orden es
-  // el identificador fuerte; patente+fecha solo aplica a filas SIN orden (en el
-  // Excel real un mismo vehículo puede tener dos órdenes distintas el mismo
-  // día); nombre+fecha es el último recurso para filas sin orden ni patente.
+  // El número de orden es único en TODO el sistema (una orden = un caso): una
+  // orden repetida no se carga, venga del mismo archivo o de otra sucursal/mes.
+  // Se precargan todas las órdenes activas de la base (no solo las de esta
+  // sucursal+período) para detectar el choque global.
+  const ordenesActivas = await prisma.caso.findMany({
+    where: { eliminadoEn: null, numeroOrden: { notIn: ["S/N", ""] } },
+    select: { numeroOrden: true },
+  });
+  const ordenesGlobales = new Set(ordenesActivas.map((c) => c.numeroOrden));
+
+  // Claves para las filas SIN orden (Excel viejo sin columna ORDEN): patente+fecha
+  // (un mismo vehículo puede tener dos órdenes distintas el mismo día, por eso
+  // solo aplica sin orden); nombre+fecha es el último recurso. Se acota a la
+  // sucursal+período, como antes.
+  // Se filtra por la sucursal NORMALIZADA (la misma con la que se guardan los
+  // casos), si no el dedup patente+fecha no encontraría los casos previos.
+  const sucursalGuardada = sucursalNorm.nombre || params.sucursal;
   const casosPrevios = await prisma.caso.findMany({
-    where: { sucursal: params.sucursal, upload: { periodo } },
-    select: { numeroOrden: true, patente: true, fechaProgramacion: true, nombrePropietario: true },
+    where: { sucursal: sucursalGuardada, upload: { periodo }, eliminadoEn: null },
+    select: { patente: true, fechaProgramacion: true, nombrePropietario: true },
   });
   const fechaISO = (fecha: Date) => fecha.toISOString().slice(0, 10);
   const clavesExistentes = new Set<string>();
-  const registrarClaves = (orden: string, patente: string, nombre: string, fecha: Date) => {
-    if (orden && orden !== "S/N") clavesExistentes.add(`orden:${orden}`);
+  const registrarClaves = (patente: string, nombre: string, fecha: Date) => {
     if (patente) clavesExistentes.add(`pf:${patente.toUpperCase()}|${fechaISO(fecha)}`);
     if (!patente && nombre) clavesExistentes.add(`nf:${nombre.toUpperCase()}|${fechaISO(fecha)}`);
   };
   for (const c of casosPrevios) {
-    registrarClaves(c.numeroOrden, c.patente, c.nombrePropietario, c.fechaProgramacion);
+    registrarClaves(c.patente, c.nombrePropietario, c.fechaProgramacion);
   }
 
   const upload = await prisma.excelUpload.create({
@@ -324,7 +355,12 @@ async function importarHoja(
         continue;
       }
 
-      const numeroOrden = textoDe(fila, "numeroOrden");
+      const numeroOrdenRaw = textoDe(fila, "numeroOrden");
+      // "S/N" en la columna Orden = SIN orden (no es una orden real). Si no, la
+      // primera fila "S/N" reservaría la clave y las siguientes se descartarían
+      // como "orden duplicada" siendo servicios distintos.
+      const tieneOrden = !!numeroOrdenRaw && numeroOrdenRaw.toUpperCase() !== "S/N";
+      const numeroOrden = tieneOrden ? numeroOrdenRaw : "";
 
       // La fecha de programación es obligatoria en el modelo; si falta o es
       // ilegible, se usa el día 1 del período para no perder la fila.
@@ -332,21 +368,30 @@ async function importarHoja(
         parsearFecha(valorDe(fila, "fechaProgramacion")) ?? new Date(`${periodo}-01T00:00:00`);
       const patente = textoDe(fila, "patente");
 
-      // Se chequea UNA clave según lo que la fila tenga (orden > patente+fecha
-      // > nombre+fecha); al insertar se registran todas las disponibles.
-      // Detecta tanto duplicados contra la base como repetidos en el archivo.
-      const claveDedupe = numeroOrden
-        ? `orden:${numeroOrden}`
-        : patente
+      // Fila CON número de orden: la orden es única en todo el sistema. Si ya
+      // existe (en la base o repetida antes en este mismo archivo), NO se carga
+      // y se avisa cuál es. Detecta el choque global, no solo por sucursal/mes.
+      if (tieneOrden) {
+        if (ordenesGlobales.has(numeroOrden)) {
+          base.duplicados++;
+          base.ordenesDuplicadas.push(numeroOrden);
+          continue;
+        }
+        ordenesGlobales.add(numeroOrden);
+      } else {
+        // Fila SIN orden: se cae al criterio patente+fecha / nombre+fecha,
+        // acotado a la sucursal+período.
+        const claveDedupe = patente
           ? `pf:${patente.toUpperCase()}|${fechaISO(fechaProgramacion)}`
           : nombre
             ? `nf:${nombre.toUpperCase()}|${fechaISO(fechaProgramacion)}`
             : null;
-      if (claveDedupe && clavesExistentes.has(claveDedupe)) {
-        base.duplicados++;
-        continue;
+        if (claveDedupe && clavesExistentes.has(claveDedupe)) {
+          base.duplicados++;
+          continue;
+        }
+        registrarClaves(patente, nombre, fechaProgramacion);
       }
-      registrarClaves(numeroOrden, patente, nombre, fechaProgramacion);
 
       const estadoExcel = normalizarTexto(valorDe(fila, "estado")).toUpperCase();
       const estadoContacto = mapearEstadoContacto(valorDe(fila, "estado"));
@@ -411,6 +456,7 @@ async function importarHoja(
 
       if (estaSuprimido(telefonosNorm, ctx.suprimidos)) base.suprimidos++;
 
+      try {
       await prisma.caso.create({
         data: {
           uploadId: upload.id,
@@ -439,8 +485,17 @@ async function importarHoja(
           ...(analisisHistorico ? { analisis: { create: analisisHistorico } } : {}),
         },
       });
-
       base.insertados++;
+      } catch (err) {
+        // Otra carga concurrente insertó esta orden primero: el índice único la
+        // rechaza (P2002). Se trata como duplicado, NO se aborta la importación.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+          base.duplicados++;
+          if (tieneOrden) base.ordenesDuplicadas.push(numeroOrden);
+        } else {
+          throw err;
+        }
+      }
     }
 
     await prisma.excelUpload.update({
@@ -449,9 +504,15 @@ async function importarHoja(
     });
 
     base.ok = true;
+    const detalleOrdenes =
+      base.ordenesDuplicadas.length > 0
+        ? ` De esos, ${base.ordenesDuplicadas.length} tienen un número de orden que ya existía y NO se cargaron ` +
+          `(órdenes: ${resumirOrdenes(base.ordenesDuplicadas)}).`
+        : "";
     base.mensaje =
       `Hoja "${hoja.nombre}" (${periodo}): se cargaron ${base.insertados} casos nuevos. ` +
-      `${base.duplicados} ya estaban cargados de antes y se omitieron, y ${base.errores.length} filas no se pudieron cargar.`;
+      `${base.duplicados} ya estaban cargados de antes y se omitieron, y ${base.errores.length} filas no se pudieron cargar.` +
+      detalleOrdenes;
   } catch (err) {
     await prisma.excelUpload.update({
       where: { id: upload.id },

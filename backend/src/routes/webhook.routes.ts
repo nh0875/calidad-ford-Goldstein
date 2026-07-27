@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../middlewares/asyncHandler";
+import { rateLimitWebhook } from "../middlewares/rateLimit";
 import { recibirWebhook, verificarWebhook } from "../controllers/webhook.controller";
 
 const router = Router();
@@ -8,7 +9,8 @@ const router = Router();
 // verify token de /configuracion)
 router.get("/whatsapp", asyncHandler(verificarWebhook));
 
-// Notificaciones de Meta: mensajes entrantes y acuses de entrega
-router.post("/whatsapp", asyncHandler(recibirWebhook));
+// Notificaciones de Meta: mensajes entrantes y acuses de entrega. Límite
+// holgado propio (no el global): frena un pico anómalo/loop sin cortar a Meta.
+router.post("/whatsapp", rateLimitWebhook, asyncHandler(recibirWebhook));
 
 export default router;

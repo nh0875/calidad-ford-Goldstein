@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { FileDown } from "lucide-react";
 import { apiDescargarArchivo, apiGet } from "../lib/api";
 import { BarraFiltros, FILTROS_VACIOS, FiltrosComunes, filtrosAQuery, useOpcionesCasos } from "../components/filtros";
@@ -111,8 +112,15 @@ export default function ReporteSentimiento() {
             <Tarjeta
               titulo="Revisión manual"
               valor={reporte.totales.revisionManual}
-              detalle={reporte.totales.sinClasificar > 0 ? `${reporte.totales.sinClasificar} sin clasificar` : "pendientes"}
+              detalle={
+                reporte.totales.revisionManual > 0
+                  ? "ver y clasificar →"
+                  : reporte.totales.sinClasificar > 0
+                    ? `${reporte.totales.sinClasificar} sin clasificar`
+                    : "sin pendientes"
+              }
               color="text-purple-700"
+              to={reporte.totales.revisionManual > 0 ? "/revision-manual" : undefined}
             />
           </div>
 
@@ -152,13 +160,32 @@ export default function ReporteSentimiento() {
   );
 }
 
-function Tarjeta({ titulo, valor, detalle, color }: { titulo: string; valor: number | string; detalle: string; color: string }) {
-  return (
-    <Card>
+function Tarjeta({
+  titulo,
+  valor,
+  detalle,
+  color,
+  to,
+}: {
+  titulo: string;
+  valor: number | string;
+  detalle: string;
+  color: string;
+  to?: string;
+}) {
+  const contenido = (
+    <Card className={to ? "h-full transition-colors hover:border-accent hover:bg-accent-light/40" : undefined}>
       <div className="text-xs text-ink-muted">{titulo}</div>
       <div className={`font-display text-2xl font-bold ${color}`}>{valor}</div>
-      <div className="text-xs text-ink-muted">{detalle}</div>
+      <div className={`text-xs ${to ? "font-medium text-accent-dark" : "text-ink-muted"}`}>{detalle}</div>
     </Card>
+  );
+  return to ? (
+    <Link to={to} className="block">
+      {contenido}
+    </Link>
+  ) : (
+    contenido
   );
 }
 

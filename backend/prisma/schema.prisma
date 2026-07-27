@@ -208,6 +208,7 @@ model Caso {
   rqrs           RQR[]
   tareasRefuerzo TareaRefuerzo[]
   supresiones    SupresionContacto[] @relation("SupresionCasoOrigen")
+  avisos         Aviso[]
 
   @@index([uploadId])
   @@index([sucursal, estadoContacto])
@@ -218,51 +219,69 @@ model Caso {
 }
 
 model WhatsappMessage {
-  id           String           @id @default(cuid())
-  casoId       String
-  caso         Caso             @relation(fields: [casoId], references: [id], onDelete: Cascade)
-  direction    MessageDirection
-  content      String           @db.Text
-  templateName String?
-  waMessageId  String?
-  status       String
+  id               String           @id @default(cuid())
+  casoId           String
+  caso             Caso             @relation(fields: [casoId], references: [id], onDelete: Cascade)
+  direction        MessageDirection
+  content          String           @db.Text
+  templateName     String?
+  waMessageId      String?
+  status           String
   // true = mensaje de agradecimiento/recordatorio automático (Parte A),
   // para distinguirlo del template inicial en reportes y en el detalle del caso
-  esAgradecimiento Boolean       @default(false)
-  createdAt    DateTime         @default(now())
+  esAgradecimiento Boolean          @default(false)
+  // Marca que este mensaje ENTRANTE ya fue cubierto por un análisis. Una misma
+  // tanda de mensajes del cliente se analiza JUNTA y en una sola llamada a la
+  // IA, así que varios mensajes pueden compartir un único SentimentAnalysis:
+  // esta fecha es lo que evita volver a analizarlos.
+  analizadoEn      DateTime?
+  createdAt        DateTime         @default(now())
 
   analisis SentimentAnalysis[]
 
   @@index([casoId])
-  @@index([waMessageId])
+  // Único: el id de Meta identifica la entrega; ante un reintento del webhook
+  // (Meta reenvía la misma notificación) esto impide duplicar el mensaje
+  // entrante y volver a disparar el análisis. Los salientes con waMessageId
+  // NULL no colisionan (en Postgres los NULL son distintos entre sí).
+  @@unique([waMessageId])
 }
 
 model SentimentAnalysis {
-  id                   String           @id @default(cuid())
-  casoId               String
-  caso                 Caso             @relation(fields: [casoId], references: [id], onDelete: Cascade)
+  id                     String           @id @default(cuid())
+  casoId                 String
+  caso                   Caso             @relation(fields: [casoId], references: [id], onDelete: Cascade)
   // Nullable: los análisis históricos importados desde Excel no tienen mensaje de WhatsApp asociado
-  messageId            String?
-  message              WhatsappMessage? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId              String?
+  message                WhatsappMessage? @relation(fields: [messageId], references: [id], onDelete: Cascade)
   // Nullable: si la IA no devuelve JSON interpretable, el registro queda
   // sin semáforo y con requiereRevisionManual=true para que Calidad lo clasifique
-  semaforo             Semaforo?
+  semaforo               Semaforo?
   // Gravedad del malestar (LEVE/MODERADA/GRAVE), independiente de la confianza.
   // La confianza sigue guardándose como señal de calidad, pero ya NO decide el RQR.
-  severidad            Severidad?
-  confianza            Float
-  categoriaCausaRaiz   String?
-  resumenIA            String           @db.Text
-  respuestaCrudaIA     Json
-  requiereRQR          Boolean          @default(false)
-  requiereRevisionManual Boolean        @default(false)
-  esHistoricoImportado Boolean          @default(false)
-  analyzedAt           DateTime         @default(now())
+  severidad              Severidad?
+  confianza              Float
+  categoriaCausaRaiz     String?
+  resumenIA              String           @db.Text
+  respuestaCrudaIA       Json
+  requiereRQR            Boolean          @default(false)
+  requiereRevisionManual Boolean          @default(false)
+  esHistoricoImportado   Boolean          @default(false)
+  // Un caso tiene UN análisis que cuenta (esSeguimiento=false). Los mensajes
+  // que el cliente manda después quedan como seguimiento y NO suman a las
+  // estadísticas ni a los rankings: si no, un cliente conversador contaba como
+  // varias respuestas. Un seguimiento PEOR que el vigente lo reemplaza
+  // (escalada) y el anterior pasa a ser seguimiento.
+  esSeguimiento          Boolean          @default(false)
+  // Cuántos mensajes del cliente se consolidaron en este análisis.
+  mensajesAnalizados     Int              @default(1)
+  analyzedAt             DateTime         @default(now())
 
   rqr RQR?
 
   @@index([casoId])
   @@index([semaforo])
+  @@index([casoId, esSeguimiento])
 }
 
 // Mensajes entrantes de WhatsApp que no matchean con ningún Caso
@@ -317,6 +336,8 @@ model RQR {
   eliminadoPorId String?
   eliminadoPor   Usuario?  @relation("RQREliminadoPor", fields: [eliminadoPorId], references: [id])
 
+  avisos Aviso[]
+
   @@index([casoId])
   @@index([estado])
   @@index([eliminadoEn])
@@ -324,26 +345,31 @@ model RQR {
 }
 
 model Usuario {
-  id           String     @id @default(cuid())
-  nombre       String
-  email        String     @unique
-  passwordHash String
-  rol          RolUsuario @default(CALIDAD)
+  id                   String      @id @default(cuid())
+  nombre               String
+  email                String      @unique
+  passwordHash         String
+  rol                  RolUsuario  @default(CALIDAD)
   // Área que ve/gestiona. AMBAS = sin restricción. El ADMIN ignora esto (ve todo).
-  area         AreaUsuario @default(AMBAS)
-  activo       Boolean    @default(true)
+  area                 AreaUsuario @default(AMBAS)
+  // Provincia/sucursal que atiende (ej. "San Juan", "Mendoza"). null = TODAS.
+  // Se usa para repartir los refuerzos Ford: una tarea de un caso de Mendoza no
+  // se le asigna a alguien de San Juan. El ADMIN no está limitado por esto.
+  sucursal             String?
+  activo               Boolean     @default(true)
   // Parte B: participa del reparto equitativo de tareas de refuerzo.
   // La admin suele quedar en false (supervisa, no gestiona casos).
-  participaEnRefuerzos Boolean @default(true)
-  createdAt    DateTime   @default(now())
+  participaEnRefuerzos Boolean     @default(true)
+  createdAt            DateTime    @default(now())
 
-  auditLogs         AuditLog[]
-  casosEliminados   Caso[]          @relation("CasoEliminadoPor")
-  rqrsEliminados    RQR[]           @relation("RQREliminadoPor")
-  uploadsEliminados ExcelUpload[]   @relation("ExcelUploadEliminadoPor")
-  tareasAsignadas   TareaRefuerzo[] @relation("TareaAsignada")
+  auditLogs          AuditLog[]
+  casosEliminados    Caso[]               @relation("CasoEliminadoPor")
+  rqrsEliminados     RQR[]                @relation("RQREliminadoPor")
+  uploadsEliminados  ExcelUpload[]        @relation("ExcelUploadEliminadoPor")
+  tareasAsignadas    TareaRefuerzo[]      @relation("TareaAsignada")
   supresionesCreadas SupresionContacto[]  @relation("SupresionCreadaPor")
   aliasCreados       AliasNormalizacion[] @relation("AliasCreadoPor")
+  avisosVistos       Aviso[]              @relation("AvisoVistoPor")
 }
 
 // Lista de supresión POR TELÉFONO: quien está acá nunca recibe una campaña de
@@ -435,4 +461,40 @@ model AuditLog {
   @@index([entidad])
   @@index([ip])
   @@index([createdAt])
+}
+
+// ---------- Avisos en pantalla ----------
+// Reemplazan al mail: cuando un caso necesita que alguien lo agarre (se abrió
+// un RQR, el cliente escaló después de haber respondido bien, quedó un
+// amarillo sin RQR), se crea un aviso y la app lo muestra como cartel rojo
+// arriba de todo, en TODAS las pantallas, hasta que se lo marca visto o el RQR
+// se cierra. Así nadie se entera tarde por no haber entrado a la pantalla justa.
+
+enum TipoAviso {
+  RQR_ABIERTO // se abrió un RQR automático a partir de la respuesta del cliente
+  ESCALADO // el cliente ya había sido clasificado y una respuesta posterior empeoró el semáforo
+  AMARILLO_SIN_RQR // semáforo amarillo que no llegó a abrir RQR, pero conviene mirar
+}
+
+model Aviso {
+  id      String      @id @default(cuid())
+  tipo    TipoAviso
+  // Área del caso: un usuario restringido solo ve los avisos de la suya.
+  area    AreaTrabajo @default(POSVENTA)
+  casoId  String?
+  caso    Caso?       @relation(fields: [casoId], references: [id], onDelete: Cascade)
+  rqrId   String?
+  rqr     RQR?        @relation(fields: [rqrId], references: [id], onDelete: Cascade)
+  titulo  String
+  detalle String      @db.Text
+
+  creadoEn   DateTime  @default(now())
+  // Se apaga a mano ("Marcar visto") o solo cuando el RQR asociado se cierra.
+  vistoEn    DateTime?
+  vistoPorId String?
+  vistoPor   Usuario?  @relation("AvisoVistoPor", fields: [vistoPorId], references: [id])
+
+  @@index([area, vistoEn])
+  @@index([casoId])
+  @@index([rqrId])
 }

@@ -57,6 +57,26 @@ export async function encolarCampana(filtros: FiltrosCampana): Promise<number> {
 
   const delayMs = env.whatsappEnvioDelayMs;
 
+  // El jobId es fijo por caso, y BullMQ conserva los jobs YA TERMINADOS un rato
+  // (fallidos, 24 hs). Mientras esa clave siga en Redis, volver a encolar el
+  // mismo caso se ignora en silencio: la API contesta "encolado" y no sale
+  // nada. Por eso se borran acá los jobs terminados antes de encolar de nuevo.
+  // Los que siguen esperando o enviándose NO se tocan: ahí el dedupe es
+  // justamente lo que queremos (evita mandar dos veces por doble click).
+  await Promise.all(
+    casos.map(async (caso) => {
+      try {
+        const job = await whatsappQueue.getJob(`envio-${caso.id}`);
+        if (!job) return;
+        const estado = await job.getState();
+        if (estado === "failed" || estado === "completed") await job.remove();
+      } catch {
+        // si no se puede limpiar (job bloqueado), se sigue: peor caso, este
+        // caso no se reencola y queda para el próximo intento
+      }
+    })
+  );
+
   await whatsappQueue.addBulk(
     casos.map((caso, i) => ({
       name: "enviar-template",

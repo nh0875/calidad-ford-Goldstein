@@ -50,6 +50,10 @@ Abrí una terminal (PowerShell o Git Bash) en la carpeta donde va a vivir el pro
 
 Todos los comandos usan el **stack de producción** (`-f docker-compose.prod.yml --env-file .env.prod`).
 
+> **`--env-file .env.prod` NUNCA se omite.** Docker Compose interpola los `${...}` de `docker-compose.prod.yml` desde `.env` (el de **desarrollo**), no desde `.env.prod`. Sin ese flag, producción arranca con los valores de dev y no avisa. Pasó de verdad: el idioma de la plantilla volvió a `es_AR` y Meta rechazó todos los envíos con el error 132001, sin ningún indicio en los logs de arranque.
+>
+> Para que no pueda repetirse, `docker-compose.prod.yml` exige la variable `ENTORNO_PROD`, que existe **solo** en `.env.prod`. Si falta el flag, el comando corta de entrada con: `required variable ENTORNO_PROD is missing a value: falta --env-file .env.prod`. Si aparece ese error, el comando estaba mal escrito — agregar el flag, no borrar la guarda.
+
 ```bash
 # 1. Traer el código
 git clone <URL-del-repo-privado> Vanina

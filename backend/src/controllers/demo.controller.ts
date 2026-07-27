@@ -4,7 +4,7 @@ import { EstadoContacto, MessageDirection } from "@prisma/client";
 import { z } from "zod";
 import { env } from "../config/env";
 import { prisma } from "../config/prisma";
-import { analisisQueue } from "../jobs/queues";
+import { programarAnalisis } from "../services/analisis.service";
 import { marcarOptOutSiCorresponde } from "../services/agradecimiento.service";
 
 // Middleware: todo lo de /demo solo existe si MODO_DEMO=true. Si no, 404 (como
@@ -46,7 +46,7 @@ export async function simularRespuesta(req: Request, res: Response) {
   }
 
   // Mismo efecto que procesarMensajeEntrante() del webhook real
-  const guardado = await prisma.whatsappMessage.create({
+  await prisma.whatsappMessage.create({
     data: {
       casoId: caso.id,
       direction: MessageDirection.ENTRANTE,
@@ -64,18 +64,14 @@ export async function simularRespuesta(req: Request, res: Response) {
   // Mismo comportamiento que el webhook real: detectar opt-out (BAJA/STOP)
   await marcarOptOutSiCorresponde(caso.id, texto);
 
-  await analisisQueue.add(
-    "analizar-respuesta",
-    { casoId: caso.id, messageId: guardado.id },
-    {
-      attempts: 5,
-      backoff: { type: "custom" }, // ver backoffStrategy del worker (60-90s ante 429)
-      removeOnComplete: { age: 3600, count: 5000 },
-      removeOnFail: { age: 24 * 3600 },
-    }
-  );
+  // Igual que el webhook real: se programa el análisis de la tanda completa.
+  // Si se simulan varios mensajes seguidos, se consolidan en un solo análisis.
+  await programarAnalisis(caso.id);
 
+  const segundos = Math.round(env.delayAnalisisMs / 1000);
   res.status(202).json({
-    message: `Respuesta simulada para ${caso.nombrePropietario}. El análisis se está procesando; en unos segundos vas a ver el semáforo y, si corresponde, el RQR generado.`,
+    message:
+      `Respuesta simulada para ${caso.nombrePropietario}. El sistema espera ${segundos} segundos por si el cliente sigue escribiendo ` +
+      `y después analiza todo junto; ahí vas a ver el semáforo y, si corresponde, el RQR generado.`,
   });
 }

@@ -114,7 +114,13 @@ async function llamarGraphApi(
 /**
  * Envía un mensaje de template (necesario para iniciar la conversación
  * fuera de la ventana de 24 hs). `variables` completa los placeholders
- * del cuerpo del template en orden: nombre, modelo, fecha de salida.
+ * {{1}}, {{2}}, ... del cuerpo, EN ESE ORDEN.
+ *
+ * IMPORTANTE: la cantidad tiene que coincidir EXACTAMENTE con la que tiene
+ * aprobada la plantilla en Meta. Si la plantilla no tiene placeholders (texto
+ * fijo), hay que mandar el array vacío y NO incluir el componente "body":
+ * mandar un body con parámetros de más (o vacío) hace que Meta rechace el
+ * envío con el error 132000 ("number of parameters does not match").
  */
 export async function sendTemplateMessage(
   telefono: string,
@@ -128,12 +134,17 @@ export async function sendTemplateMessage(
     template: {
       name: creds.templateName,
       language: { code: creds.templateLang },
-      components: [
-        {
-          type: "body",
-          parameters: variables.map((texto) => ({ type: "text", text: texto })),
-        },
-      ],
+      // Sin variables → se omite "components" por completo.
+      ...(variables.length > 0
+        ? {
+            components: [
+              {
+                type: "body",
+                parameters: variables.map((texto) => ({ type: "text", text: texto })),
+              },
+            ],
+          }
+        : {}),
     },
   });
   return { ...r, templateName: creds.templateName };

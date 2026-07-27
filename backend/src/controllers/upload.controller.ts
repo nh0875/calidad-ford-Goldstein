@@ -6,6 +6,7 @@ import {
   abrirWorkbook,
   borrarArchivoTemporal,
   derivarPeriodo,
+  derivarPeriodoDeFilas,
   guardarArchivoTemporal,
   leerArchivoTemporal,
   parsearHoja,
@@ -57,13 +58,16 @@ export async function previewUpload(req: Request, res: Response) {
     if ("error" in parseada) {
       return { nombre, ok: false as const, error: parseada.error };
     }
+    const mappingSugerido = sugerirMapeo(parseada.columnas);
     return {
       nombre,
       ok: true as const,
-      periodoSugerido: derivarPeriodo(nombre, anio),
+      // Período: del nombre de la hoja o, si no dice el mes, del mes más
+      // frecuente de las fechas (para hojas "Normal" del reporte real).
+      periodoSugerido: derivarPeriodo(nombre, anio) ?? derivarPeriodoDeFilas(parseada.filas, mappingSugerido),
       filaEncabezado: parseada.filaEncabezado + 1, // 1-based, como se ve en Excel
       columnas: parseada.columnas,
-      mappingSugerido: sugerirMapeo(parseada.columnas),
+      mappingSugerido,
       kpisResumen: parseada.kpisResumen,
       totalFilasDatos: parseada.filas.length,
       preview: parseada.filas.slice(0, FILAS_PREVIEW).map((f) => f.datos),
@@ -160,6 +164,7 @@ export async function confirmUpload(req: Request, res: Response) {
       insertados: resultado.totales.insertados,
       duplicados: resultado.totales.duplicados,
       conError: resultado.totales.conError,
+      ordenesDuplicadas: resultado.totales.ordenesDuplicadas,
     },
   });
 
@@ -167,6 +172,9 @@ export async function confirmUpload(req: Request, res: Response) {
   const message =
     `Carga finalizada: ${t.insertados} casos nuevos guardados, ` +
     `${t.duplicados} ya existían y se omitieron, ${t.conError} filas con problemas. ` +
+    (t.ordenesDuplicadas.length > 0
+      ? `${t.ordenesDuplicadas.length} tenían un número de orden que ya existía y no se cargaron. `
+      : "") +
     `${t.historicosConSentimiento} casos históricos quedaron clasificados con semáforo ` +
     `(${t.semaforo.VERDE} verdes, ${t.semaforo.AMARILLO} amarillos, ${t.semaforo.ROJO} rojos).` +
     (t.suprimidos > 0

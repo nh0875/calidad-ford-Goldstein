@@ -1,13 +1,16 @@
 # Arranque automático y resiliencia en Windows
 
-Dos piezas, pensadas para que el sistema corra **desatendido** en la PC de la usuaria:
+Piezas pensadas para que el sistema corra **desatendido** en la PC de la usuaria:
 
 | Script | Cuándo corre | Para qué |
 |---|---|---|
+| `configurar-pc.ps1` | **Una vez, al instalar** (como admin) | Deja TODO listo y verificado: registra el vigilante, configura autostart, chequea ngrok/auto-login. Imprime un checklist. |
 | `iniciar-sistema.bat` | Al **iniciar Windows** | Levanta el stack de producción + ngrok |
 | `vigilante.ps1` | **Cada 5 minutos** | Detecta y repara: Docker caído, contenedores caídos, API sin responder, ngrok caído |
 
-> Con el vigilante registrado, el `.bat` de arranque pasa a ser opcional: el vigilante levanta todo igual en su primera corrida. Conviene tener los dos (arranque rápido al prender + reparación continua).
+> **La forma recomendada de dejar una PC lista es correr `configurar-pc.ps1` (como administrador).** Hace en un solo paso lo que antes eran varios pasos manuales (que se pueden olvidar). Al terminar dice `TODO CUBIERTO` o lista lo que falta. Para solo verificar el estado sin cambiar nada: `.\configurar-pc.ps1 -SoloVerificar`.
+>
+> Con el vigilante registrado, el `.bat` de arranque pasa a ser opcional: el vigilante levanta todo igual en su primera corrida.
 
 ---
 

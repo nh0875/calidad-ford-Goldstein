@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   ClipboardCheck,
   ClipboardList,
+  ClipboardPen,
   GitBranch,
   KeyRound,
   LayoutDashboard,
@@ -25,6 +26,7 @@ import { apiGet, apiPostJson } from "../lib/api";
 import { Badge } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
 import PageTransition from "../components/ui/PageTransition";
+import CartelAvisos from "../components/CartelAvisos";
 
 const navItems: Array<{ to: string; label: string; icono: LucideIcon }> = [
   { to: "/dashboard", label: "Dashboard", icono: LayoutDashboard },
@@ -33,6 +35,7 @@ const navItems: Array<{ to: string; label: string; icono: LucideIcon }> = [
   { to: "/reportes/sentimiento", label: "Reporte de Sentimiento", icono: SmilePlus },
   { to: "/reportes/causas-raiz", label: "Causas Raíz", icono: GitBranch },
   { to: "/rqr", label: "RQR", icono: MessageSquareWarning },
+  { to: "/revision-manual", label: "Revisión manual", icono: ClipboardPen },
   { to: "/refuerzos", label: "Refuerzo Ford", icono: ClipboardCheck },
 ];
 
@@ -43,6 +46,7 @@ const pageTitles: Record<string, string> = {
   "/reportes/sentimiento": "Reporte de Sentimiento",
   "/reportes/causas-raiz": "Reporte de Causas Raíz",
   "/rqr": "Reclamos / Quejas / Reportes (RQR)",
+  "/revision-manual": "Casos para revisar a mano",
   "/usuarios": "Usuarios del sistema",
   "/normalizacion": "Normalización de asesores / sucursales",
   "/supresion": "Lista de supresión (no contactar)",
@@ -59,9 +63,14 @@ export default function MainLayout() {
 
   // Badge del sidebar: tareas de refuerzo PENDIENTES del usuario logueado
   const [pendientesRefuerzo, setPendientesRefuerzo] = useState(0);
+  // Badge del sidebar: casos que esperan clasificación manual (del área del usuario)
+  const [pendientesRevision, setPendientesRevision] = useState(0);
   useEffect(() => {
     apiGet<{ pendientes: number }>("/api/refuerzos/mias/pendientes")
       .then((r) => setPendientesRefuerzo(r.pendientes))
+      .catch(() => {});
+    apiGet<{ pendientes: number }>("/api/sentiment-analysis/revision-manual/pendientes")
+      .then((r) => setPendientesRevision(r.pendientes))
       .catch(() => {});
   }, [pathname]);
 
@@ -130,6 +139,11 @@ export default function MainLayout() {
                   {pendientesRefuerzo}
                 </span>
               )}
+              {item.to === "/revision-manual" && pendientesRevision > 0 && (
+                <span className="ml-auto inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-bold text-white">
+                  {pendientesRevision}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -179,6 +193,10 @@ export default function MainLayout() {
             </button>
           </div>
         </header>
+        {/* Cartel rojo: RQR sin atender, clientes que escalaron, amarillos.
+            Va debajo del encabezado y arriba del contenido, en todas las
+            pantallas, hasta que alguien lo agarre. */}
+        <CartelAvisos />
         <main className="flex-1 overflow-y-auto p-6">
           <PageTransition>
             <Outlet />

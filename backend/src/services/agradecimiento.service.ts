@@ -21,10 +21,19 @@ function normalizar(texto: string): string {
 export function esMensajeOptOut(texto: string): boolean {
   const t = normalizar(texto);
   if (!t) return false;
-  // palabras sueltas típicas
-  if (/(^| )(baja|stop|unsubscribe|cancelar)( |$)/.test(t)) return true;
-  // frases de baja
-  if (/(darme de baja|no quiero recibir|no me escriban|no me contacten|dejen de escribir|desuscrib)/.test(t)) return true;
+  // Palabras sueltas INEQUÍVOCAS de baja. OJO: "baja" y "cancelar" NO van acá —
+  // en posventa son normalísimas ("la nota es muy baja", "quiero cancelar el
+  // turno") y un falso positivo suprime al cliente de TODAS las campañas (la
+  // supresión es permanente). Solo disparan dentro de frases explícitas de baja.
+  if (/(^| )(stop|unsubscribe)( |$)/.test(t)) return true;
+  // Frases de baja explícitas (incluye "darse de baja" y "cancelar la suscripción").
+  if (
+    /(darme de baja|darse de baja|darte de baja|de baja de|no quiero recibir|no me escriban|no me contacten|no me manden|dejen de escribir|dejen de enviar|desuscrib|cancelar (la )?suscrip)/.test(
+      t
+    )
+  ) {
+    return true;
+  }
   return false;
 }
 

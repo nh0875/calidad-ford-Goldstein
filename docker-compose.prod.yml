@@ -48,6 +48,18 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      # Zona horaria del proceso: sin esto el contenedor corre en UTC y las
+      # fechas "de hoy", la ventana de envío y los reportes por día se corren
+      # 3 horas (a la madrugada un caso caería en el día siguiente).
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+      # GUARDA ANTI-CONFUSIÓN DE ENTORNO. Compose interpola los ${...} de este
+      # archivo desde `.env` (el de DESARROLLO), NO desde `.env.prod`: si se
+      # levanta el stack sin `--env-file .env.prod`, producción arranca con los
+      # valores de dev sin avisar (pasó: el idioma de la plantilla volvió a
+      # es_AR y Meta rechazó todos los envíos con el error 132001).
+      # ENTORNO_PROD existe SOLO en .env.prod, así que sin --env-file esto falla
+      # de entrada en vez de arrancar mal.
+      ENTORNO_PROD: ${ENTORNO_PROD:?falta --env-file .env.prod (sin eso se usan los valores de .env, que son los de desarrollo)}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-calidad_ford}?schema=public
       REDIS_URL: redis://redis:6379
       META_WHATSAPP_TOKEN: ${META_WHATSAPP_TOKEN:-}
@@ -64,6 +76,8 @@ services:
       HORA_FIN_ENVIO: ${HORA_FIN_ENVIO:-19:00}
       # Demora del agradecimiento (3 min)
       DELAY_AGRADECIMIENTO_MS: ${DELAY_AGRADECIMIENTO_MS:-180000}
+      # Ventana de consolidacion de la respuesta del cliente (ver .env)
+      DELAY_ANALISIS_MS: ${DELAY_ANALISIS_MS:-90000}
       # Cifrado de secretos guardados en Configuración (credenciales de Meta)
       CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:?definir en .env.prod}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -81,6 +95,8 @@ services:
       # CORS restrictivo (dominio real del sistema) y límite de requests por IP
       FRONTEND_URL: ${FRONTEND_URL:-}
       RATE_LIMIT_POR_MINUTO: ${RATE_LIMIT_POR_MINUTO:-100}
+      # Tope aparte y holgado para /webhooks (Meta entrega en ráfagas)
+      RATE_LIMIT_WEBHOOK_POR_MINUTO: ${RATE_LIMIT_WEBHOOK_POR_MINUTO:-600}
       # Estado del backup para /api/sistema/estado-backup (volumen compartido)
       BACKUP_STATUS_FILE: /var/backup-status/status.json
     volumes:

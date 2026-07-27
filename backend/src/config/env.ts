@@ -43,12 +43,19 @@ export const env = {
   // Parte A: demora del agradecimiento tras el ÚLTIMO mensaje del cliente
   // (deliberada, para que la conversación no se sienta automatizada). Default 3 min.
   delayAgradecimientoMs: Number(process.env.DELAY_AGRADECIMIENTO_MS ?? 180000),
+  // Ventana de consolidación: cuánto se espera SIN mensajes nuevos del cliente
+  // antes de analizar. Cada mensaje que llega reinicia la cuenta, así una
+  // respuesta partida en varios mensajes se analiza junta y una sola vez.
+  delayAnalisisMs: Number(process.env.DELAY_ANALISIS_MS ?? 90000),
   // CORS: dominio(s) del frontend de producción, separados por coma. Vacío en
   // desarrollo (se refleja el origen); en producción, si queda vacío, solo
   // funcionan las llamadas del mismo origen (que es el caso normal detrás de nginx).
   frontendUrl: process.env.FRONTEND_URL ?? "",
   // Tope de requests por minuto por IP para toda la API (mitiga abuso y loops de script).
   rateLimitPorMinuto: Number(process.env.RATE_LIMIT_POR_MINUTO ?? 100),
+  // Tope aparte y holgado para /webhooks: Meta entrega en ráfagas, así que el
+  // límite es alto y solo corta un pico anómalo o un loop, sin frenar a Meta.
+  rateLimitWebhookPorMinuto: Number(process.env.RATE_LIMIT_WEBHOOK_POR_MINUTO ?? 600),
   // Archivo JSON de estado del backup, escrito por el contenedor de backup y
   // leído por el endpoint /api/sistema/estado-backup (volumen compartido).
   backupStatusFile: process.env.BACKUP_STATUS_FILE ?? "/var/backup-status/status.json",

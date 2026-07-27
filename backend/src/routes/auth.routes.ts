@@ -8,9 +8,10 @@ const router = Router();
 // Público: es la puerta de entrada, no puede exigir el JWT que todavía no existe
 router.post("/login", asyncHandler(login));
 
-// Protegidas: requieren sesión ya iniciada
-router.get("/yo", requireAuth, asyncHandler(yo));
-router.post("/logout", requireAuth, asyncHandler(logout));
-router.post("/cambiar-password", requireAuth, asyncHandler(cambiarPassword));
+// Protegidas: requieren sesión ya iniciada. requireAuth es async (denylist +
+// base), así que también se envuelve en asyncHandler para capturar sus fallos.
+router.get("/yo", asyncHandler(requireAuth), asyncHandler(yo));
+router.post("/logout", asyncHandler(requireAuth), asyncHandler(logout));
+router.post("/cambiar-password", asyncHandler(requireAuth), asyncHandler(cambiarPassword));
 
 export default router;

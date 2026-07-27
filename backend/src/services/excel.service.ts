@@ -119,9 +119,10 @@ export function detectarFilaEncabezado(filas: unknown[][]): number {
     const coincidencias = celdas.filter((c) =>
       KEYWORDS_ENCABEZADO.some((k) => c === k || c.includes(k))
     ).length;
-    const tieneAncla = celdas.some(
-      (c) => c.includes("fecha de programacion") || c === "asesor"
-    );
+    // Ancla laxa (coherente con el matching por inclusión): "fecha programacion"
+    // y "asesor de servicio" también cuentan. El requisito de >=2 coincidencias
+    // evita falsos positivos.
+    const tieneAncla = celdas.some((c) => c.includes("programacion") || c.includes("asesor"));
     if (coincidencias >= 2 && tieneAncla) return i;
   }
   return -1;
@@ -212,7 +213,9 @@ const ALIAS_CAMPOS: Array<{ patrones: string[]; campo: CampoCaso }> = [
   { patrones: ["servicio fue realizado"], campo: "satisfaccionServicio" },
   { patrones: ["satisfaccion con ford"], campo: "satisfaccionFord" },
   { patrones: ["dejanos tu comentario"], campo: "comentarioCliente" },
-  { patrones: ["orden"], campo: "numeroOrden" }, // al final: "orden" es muy genérico
+  // "orden de servicio" es como viene la columna en el reporte real; "orden"
+  // suelto va al final porque es genérico (match exacto para no pisar "origen").
+  { patrones: ["orden de servicio", "orden de servi", "nro de orden", "n° de orden", "orden"], campo: "numeroOrden" },
 ];
 
 export function sugerirMapeo(columnas: string[]): Record<string, CampoCaso> {
@@ -244,6 +247,31 @@ const MESES: Record<string, string> = {
   ene: "01", feb: "02", mar: "03", abr: "04", jun: "06",
   jul: "07", ago: "08", sep: "09", set: "09", oct: "10", nov: "11", dic: "12",
 };
+
+/**
+ * Deriva el período (AAAA-MM) a partir de las FECHAS de los datos, cuando el
+ * nombre de la hoja no dice el mes (ej. el reporte real trae una única hoja
+ * "Normal"). Toma la columna mapeada a fechaProgramacion y devuelve el mes MÁS
+ * FRECUENTE. Así la usuaria no tiene que tipear el período a mano.
+ */
+export function derivarPeriodoDeFilas(
+  filas: FilaDatos[],
+  mapping: Record<string, CampoCaso>
+): string | null {
+  const columnaFecha = Object.entries(mapping).find(([, campo]) => campo === "fechaProgramacion")?.[0];
+  if (!columnaFecha) return null;
+
+  const conteo = new Map<string, number>();
+  for (const { datos } of filas) {
+    const fecha = parsearFecha(datos[columnaFecha]);
+    if (!fecha) continue;
+    const clave = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, "0")}`;
+    conteo.set(clave, (conteo.get(clave) ?? 0) + 1);
+  }
+  if (conteo.size === 0) return null;
+  // El mes con más filas (desempate: el más reciente).
+  return [...conteo.entries()].sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))[0][0];
+}
 
 export function derivarPeriodo(nombreHoja: string, anio: number): string | null {
   const norm = normalizarTexto(nombreHoja);

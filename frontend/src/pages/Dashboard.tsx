@@ -239,9 +239,12 @@ export default function Dashboard() {
               <h3 className="mb-3 text-sm font-semibold text-ink">Distribución del semáforo</h3>
               <DistribucionSemaforo totales={resumen.semaforo.totales} porcentajes={resumen.semaforo.porcentajes} />
               {resumen.semaforo.totales.revisionManual > 0 && (
-                <p className="mt-2 text-xs text-purple-700">
-                  ⚠ {resumen.semaforo.totales.revisionManual} respuesta(s) pendientes de revisión manual
-                </p>
+                <Link
+                  to="/revision-manual"
+                  className="mt-2 inline-block text-xs font-medium text-purple-700 hover:underline"
+                >
+                  ⚠ {resumen.semaforo.totales.revisionManual} respuesta(s) pendientes de revisión manual — clasificar →
+                </Link>
               )}
               <h4 className="mb-1 mt-5 text-xs font-semibold uppercase text-ink-muted">Top causas raíz del período</h4>
               {resumen.topCategorias.length > 0 ? (

@@ -1,7 +1,7 @@
 // Importa el Excel de RQR del área (formato formulario: UNA HOJA POR RQR,
 // con el layout del papel) y crea los RQR en el sistema. Si encuentra un
 // Caso por patente/VIN o teléfono, lo vincula; si no, usa los campos manuales.
-import { EstadoRQR, Prisma } from "@prisma/client";
+import { AreaTrabajo, EstadoRQR, Prisma } from "@prisma/client";
 import * as XLSX from "xlsx";
 import { prisma } from "../config/prisma";
 import { abrirWorkbook, normalizarTexto, parsearFecha } from "./excel.service";
@@ -239,6 +239,9 @@ export async function importarFormulariosRqr(buffer: Buffer): Promise<{
           const creado = await tx.rQR.create({
             data: {
               casoId: caso?.id ?? null,
+              // El RQR hereda el área del caso vinculado (si no, cae en POSVENTA
+              // por default aunque el caso sea de VENTAS y desaparece del filtro).
+              area: caso?.area ?? AreaTrabajo.POSVENTA,
               nombreClienteManual: caso ? null : form.nombreCliente,
               telefonoManual: caso ? null : telefono,
               modeloManual: caso ? null : form.modelo,

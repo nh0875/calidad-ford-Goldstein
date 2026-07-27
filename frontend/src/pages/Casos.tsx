@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquarePlus, Send, SearchX, Trash2 } from "lucide-react";
+import { MessageSquarePlus, Pencil, RotateCcw, Send, SearchX, Trash2, UserPlus } from "lucide-react";
 import { apiDelete, apiGet, apiPostJson } from "../lib/api";
 import { getModoDemo, getUsuario, veTodasLasAreas } from "../lib/auth";
 import { AREAS, etiquetaArea, tonoArea } from "../lib/area";
@@ -11,6 +11,7 @@ import { Campo, Select } from "../components/ui/Field";
 import { SkeletonTableRows } from "../components/ui/Skeleton";
 import { EmptyState } from "../components/ui/EmptyState";
 import { ConfirmarEliminacion } from "../components/ui/ConfirmarEliminacion";
+import { NuevoCasoModal } from "../components/NuevoCasoModal";
 
 // ---------- Tipos ----------
 
@@ -25,6 +26,8 @@ interface Caso {
   nombrePropietario: string;
   whatsapp: string;
   celular: string;
+  emailPropietario: string | null;
+  comentarioAsesor: string | null;
   sucursal: string;
   area: string;
   estadoContacto: string;
@@ -98,13 +101,21 @@ export default function Casos() {
     asesores: [],
     periodos: [],
   });
-  useEffect(() => {
+  const cargarOpciones = useCallback(() => {
     apiGet<{ sucursales: string[]; asesores: string[]; periodos: string[] }>("/api/casos/opciones")
       .then(setOpciones)
       .catch(() => {
         /* si falla, los desplegables quedan vacíos; no es bloqueante */
       });
   }, []);
+  useEffect(() => {
+    cargarOpciones();
+  }, [cargarOpciones]);
+
+  // Alta manual de un caso suelto (el que no vino en el Excel)
+  const [nuevoCaso, setNuevoCaso] = useState(false);
+  // Edición de un caso existente (corregir datos mal cargados)
+  const [casoEditar, setCasoEditar] = useState<Caso | null>(null);
 
   const hayFiltros = Object.values(filtros).some((v) => v.trim() !== "");
 
@@ -129,8 +140,27 @@ export default function Casos() {
   const [aEliminar, setAEliminar] = useState<Caso | null>(null);
   const [eliminando, setEliminando] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
-  const hayColumnaAcciones = esAdmin || modoDemo;
-  const columnas = hayColumnaAcciones ? 13 : 12;
+  // La columna va siempre: el botón de reintentar un envío fallido lo necesita
+  // cualquier usuario, no solo ADMIN.
+  const columnas = 13;
+
+  // Reintento de un envío fallido: el caso queda en ERROR y las campañas solo
+  // alcanzan PENDIENTE, así que sin esto no habría forma de recuperarlo.
+  const [reintentando, setReintentando] = useState<string | null>(null);
+
+  async function reintentarEnvio(caso: Caso) {
+    setReintentando(caso.id);
+    setError(null);
+    try {
+      const { message } = await apiPostJson<{ message: string }>(`/api/campanas/reintentar/${caso.id}`, {});
+      setMensaje(message);
+      iniciarPolling(); // muestra la barra de progreso como en una campaña
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No pudimos reintentar el envío.");
+    } finally {
+      setReintentando(null);
+    }
+  }
 
   // Modo demo: simular una respuesta entrante del cliente
   const [simularCaso, setSimularCaso] = useState<Caso | null>(null);
@@ -273,17 +303,22 @@ export default function Casos() {
     setError(null);
     try {
       const body: Record<string, unknown> = {};
+      // El área NO va en el body: el backend la lee del query string (igual que
+      // el preview). Si no se pasa, enviaría a TODAS las áreas del usuario y no
+      // coincidiría con el número previsualizado.
+      let qs = "";
       if (modal.modo === "seleccion") {
         body.casoIds = [...seleccion];
       } else {
         // IMPORTANTE: enviar EXACTAMENTE los mismos filtros que el preview, para
-        // que el envío coincida con el número mostrado (incluye origen).
+        // que el envío coincida con el número mostrado (incluye origen y área).
         if (filtros.sucursal.trim()) body.sucursal = filtros.sucursal.trim();
         if (filtros.asesor.trim()) body.asesor = filtros.asesor.trim();
         if (filtros.periodo.trim()) body.periodo = filtros.periodo.trim();
         if (filtros.origenAgendamiento) body.origenAgendamiento = filtros.origenAgendamiento;
+        if (filtros.area) qs = `?area=${encodeURIComponent(filtros.area)}`;
       }
-      await apiPostJson<{ encolados: number }>("/api/campanas/enviar", body);
+      await apiPostJson<{ encolados: number }>(`/api/campanas/enviar${qs}`, body);
       setModal(null);
       setSeleccion(new Set());
       iniciarPolling();
@@ -437,6 +472,14 @@ export default function Casos() {
         <button onClick={() => abrirPreview("filtro")} className={claseBoton("secundario")}>
           Enviar a todos los pendientes del filtro actual
         </button>
+        <button
+          onClick={() => setNuevoCaso(true)}
+          className={claseBoton("secundario")}
+          title="Cargar a mano un cliente que no vino en el Excel"
+        >
+          <UserPlus className="h-4 w-4" aria-hidden="true" />
+          Agregar caso
+        </button>
         {respuesta && (
           <span className="ml-auto text-sm text-ink-muted">
             {respuesta.pagination.total} caso(s) — página {respuesta.pagination.page} de{" "}
@@ -449,6 +492,12 @@ export default function Casos() {
         encabezado marca solo los pendientes de <em>esta</em> página). <strong>Todos los pendientes del filtro:</strong>{" "}
         ignora la selección y usa los filtros de arriba. En ambos casos, el preview confirma el número exacto antes de enviar.
       </p>
+      {casos.length > 0 && pendientesEnPagina.length === 0 && (
+        <p className="-mt-2 text-xs font-medium text-amber-700">
+          En esta página no hay casos <strong>pendientes</strong>, así que no hay nada para seleccionar. Solo se puede
+          enviar WhatsApp a casos en estado “Pendiente”: filtrá por <em>Estado de contacto → PENDIENTE</em> para verlos.
+        </p>
+      )}
 
       {/* Tabla */}
       <Card padding="p-0" className="overflow-x-auto">
@@ -456,12 +505,19 @@ export default function Casos() {
           <thead>
             <tr className="border-b bg-gray-50 text-left text-xs uppercase text-ink-muted">
               <th className="px-3 py-2">
+                {/* Se deshabilita cuando no hay nada elegible en la página: si no,
+                    el usuario clickea y "no pasa nada" sin entender por qué. */}
                 <input
                   type="checkbox"
-                  className="h-4 w-4 accent-accent"
+                  className="h-4 w-4 accent-accent disabled:cursor-not-allowed disabled:opacity-30"
+                  disabled={pendientesEnPagina.length === 0}
                   checked={pendientesEnPagina.length > 0 && pendientesEnPagina.every((c) => seleccion.has(c.id))}
                   onChange={alternarPagina}
-                  title="Marca/desmarca los pendientes de ESTA página (la selección se mantiene entre páginas)"
+                  title={
+                    pendientesEnPagina.length === 0
+                      ? "No hay casos pendientes en esta página. Solo se puede enviar WhatsApp a casos en estado Pendiente."
+                      : `Marca/desmarca los ${pendientesEnPagina.length} caso(s) pendiente(s) de ESTA página (la selección se mantiene entre páginas)`
+                  }
                 />
               </th>
               <th className="px-3 py-2">Fecha</th>
@@ -475,7 +531,7 @@ export default function Casos() {
               <th className="px-3 py-2">WhatsApp</th>
               <th className="px-3 py-2">Semáforo</th>
               <th className="px-3 py-2">Estado</th>
-              {hayColumnaAcciones && <th className="px-3 py-2 text-center">Acciones</th>}
+              <th className="px-3 py-2 text-center">Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -553,9 +609,31 @@ export default function Casos() {
                       </Badge>
                     ) : null}
                   </td>
-                  {hayColumnaAcciones && (
+                  {
                     <td className="whitespace-nowrap px-3 py-2 text-center">
                       <div className="flex items-center justify-center gap-3">
+                        {/* Envío fallido: sin este botón el caso queda varado,
+                            porque las campañas solo alcanzan casos PENDIENTE. */}
+                        {c.estadoContacto === "ERROR" && !c.whatsappOptOut && !c.suprimido && (
+                          <button
+                            onClick={() => reintentarEnvio(c)}
+                            disabled={reintentando === c.id}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-accent-dark hover:underline disabled:opacity-50"
+                            title={c.ultimoErrorEnvio ? `Reintentar. Falló con: ${c.ultimoErrorEnvio}` : "Reintentar el envío"}
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                            {reintentando === c.id ? "Reintentando…" : "Reintentar"}
+                          </button>
+                        )}
+                        {/* Editar datos del caso (corregir cargas erróneas). */}
+                        <button
+                          onClick={() => setCasoEditar(c)}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-accent-dark hover:underline"
+                          title="Editar los datos del caso"
+                        >
+                          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                          Editar
+                        </button>
                         {modoDemo && c.estadoContacto === "ENVIADO" && (
                           <button
                             onClick={() => {
@@ -581,7 +659,7 @@ export default function Casos() {
                         )}
                       </div>
                     </td>
-                  )}
+                  }
                 </tr>
               );
             })}
@@ -649,6 +727,39 @@ export default function Casos() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Alta manual de un caso */}
+      {nuevoCaso && (
+        <NuevoCasoModal
+          sucursales={opciones.sucursales}
+          asesores={opciones.asesores}
+          onCancelar={() => setNuevoCaso(false)}
+          onGuardado={(msg) => {
+            setNuevoCaso(false);
+            setMensaje(msg);
+            setError(null);
+            cargarOpciones(); // pudo aparecer una sucursal/asesor/período nuevo
+            cargarCasos();
+          }}
+        />
+      )}
+
+      {/* Edición de un caso existente (corregir datos mal cargados) */}
+      {casoEditar && (
+        <NuevoCasoModal
+          sucursales={opciones.sucursales}
+          asesores={opciones.asesores}
+          caso={casoEditar}
+          onCancelar={() => setCasoEditar(null)}
+          onGuardado={(msg) => {
+            setCasoEditar(null);
+            setMensaje(msg);
+            setError(null);
+            cargarOpciones(); // pudo cambiar una sucursal/asesor
+            cargarCasos();
+          }}
+        />
       )}
 
       {/* Modal de simular respuesta del cliente (solo modo demo) */}

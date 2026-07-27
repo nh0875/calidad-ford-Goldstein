@@ -1,9 +1,9 @@
 import { Request, Response } from "express";
 import { EstadoContacto, MessageDirection } from "@prisma/client";
 import { prisma } from "../config/prisma";
-import { analisisQueue } from "../jobs/queues";
 import { normalizarTelefonoAR } from "../services/telefono.service";
 import { marcarOptOutSiCorresponde } from "../services/agradecimiento.service";
+import { programarAnalisis } from "../services/analisis.service";
 import { obtenerCredencialesMeta } from "../services/configuracion.service";
 
 // ---------- GET: verificación inicial del webhook por parte de Meta ----------
@@ -29,10 +29,16 @@ interface MensajeEntranteMeta {
   text?: { body: string };
   button?: { text: string };
   interactive?: { button_reply?: { title: string }; list_reply?: { title: string } };
+  // Reacción con emoji (el cliente "reacciona" a nuestro mensaje con 👍, ❤️, etc.).
+  // Llega como type "reaction", NO como texto. emoji vacío = quitó la reacción.
+  reaction?: { emoji?: string; message_id?: string };
 }
 
 function extraerContenido(mensaje: MensajeEntranteMeta): string {
   if (mensaje.text?.body) return mensaje.text.body;
+  // Una reacción es el emoji solo (👍). Se guarda tal cual para que el análisis
+  // lo clasifique (un 👍 es un VERDE); ver esReaccionPositiva en analisis.service.
+  if (mensaje.reaction?.emoji) return mensaje.reaction.emoji;
   if (mensaje.button?.text) return mensaje.button.text;
   if (mensaje.interactive?.button_reply?.title) return mensaje.interactive.button_reply.title;
   if (mensaje.interactive?.list_reply?.title) return mensaje.interactive.list_reply.title;
@@ -40,6 +46,25 @@ function extraerContenido(mensaje: MensajeEntranteMeta): string {
 }
 
 async function procesarMensajeEntrante(mensaje: MensajeEntranteMeta) {
+  // Quitar una reacción (emoji vacío) no es una respuesta: llega como type
+  // "reaction" con emoji "". Se ignora para no crear un mensaje fantasma ni
+  // pasar el caso a RESPONDIDO por algo que el cliente justamente deshizo.
+  if (mensaje.type === "reaction" && !mensaje.reaction?.emoji) {
+    return;
+  }
+
+  // Idempotencia: Meta puede reintentar la MISMA entrega (mismo id). Si ese
+  // waMessageId ya está guardado (como mensaje entrante o como huérfano), no se
+  // procesa de nuevo (si no, se duplicaría el mensaje y se re-dispararía el
+  // análisis). El índice único de waMessageId es la garantía dura ante carreras.
+  if (mensaje.id) {
+    const [yaMsg, yaHuerfano] = await Promise.all([
+      prisma.whatsappMessage.findFirst({ where: { waMessageId: mensaje.id }, select: { id: true } }),
+      prisma.mensajeHuerfano.findFirst({ where: { waMessageId: mensaje.id }, select: { id: true } }),
+    ]);
+    if (yaMsg || yaHuerfano) return;
+  }
+
   // El número llega como "549264..." — se prueba tal cual (+) y re-normalizado
   const candidatos = [...new Set([`+${mensaje.from}`, normalizarTelefonoAR(mensaje.from)])].filter(
     (t): t is string => t !== null
@@ -48,17 +73,23 @@ async function procesarMensajeEntrante(mensaje: MensajeEntranteMeta) {
   const contenido = extraerContenido(mensaje);
 
   // Se prioriza un caso esperando respuesta (ENVIADO); si no hay, cualquier caso
-  // con ese teléfono (puede ser una respuesta tardía ya marcada NO_RESPONDIO)
+  // con ese teléfono (puede ser una respuesta tardía ya marcada NO_RESPONDIO).
+  // Se excluyen los casos borrados: una respuesta no debe engancharse a un caso
+  // eliminado (ej. un duplicado que se dio de baja) y perderse de la vista.
   const caso =
     (await prisma.caso.findFirst({
       where: {
+        eliminadoEn: null,
         estadoContacto: EstadoContacto.ENVIADO,
         OR: [{ whatsapp: { in: candidatos } }, { celular: { in: candidatos } }],
       },
       orderBy: { createdAt: "desc" },
     })) ??
     (await prisma.caso.findFirst({
-      where: { OR: [{ whatsapp: { in: candidatos } }, { celular: { in: candidatos } }] },
+      where: {
+        eliminadoEn: null,
+        OR: [{ whatsapp: { in: candidatos } }, { celular: { in: candidatos } }],
+      },
       orderBy: { createdAt: "desc" },
     }));
 
@@ -77,7 +108,7 @@ async function procesarMensajeEntrante(mensaje: MensajeEntranteMeta) {
     return;
   }
 
-  const guardado = await prisma.whatsappMessage.create({
+  await prisma.whatsappMessage.create({
     data: {
       casoId: caso.id,
       direction: MessageDirection.ENTRANTE,
@@ -95,16 +126,11 @@ async function procesarMensajeEntrante(mensaje: MensajeEntranteMeta) {
   // Opt-out (BAJA/STOP): se marca el caso; el agradecimiento lo respeta (no se envía)
   await marcarOptOutSiCorresponde(caso.id, contenido);
 
-  await analisisQueue.add(
-    "analizar-respuesta",
-    { casoId: caso.id, messageId: guardado.id },
-    {
-      attempts: 5, // el 429 de cuota se reintenta con backoff largo; no queremos jobs muertos
-      backoff: { type: "custom" }, // ver backoffStrategy del worker (60-90s ante 429)
-      removeOnComplete: { age: 3600, count: 5000 },
-      removeOnFail: { age: 24 * 3600 },
-    }
-  );
+  // El análisis NO se dispara por mensaje: se programa (y se reprograma con
+  // cada mensaje nuevo) para analizar la tanda completa de una sola vez. Un
+  // cliente que escribe "hola" / "todo bien" / "pero tardaron" genera UN
+  // análisis, no tres. Ver analisis.service.ts.
+  await programarAnalisis(caso.id);
 
   console.log(`[webhook] respuesta de ${mensaje.from} asociada al caso ${caso.numeroOrden} (${caso.id})`);
 }
@@ -123,17 +149,27 @@ export async function recibirWebhook(req: Request, res: Response) {
         const valor = cambio?.value;
         if (!valor) continue;
 
+        // Cada mensaje se aísla: si uno falla (DB, análisis, etc.) no debe
+        // abortar el resto de la tanda ni perder los otros mensajes del batch.
         for (const mensaje of (valor.messages ?? []) as MensajeEntranteMeta[]) {
-          await procesarMensajeEntrante(mensaje);
+          try {
+            await procesarMensajeEntrante(mensaje);
+          } catch (err) {
+            console.error(`[webhook] error procesando mensaje ${mensaje?.id ?? "?"}:`, err);
+          }
         }
 
         // Acuses de entrega/lectura de los mensajes salientes
         for (const status of (valor.statuses ?? []) as StatusMeta[]) {
           if (!status?.id || !status?.status) continue;
-          await prisma.whatsappMessage.updateMany({
-            where: { waMessageId: status.id },
-            data: { status: status.status },
-          });
+          try {
+            await prisma.whatsappMessage.updateMany({
+              where: { waMessageId: status.id },
+              data: { status: status.status },
+            });
+          } catch (err) {
+            console.error(`[webhook] error actualizando status ${status.id}:`, err);
+          }
         }
       }
     }

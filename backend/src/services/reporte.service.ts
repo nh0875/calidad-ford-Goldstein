@@ -50,6 +50,11 @@ export async function reporteSentimiento(f: FiltrosReporte) {
   // Análisis con su caso, excluyendo casos internos
   const analisis = await prisma.sentimentAnalysis.findMany({
     where: {
+      // Solo la clasificación que cuenta de cada caso. Los seguimientos (lo que
+      // el cliente escribió después) quedan afuera: si no, un cliente que
+      // contesta con cinco mensajes valdría como cinco respuestas en los
+      // totales y en el ranking del asesor.
+      esSeguimiento: false,
       analyzedAt: rangoFechas(f),
       caso: { ...whereCaso(f), estadoContacto: { not: EstadoContacto.INTERNO } },
     },
@@ -174,18 +179,34 @@ export interface FiltrosCausaRaiz extends FiltrosReporte {
 }
 
 export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
-  // El filtro por caso solo se aplica si hay filtros reales: un `caso: {}`
-  // excluiría a los RQR manuales sin caso vinculado
-  const filtroCaso = whereCaso(f);
-  const hayFiltroCaso = Object.keys(filtroCaso).length > 0;
+  // Área: se filtra por el área del PROPIO RQR (los manuales sin caso también la
+  // tienen), no por la del caso. Sucursal/asesor/período sí dependen del caso;
+  // si hay alguno, los RQR manuales (sin caso) quedan fuera, que es lo correcto.
+  const areaRqr: Prisma.RQRWhereInput = f.area ? { area: f.area } : {};
+  const hayFiltroDeCaso = !!(f.sucursal || f.asesor || f.periodo);
+  const filtroCaso: Prisma.CasoWhereInput = {
+    eliminadoEn: null,
+    ...(f.sucursal ? { sucursal: { equals: f.sucursal, mode: "insensitive" } } : {}),
+    ...(f.asesor ? { asesor: { contains: f.asesor, mode: "insensitive" } } : {}),
+    ...(f.periodo ? { upload: { periodo: f.periodo } } : {}),
+  };
 
   // 1) Todos los RQR del período (abiertos y cerrados)
   const rqrs = await prisma.rQR.findMany({
     where: {
       eliminadoEn: null, // excluye RQR borrados lógicamente
       fechaApertura: rangoFechas(f),
+      ...areaRqr,
       ...(f.categoria ? { causaRaiz: f.categoria } : {}),
-      ...(hayFiltroCaso ? { caso: filtroCaso } : {}),
+      // Con filtro de caso (sucursal/asesor/período) se aplica filtroCaso, que
+      // ya exige caso.eliminadoEn=null y de paso excluye los manuales (correcto:
+      // no tienen sucursal). SIN filtro de caso NO se puede dejar el where sin
+      // condición de caso: un RQR de un caso borrado lógicamente reaparecería
+      // (el filtro de arriba solo mira RQR.eliminadoEn, no el del caso). Se
+      // incluyen entonces los manuales (casoId null) O los de un caso vivo.
+      ...(hayFiltroDeCaso
+        ? { caso: filtroCaso }
+        : { OR: [{ casoId: null }, { caso: { eliminadoEn: null } }] }),
     },
     include: {
       caso: {
@@ -205,6 +226,7 @@ export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
   const amarillosSinRqr = f.incluirAmarilloSinRqr
     ? await prisma.sentimentAnalysis.findMany({
         where: {
+          esSeguimiento: false, // ídem: un amarillo de seguimiento no se lista aparte
           semaforo: Semaforo.AMARILLO,
           rqr: null,
           analyzedAt: rangoFechas(f),

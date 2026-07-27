@@ -1,12 +1,16 @@
 import { Router } from "express";
 import { asyncHandler } from "../middlewares/asyncHandler";
 import {
+  contarRevisionManual,
   listRevisionManual,
   listSentimentAnalysis,
   patchSentimentAnalysis,
 } from "../controllers/sentiment.controller";
 
 const router = Router();
+
+// Solo el contador, para el badge del menú (antes que la ruta con parámetros)
+router.get("/revision-manual/pendientes", asyncHandler(contarRevisionManual));
 
 // Bandeja de casos que la IA no pudo clasificar (o marcó ambiguos)
 router.get("/revision-manual", asyncHandler(listRevisionManual));

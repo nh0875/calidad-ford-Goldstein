@@ -9,6 +9,7 @@ import Casos from "./pages/Casos";
 import ReporteSentimiento from "./pages/ReporteSentimiento";
 import ReporteCausasRaiz from "./pages/ReporteCausasRaiz";
 import Rqr from "./pages/Rqr";
+import RevisionManual from "./pages/RevisionManual";
 import RqrDetalle from "./pages/RqrDetalle";
 import RqrNuevo from "./pages/RqrNuevo";
 import Usuarios from "./pages/Usuarios";
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="/casos" element={<Casos />} />
           <Route path="/reportes/sentimiento" element={<ReporteSentimiento />} />
           <Route path="/reportes/causas-raiz" element={<ReporteCausasRaiz />} />
+          <Route path="/revision-manual" element={<RevisionManual />} />
           <Route path="/rqr" element={<Rqr />} />
           <Route path="/rqr/nuevo" element={<RqrNuevo />} />
           <Route path="/refuerzos" element={<Refuerzos />} />

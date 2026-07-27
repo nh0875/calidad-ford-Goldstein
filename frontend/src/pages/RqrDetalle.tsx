@@ -150,7 +150,15 @@ export default function RqrDetalle() {
         observaciones: form.observaciones || null,
         areaOrigen: form.areaOrigen,
         areaAfectada: form.areaAfectada || null,
-        ...(form.fechaCierre ? { fechaCierre: form.fechaCierre } : {}),
+        // Al reabrir (estado != CERRADO) se limpia la fecha de cierre de forma
+        // explícita: si no, el form conserva la fecha vieja y el RQR quedaría
+        // "abierto" pero con fecha de cierre. Al cerrar sin fecha a mano se
+        // omite el campo para que el backend la complete automáticamente.
+        ...(form.estado === "CERRADO"
+          ? form.fechaCierre
+            ? { fechaCierre: form.fechaCierre }
+            : {}
+          : { fechaCierre: null }),
       });
       setMensaje(body.message);
       await cargar(); // refresca fechaCierre automática y estado

@@ -46,6 +46,7 @@ interface ResultadoHoja {
   totalFilas: number;
   insertados: number;
   duplicados: number;
+  ordenesDuplicadas: string[];
   errores: Array<{ fila: number; motivo: string }>;
   historicosConSentimiento: number;
   semaforo: { VERDE: number; AMARILLO: number; ROJO: number };
@@ -61,6 +62,7 @@ interface ConfirmResponse {
     insertados: number;
     duplicados: number;
     conError: number;
+    ordenesDuplicadas: string[];
     historicosConSentimiento: number;
     semaforo: { VERDE: number; AMARILLO: number; ROJO: number };
   };
@@ -166,7 +168,7 @@ function UploadPosventa({ area = "POSVENTA" }: { area?: "POSVENTA" | "VENTAS" })
     setError(null);
     const archivo = inputArchivo.current?.files?.[0];
     if (!archivo) {
-      setError("Elegí el archivo Excel (.xlsx) de Contacto Posterior para continuar.");
+      setError("Elegí el archivo Excel (.xlsx o .xls) de Contacto Posterior para continuar.");
       return;
     }
     if (!sucursal.trim()) {
@@ -202,7 +204,7 @@ function UploadPosventa({ area = "POSVENTA" }: { area?: "POSVENTA" | "VENTAS" })
       setHojaActiva(primera?.nombre ?? null);
       setPaso("mapeo");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No pudimos leer el archivo. Verificá que sea un .xlsx válido.");
+      setError(err instanceof Error ? err.message : "No pudimos leer el archivo. Verificá que sea un Excel válido (.xlsx o .xls).");
     } finally {
       setCargando(false);
     }
@@ -309,11 +311,11 @@ function UploadPosventa({ area = "POSVENTA" }: { area?: "POSVENTA" | "VENTAS" })
                 className="w-40"
               />
             </Campo>
-            <Campo etiqueta="Archivo Excel (.xlsx)">
+            <Campo etiqueta="Archivo Excel (.xlsx o .xls)" hint="Podés subir el archivo tal como lo descargás, sin borrar columnas ni convertirlo.">
               <input
                 ref={inputArchivo}
                 type="file"
-                accept=".xlsx"
+                accept=".xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 className="block w-full text-sm text-ink-muted file:mr-3 file:rounded-md file:border-0 file:bg-navy file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-navy-dark"
               />
             </Campo>
@@ -489,6 +491,19 @@ function UploadPosventa({ area = "POSVENTA" }: { area?: "POSVENTA" | "VENTAS" })
         <div className="space-y-6">
           <Alert tono="exito">{resultado.message}</Alert>
 
+          {resultado.totales.ordenesDuplicadas.length > 0 && (
+            <Alert tono="advertencia">
+              <strong>
+                {resultado.totales.ordenesDuplicadas.length} orden(es) ya existían y NO se cargaron.
+              </strong>{" "}
+              Un número de orden no puede repetirse: estas filas quedaron afuera. Revisá el archivo si creés que
+              alguna debería haberse cargado.
+              <div className="mt-1 break-words font-mono text-xs">
+                {resultado.totales.ordenesDuplicadas.join(", ")}
+              </div>
+            </Alert>
+          )}
+
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Tarjeta titulo="Casos nuevos guardados" valor={resultado.totales.insertados} color="text-green-700" />
             <Tarjeta titulo="Ya existían (omitidos)" valor={resultado.totales.duplicados} color="text-ink-muted" />
@@ -518,6 +533,12 @@ function UploadPosventa({ area = "POSVENTA" }: { area?: "POSVENTA" | "VENTAS" })
                 <p className="mt-1 text-xs text-ink-muted">
                   {r.internosExcluidosDeWhatsapp} caso(s) internos (INT) quedaron excluidos de los envíos de WhatsApp.
                 </p>
+              )}
+              {r.ordenesDuplicadas.length > 0 && (
+                <div className="mt-2 rounded bg-amber-50 p-3 text-xs text-amber-800">
+                  <span className="font-medium">Órdenes repetidas (no cargadas):</span>{" "}
+                  <span className="break-words font-mono">{r.ordenesDuplicadas.join(", ")}</span>
+                </div>
               )}
               {r.errores.length > 0 && (
                 <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded bg-red-50 p-3 text-xs text-red-700">

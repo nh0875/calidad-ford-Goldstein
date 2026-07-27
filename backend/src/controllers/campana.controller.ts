@@ -1,12 +1,14 @@
 import { Request, Response } from "express";
-import { OrigenAgendamiento } from "@prisma/client";
+import { EstadoContacto, OrigenAgendamiento } from "@prisma/client";
 import { z } from "zod";
 import { env } from "../config/env";
+import { prisma } from "../config/prisma";
 import { contarDestinatarios, encolarCampana, progresoCola } from "../services/campana.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { cupoDisponibleHoy, dentroDeVentana } from "../services/ventana-envio.service";
 import { estadoMeta } from "../services/configuracion.service";
-import { areaEfectiva, parsearAreaQuery } from "../services/area.service";
+import { areaEfectiva, parsearAreaQuery, puedeAcceder } from "../services/area.service";
+import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
 
 const filtrosSchema = z.object({
   uploadId: z.string().trim().min(1).optional(),
@@ -126,4 +128,106 @@ export async function enviarCampana(req: Request, res: Response) {
 
 export async function progresoCampana(_req: Request, res: Response) {
   res.json(await progresoCola());
+}
+
+// ---------- POST /api/campanas/reintentar/:casoId ----------
+// Un envío fallido deja el caso en ERROR, y las campañas solo alcanzan casos
+// PENDIENTE: sin esto, un caso que falló (número mal cargado, caída de Meta,
+// plantilla mal configurada) quedaba varado para siempre y la única salida era
+// tocar la base a mano. Reintenta UN caso puntual, con las mismas reglas que
+// una campaña (área, baja del cliente, lista de supresión, ventana y tope).
+
+export async function reintentarEnvio(req: Request, res: Response) {
+  const casoId = String(req.params.casoId ?? "").trim();
+  if (!casoId) return res.status(400).json({ message: "Falta indicar el caso." });
+
+  const caso = await prisma.caso.findFirst({
+    where: { id: casoId, eliminadoEn: null },
+    select: {
+      id: true,
+      area: true,
+      numeroOrden: true,
+      nombrePropietario: true,
+      estadoContacto: true,
+      whatsappOptOut: true,
+      telefonosNorm: true,
+      ultimoErrorEnvio: true,
+    },
+  });
+  if (!caso) return res.status(404).json({ message: "No encontramos ese caso." });
+
+  if (!puedeAcceder(req.usuario!, caso.area)) {
+    return res.status(403).json({ message: "Ese caso es de otra área: no lo podés gestionar." });
+  }
+
+  if (caso.estadoContacto !== EstadoContacto.ERROR) {
+    return res.status(409).json({
+      message:
+        "Solo se puede reintentar un caso cuyo envío falló. " +
+        `Este caso está en estado ${caso.estadoContacto}.`,
+    });
+  }
+
+  if (caso.whatsappOptOut) {
+    return res.status(409).json({
+      message: "El cliente pidió la baja (BAJA/STOP): no se le pueden mandar más mensajes.",
+    });
+  }
+
+  const suprimidos = await telefonosSuprimidos();
+  if (estaSuprimido(caso.telefonosNorm, suprimidos)) {
+    return res.status(409).json({
+      message: "El teléfono está en la lista de supresión (no contactar): no se le pueden mandar mensajes.",
+    });
+  }
+
+  if (!env.modoDemo) {
+    const meta = await estadoMeta();
+    if (!meta.completo) {
+      return res.status(409).json({
+        message:
+          "Faltan configurar las credenciales de WhatsApp en Configuración (token y phone number ID de Meta).",
+      });
+    }
+  }
+
+  // Vuelve a PENDIENTE para que lo tome la cola, y se limpia el error viejo.
+  await prisma.caso.update({
+    where: { id: caso.id },
+    data: { estadoContacto: EstadoContacto.PENDIENTE, ultimoErrorEnvio: null },
+  });
+
+  // encolarCampana revalida todo (área, supresión, PENDIENTE) y limpia el job
+  // fallido que quedó en Redis, que si no bloquearía el reintento en silencio.
+  const area = areaEfectiva(req.usuario!, undefined);
+  const encolados = await encolarCampana({ casoIds: [caso.id], area });
+
+  if (encolados === 0) {
+    // No debería pasar, pero si algo lo dejó afuera, no lo dejamos "pendiente"
+    // dando la falsa impresión de que se va a enviar.
+    await prisma.caso.update({
+      where: { id: caso.id },
+      data: { estadoContacto: EstadoContacto.ERROR, ultimoErrorEnvio: caso.ultimoErrorEnvio },
+    });
+    return res.status(409).json({ message: "No pudimos reencolar el caso. Revisá que no esté dado de baja o suprimido." });
+  }
+
+  await auditar(req, {
+    accion: ACCIONES.ENVIO_REINTENTADO,
+    entidad: "Caso",
+    entidadId: caso.id,
+    detalles: {
+      numeroOrden: caso.numeroOrden,
+      cliente: caso.nombrePropietario,
+      errorPrevio: caso.ultimoErrorEnvio,
+    },
+  });
+
+  const avisos = !dentroDeVentana()
+    ? ` Estás fuera del horario de envío (${env.horaInicioEnvio}-${env.horaFinEnvio}): va a salir cuando abra la ventana.`
+    : "";
+
+  res.status(202).json({
+    message: `Reintento programado para ${caso.nombrePropietario} (orden ${caso.numeroOrden}).${avisos}`,
+  });
 }

@@ -1,5 +1,13 @@
-import { AreaTrabajo, AreaUsuario, EstadoTareaRefuerzo, RolUsuario } from "@prisma/client";
+import { AreaTrabajo, AreaUsuario, EstadoTareaRefuerzo } from "@prisma/client";
 import { prisma } from "../config/prisma";
+import { claveNormalizada } from "./normalizacion.service";
+
+/** ¿Coincide la provincia del usuario con la del caso? Insensible a mayúsculas
+ * y ACENTOS ("Córdoba" == "Cordoba"). Un usuario sin sucursal (null) atiende todas. */
+export function mismaProvincia(sucursalUsuario: string | null, sucursalCaso: string | null | undefined): boolean {
+  if (!sucursalUsuario) return true; // atiende todas
+  return claveNormalizada(sucursalUsuario) === claveNormalizada(sucursalCaso ?? "");
+}
 
 // Estados "abiertos" (cuentan como carga de trabajo del empleado)
 export const ESTADOS_ABIERTOS: EstadoTareaRefuerzo[] = [
@@ -7,22 +15,36 @@ export const ESTADOS_ABIERTOS: EstadoTareaRefuerzo[] = [
   EstadoTareaRefuerzo.EN_GESTION,
 ];
 
-// Usuarios elegibles para recibir tareas (activos, rol CALIDAD, que participan),
-// con la cantidad de tareas ABIERTAS que ya tienen. Si se pasa `area`, solo los
-// de esa área o de AMBAS (una tarea de VENTAS nunca va a un usuario de POSVENTA).
+// Usuarios elegibles para recibir tareas: activos y que PARTICIPAN de los
+// refuerzos, con la cantidad de tareas ABIERTAS que ya tienen. El control es
+// `participaEnRefuerzos`, NO el rol: si el admin también gestiona casos (típico
+// cuando una sola persona opera el sistema), recibe tareas; para que un admin
+// solo supervise, se pone su `participaEnRefuerzos` en false.
+//
+// Se filtra por ÁREA y por PROVINCIA (sucursal) del caso, para no mezclar:
+//  - área:      solo los de esa área o de AMBAS (una tarea de VENTAS nunca va a POSVENTA).
+//  - provincia: solo los de esa sucursal o los "sin sucursal" (null = todas)
+//               (una tarea de un caso de Mendoza nunca va a alguien de San Juan).
 export async function usuariosElegiblesConCarga(
-  area?: AreaTrabajo
+  area?: AreaTrabajo,
+  sucursal?: string | null
 ): Promise<{ id: string; nombre: string; abiertas: number }[]> {
-  const usuarios = await prisma.usuario.findMany({
+  // El ÁREA se filtra en la base (barato). La PROVINCIA se filtra en JS con
+  // claveNormalizada, insensible a mayúsculas Y acentos: el ILIKE de Postgres
+  // pliega mayúsculas pero NO tildes, y una provincia como "Córdoba" cargada de
+  // dos formas ("Cordoba"/"Córdoba") no matchearía. La tabla de usuarios es
+  // chica (el equipo), así que traerla y filtrar en memoria no cuesta nada.
+  const candidatos = await prisma.usuario.findMany({
     where: {
       activo: true,
-      rol: RolUsuario.CALIDAD,
       participaEnRefuerzos: true,
       ...(area ? { area: { in: [area === AreaTrabajo.VENTAS ? AreaUsuario.VENTAS : AreaUsuario.POSVENTA, AreaUsuario.AMBAS] } } : {}),
     },
-    select: { id: true, nombre: true },
+    select: { id: true, nombre: true, sucursal: true },
     orderBy: { createdAt: "asc" },
   });
+  const suc = sucursal?.trim();
+  const usuarios = suc ? candidatos.filter((u) => mismaProvincia(u.sucursal, suc)) : candidatos;
   if (usuarios.length === 0) return [];
 
   const cargas = await prisma.tareaRefuerzo.groupBy({
