@@ -13,8 +13,12 @@
 #  log (salvo el latido diario) y nunca abre ventanas ni pide interaccion.
 # ==============================================================================
 
-# ---------- CONFIGURACION (editar segun la maquina) ----------
-$ProjectDir  = "C:\Users\hilli\Downloads\Goldstein\Vanina"
+# ---------- CONFIGURACION ----------
+# La carpeta del proyecto se detecta sola desde la ubicacion de este script
+# (scripts\windows\vigilante.ps1 -> sube dos niveles). Asi la carpeta se puede
+# copiar a CUALQUIER ruta de la PC de Vanina sin editar nada. Fallback: la ruta
+# fija de la maquina de desarrollo por si $PSScriptRoot no estuviera disponible.
+$ProjectDir  = if ($PSScriptRoot) { Split-Path (Split-Path $PSScriptRoot -Parent) -Parent } else { "C:\Users\hilli\Downloads\Goldstein\Vanina" }
 $EnvFile     = ".env.prod"
 $ComposeFile = "docker-compose.prod.yml"
 $DockerExe   = "C:\Program Files\Docker\Docker\Docker Desktop.exe"

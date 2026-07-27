@@ -3,11 +3,13 @@ REM ==================================================================
 REM  Arranque automatico del Sistema de Calidad (Windows + Docker)
 REM  Pensado para el Programador de tareas ("Al iniciar el sistema").
 REM
-REM  >>> EDITAR ESTAS 5 VARIABLES SEGUN TU MAQUINA <<<
+REM  No hace falta editar nada: la carpeta del proyecto se detecta sola.
 REM ==================================================================
 
-REM (1) Carpeta del proyecto: donde esta el archivo docker-compose.yml
-set "PROJECT_DIR=C:\Users\hilli\Downloads\Goldstein\Vanina"
+REM (1) Carpeta del proyecto: se calcula desde la ubicacion de este .bat
+REM     (scripts\windows\ -> sube dos niveles). Copiar la carpeta a CUALQUIER
+REM     ruta funciona sin editar nada.
+set "PROJECT_DIR=%~dp0..\.."
 
 REM (2) Segundos a esperar para que Docker Desktop termine de arrancar
 REM     antes de levantar los contenedores (subir si tu maquina es lenta)
