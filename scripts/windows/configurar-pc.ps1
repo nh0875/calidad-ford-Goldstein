@@ -203,9 +203,35 @@ if (-not $SoloVerificar) {
 $tarea = Get-ScheduledTask -TaskName $NombreTarea -ErrorAction SilentlyContinue
 Marcar ([bool]$tarea) "La tarea del vigilante existe y está registrada." "La tarea del vigilante NO está registrada." | Out-Null
 
-# ---------- 6) Corrida inicial: levantar todo ahora ----------
+# ---------- 6) Acceso directo en el escritorio (levantar a mano) ----------
+# Para que la usuaria pueda RELEVANTAR el sistema con un doble clic si algo se
+# traba (aunque el vigilante ya lo repara solo cada 5 min).
+if (-not $SoloVerificar) {
+  Titulo "6. Acceso directo 'Levantar Sistema de Calidad' en el escritorio"
+  try {
+    $bat = Join-Path $ProyectoDir "Levantar-sistema.bat"
+    if (Test-Path $bat) {
+      $desktop = [Environment]::GetFolderPath("Desktop")
+      $lnk = Join-Path $desktop "Levantar Sistema de Calidad.lnk"
+      $ws = New-Object -ComObject WScript.Shell
+      $sc = $ws.CreateShortcut($lnk)
+      $sc.TargetPath = $bat
+      $sc.WorkingDirectory = $ProyectoDir
+      $sc.IconLocation = "shell32.dll,238"
+      $sc.Description = "Levanta el Sistema de Calidad si se cayo"
+      $sc.Save()
+      Ok "Dejé un acceso directo 'Levantar Sistema de Calidad' en el escritorio."
+    } else {
+      Warn "No encontré Levantar-sistema.bat en la carpeta del proyecto (no se creó el acceso directo)."
+    }
+  } catch {
+    Warn ("No pude crear el acceso directo del escritorio: " + $_.Exception.Message)
+  }
+}
+
+# ---------- 7) Corrida inicial: levantar todo ahora ----------
 if (-not $SoloVerificar -and (Test-Path $Vigilante)) {
-  Titulo "6. Arranque inicial (levantando Docker, contenedores y ngrok)"
+  Titulo "7. Arranque inicial (levantando Docker, contenedores y ngrok)"
   Info "Esto puede tardar 1-2 minutos la primera vez..."
   try {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Vigilante | Out-Null
@@ -213,8 +239,8 @@ if (-not $SoloVerificar -and (Test-Path $Vigilante)) {
   } catch { Warn ("La corrida inicial devolvió un error: " + $_.Exception.Message) }
 }
 
-# ---------- 7) Verificación en vivo ----------
-Titulo "7. Verificación en vivo"
+# ---------- 8) Verificación en vivo ----------
+Titulo "8. Verificación en vivo"
 
 # ngrok respondiendo local
 $ngrokVivo = $false

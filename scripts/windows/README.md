@@ -221,6 +221,43 @@ nada). Solo se corta si se **apaga** o se **cierra sesión**.
 
 ---
 
+## Si el sistema no anda — levantarlo a mano (Vanina)
+
+El sistema se **repara solo** cada 5 minutos. Pero si en algún momento no anda y no
+querés esperar, en el **escritorio** hay un acceso directo
+**"Levantar Sistema de Calidad"**: hacé **doble clic** y esperá 1-2 minutos hasta
+que la ventana diga **LISTO**. Después abrí `http://localhost`.
+
+*(El acceso directo apunta a `Levantar-sistema.bat`, que está en la carpeta del
+sistema. Si no aparece en el escritorio, entrá a la carpeta y hacé doble clic ahí.)*
+
+---
+
+## Cómo entra el resto del equipo
+
+La PC de Vanina es el "servidor": mientras esté **prendida y andando**, los demás
+entran desde **su propio dispositivo** (PC, notebook o celular), cada uno con **su
+propio usuario**.
+
+- **Desde cualquier lado (por internet):**
+  `https://antitrust-trace-unloader.ngrok-free.dev`
+  - ⚠️ La primera vez puede aparecer una **pantalla de aviso de ngrok** ("You are
+    about to visit…"): hay que tocar **"Visit Site"** para entrar. Es una
+    limitación del plan **gratuito** de ngrok (no es una falla del sistema).
+- **En la misma oficina (más rápido y sin ese aviso):** por la **IP local** de la
+  PC de Vanina, por ejemplo `http://192.168.1.50`. Para saber la IP, en esa PC
+  abrí PowerShell y corré `ipconfig`; mirá el número de **"Dirección IPv4"**.
+
+Los usuarios los crea un **administrador** desde la pestaña **Usuarios** (email,
+contraseña, rol, área y provincia).
+
+> **⚠️ Importante (ngrok):** el plan gratuito permite **UN solo túnel a la vez** con
+> ese token. Cuando el sistema esté corriendo en la PC de Vanina, **ninguna otra PC
+> debe tener ngrok corriendo con el mismo token** (por ejemplo, la PC donde se
+> desarrolló): si dos lo usan a la vez, se pisan y deja de andar.
+
+---
+
 ## Si algo sale mal (problemas comunes)
 
 | Síntoma | Qué hacer |
