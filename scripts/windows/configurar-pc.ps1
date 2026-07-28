@@ -81,13 +81,49 @@ if (Marcar $tieneAuth "ngrok tiene un authtoken configurado." "ngrok NO tiene au
   Info "Configuralo con:  ngrok config add-authtoken [TU-AUTHTOKEN]   (está en el panel de ngrok)."
 }
 
-# ---------- 2) Arranque al iniciar sesión (modo seguro: SIN auto-login) ----------
+# ---------- 2) Energía: que la PC NO se suspenda ni hiberne ----------
+# Si la PC entra en suspensión/hibernación, TODO se congela: Docker, ngrok y el
+# backend quedan pausados y el sistema no responde a los WhatsApp mientras duerme.
+# Una PC que hace de servidor no debe dormir nunca.
+Titulo "2. Energía: que la PC no se suspenda ni hiberne"
+if (-not $SoloVerificar) {
+  try {
+    powercfg /change standby-timeout-ac 0   | Out-Null
+    powercfg /change standby-timeout-dc 0   | Out-Null
+    powercfg /change hibernate-timeout-ac 0 | Out-Null
+    powercfg /change hibernate-timeout-dc 0 | Out-Null
+    # En notebooks: cerrar la tapa NO debe suspender (el sistema tiene que seguir vivo).
+    powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0 | Out-Null
+    powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0 | Out-Null
+    powercfg /S SCHEME_CURRENT | Out-Null
+    Ok "La PC quedó configurada para NO suspenderse ni hibernar (ni al cerrar la tapa)."
+  } catch {
+    Warn ("No pude ajustar la energía automáticamente: " + $_.Exception.Message)
+    Info "Hacelo a mano: Configuración -> Sistema -> Energía -> 'Suspensión' = Nunca."
+  }
+}
+# Verificación best-effort SIN depender del idioma de Windows: el query imprime
+# los índices en hex; los DOS últimos son el actual con corriente (AC, penúltimo)
+# y con batería (DC, último). Los anteriores son mínimo/máximo/incremento. 0 = Nunca.
+$standbyAc = $null
+try {
+  $q = (& powercfg /query SCHEME_CURRENT SUB_SLEEP STANDBYIDLE) 2>$null
+  $hex = [regex]::Matches(($q -join "`n"), "0x[0-9a-fA-F]{8}")
+  if ($hex.Count -ge 2) { $standbyAc = [Convert]::ToInt32($hex[$hex.Count - 2].Value, 16) }
+} catch {}
+if ($null -ne $standbyAc) {
+  Marcar ($standbyAc -eq 0) "La PC no se suspende con corriente (Suspensión = Nunca)." "La PC TODAVÍA se suspende con corriente: ponela en Nunca (Configuración -> Energía)." | Out-Null
+} else {
+  Info "No pude leer el estado de energía; verificá que 'Suspensión' esté en Nunca."
+}
+
+# ---------- 3) Arranque al iniciar sesión (modo seguro: SIN auto-login) ----------
 # Docker Desktop necesita una sesión de Windows abierta. En el modo elegido NO se
 # usa auto-login (más seguro: la PC pide la contraseña como siempre). El sistema
 # levanta solo cuando la usuaria INICIA SESIÓN (el vigilante corre "al iniciar
 # sesión"). Contra aceptada: tras un reinicio sin nadie, queda abajo hasta que
 # alguien inicie sesión. Por eso acá NO se marca como falta.
-Titulo "2. Arranque al iniciar sesión (modo seguro, sin auto-login)"
+Titulo "3. Arranque al iniciar sesión (modo seguro, sin auto-login)"
 
 $winlogon = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
 $autoOn = $false
@@ -105,8 +141,8 @@ if ($autoOn) {
 Info "El sistema levanta solo cuando la usuaria INICIA SESIÓN. Tras un reinicio,"
 Info "alguien tiene que iniciar sesión (con la contraseña) para que vuelva a arrancar."
 
-# ---------- 3) Docker Desktop arranca al iniciar sesión ----------
-Titulo "3. Docker Desktop arranca solo al iniciar sesión"
+# ---------- 4) Docker Desktop arranca al iniciar sesión ----------
+Titulo "4. Docker Desktop arranca solo al iniciar sesión"
 $runKey = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 $dockerAutostart = $false
 try {
@@ -126,8 +162,8 @@ if ($SoloVerificar) {
   }
 }
 
-# ---------- 4) Tarea del vigilante (repara Docker + ngrok cada 5 min) ----------
-Titulo "4. Vigilante automático (cada 5 minutos, repara todo lo que se caiga)"
+# ---------- 5) Tarea del vigilante (repara Docker + ngrok cada 5 min) ----------
+Titulo "5. Vigilante automático (cada 5 minutos, repara todo lo que se caiga)"
 
 if (-not $SoloVerificar) {
   if (-not (Test-Path $Vigilante)) {
@@ -167,9 +203,9 @@ if (-not $SoloVerificar) {
 $tarea = Get-ScheduledTask -TaskName $NombreTarea -ErrorAction SilentlyContinue
 Marcar ([bool]$tarea) "La tarea del vigilante existe y está registrada." "La tarea del vigilante NO está registrada." | Out-Null
 
-# ---------- 5) Corrida inicial: levantar todo ahora ----------
+# ---------- 6) Corrida inicial: levantar todo ahora ----------
 if (-not $SoloVerificar -and (Test-Path $Vigilante)) {
-  Titulo "5. Arranque inicial (levantando Docker, contenedores y ngrok)"
+  Titulo "6. Arranque inicial (levantando Docker, contenedores y ngrok)"
   Info "Esto puede tardar 1-2 minutos la primera vez..."
   try {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Vigilante | Out-Null
@@ -177,8 +213,8 @@ if (-not $SoloVerificar -and (Test-Path $Vigilante)) {
   } catch { Warn ("La corrida inicial devolvió un error: " + $_.Exception.Message) }
 }
 
-# ---------- 6) Verificación en vivo ----------
-Titulo "6. Verificación en vivo"
+# ---------- 7) Verificación en vivo ----------
+Titulo "7. Verificación en vivo"
 
 # ngrok respondiendo local
 $ngrokVivo = $false

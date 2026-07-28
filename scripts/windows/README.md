@@ -74,10 +74,11 @@ cd C:\Calidad\Vanina
 powershell -ExecutionPolicy Bypass -File .\scripts\windows\configurar-pc.ps1
 ```
 
-Esto deja **todo listo en un paso**: levanta el sistema (la **primera vez tarda unos
-minutos** armando todo), lo configura para arrancar solo al prender la PC, y registra
-el "vigilante" que lo revisa y repara cada 5 minutos. Al final muestra un checklist con
-lo que quedó **OK** o lo que **falta**.
+Esto deja **todo listo en un paso**: configura la PC para **que no se suspenda ni
+hiberne** (si durmiera, el sistema quedaría pausado y no responderían los WhatsApp),
+levanta el sistema (la **primera vez tarda unos minutos** armando todo), y registra el
+"vigilante" que lo revisa y repara cada 5 minutos. Al final muestra un checklist con lo
+que quedó **OK** o lo que **falta**.
 
 ## Paso 5 — Cómo arranca (no hay que hacer nada más)
 
@@ -169,6 +170,23 @@ lo limita. Valores según la RAM (el sistema usa ~100 MB en reposo y ~1 GB con c
 
 Regla: **dejarle a Windows al menos 3 GB libres**. Verificar cuánto quedó:
 `wsl -d docker-desktop -- free -m`.
+
+## Energía: la PC no debe dormir
+
+Si la PC entra en **suspensión o hibernación**, se congela todo (Docker, ngrok, backend)
+y no responde a los WhatsApp mientras duerme. El instalador ya lo configura en "Nunca",
+pero para verificar/forzar a mano (PowerShell como administrador):
+
+```powershell
+powercfg /change standby-timeout-ac 0
+powercfg /change standby-timeout-dc 0
+powercfg /change hibernate-timeout-ac 0
+powercfg /change hibernate-timeout-dc 0
+```
+
+O por menú: Configuración → Sistema → Energía → **"Suspensión" = Nunca**. En una
+notebook, además, conviene que **cerrar la tapa no la suspenda** (el instalador también
+lo deja así). Es normal que la **pantalla** se apague sola; eso no frena el sistema.
 
 ## Comandos útiles
 
