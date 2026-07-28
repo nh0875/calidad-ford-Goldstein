@@ -1,7 +1,9 @@
 # Instalación en la PC de Vanina — paso a paso
 
-> Seguí estos pasos **una sola vez**. Al terminar, el sistema **arranca solo y se
-> repara solo** tras cortes de luz o reinicios: **Vanina no tiene que tocar nada.**
+> Seguí estos pasos **una sola vez**. Después, cada vez que Vanina **inicie sesión en
+> Windows** el sistema levanta solo (en 1-2 minutos) y se mantiene y repara solo
+> mientras la PC está prendida. **Vanina no tiene que abrir ni configurar nada del
+> sistema.**
 
 ## Datos que vas a necesitar (ya están, no hay que buscarlos)
 
@@ -77,14 +79,22 @@ minutos** armando todo), lo configura para arrancar solo al prender la PC, y reg
 el "vigilante" que lo revisa y repara cada 5 minutos. Al final muestra un checklist con
 lo que quedó **OK** o lo que **falta**.
 
-## Paso 5 — Activar el inicio de sesión automático de Windows
+## Paso 5 — Cómo arranca (no hay que hacer nada más)
 
-Para que después de un reinicio (corte de luz, actualización de Windows) todo vuelva
-solo, sin quedar trabado en la pantalla de contraseña:
+Por seguridad, esta PC **no** usa inicio de sesión automático: pide la contraseña de
+Windows como siempre. El sistema levanta solo **cuando Vanina inicia sesión** en
+Windows (el vigilante corre "al iniciar sesión" y cada 5 minutos). En 1-2 minutos
+queda todo arriba, sin abrir nada.
 
-1. `Win + R` → escribí **`netplwiz`** → Enter.
-2. Destildá **"Los usuarios deben escribir su nombre y contraseña"** → Aceptar.
-3. Escribí la contraseña de la PC dos veces.
+**Qué pasa si la PC se reinicia sola** (corte de luz, actualización de Windows de
+noche): queda esperando en la pantalla de contraseña de Windows. En cuanto **Vanina
+inicie sesión** (a la mañana, como siempre), el sistema vuelve solo. Mientras la PC
+está en uso, el vigilante lo mantiene arriba.
+
+> Si en el futuro preferís que arranque **incluso sin que nadie inicie sesión**, se
+> puede activar el inicio automático de Windows (`netplwiz`), idealmente con bloqueo de
+> pantalla. Es más cómodo pero menos seguro (cualquiera que prenda la PC entra a la
+> sesión de Vanina). Con la opción actual no hace falta.
 
 ---
 
@@ -101,8 +111,9 @@ para verificar (sin cambiar nada):
 powershell -ExecutionPolicy Bypass -File .\scripts\windows\configurar-pc.ps1 -SoloVerificar
 ```
 
-**Listo.** Con el auto-login activado y ngrok con su token, la PC se puede reiniciar
-sola y todo vuelve a levantar sin que nadie haga nada.
+**Listo.** Cada mañana, cuando Vanina inicie sesión en Windows, el sistema levanta solo
+en 1-2 minutos y se mantiene arriba durante el día. No tiene que abrir ni configurar
+nada.
 
 ---
 ---

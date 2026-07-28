@@ -81,10 +81,13 @@ if (Marcar $tieneAuth "ngrok tiene un authtoken configurado." "ngrok NO tiene au
   Info "Configuralo con:  ngrok config add-authtoken [TU-AUTHTOKEN]   (está en el panel de ngrok)."
 }
 
-# ---------- 2) Auto-login de Windows ----------
-# Docker Desktop necesita una sesión iniciada. Si la PC reinicia y queda en la
-# pantalla de login, NADA arranca. Por eso el auto-login es obligatorio.
-Titulo "2. Auto-login de Windows (para que arranque tras un reinicio)"
+# ---------- 2) Arranque al iniciar sesión (modo seguro: SIN auto-login) ----------
+# Docker Desktop necesita una sesión de Windows abierta. En el modo elegido NO se
+# usa auto-login (más seguro: la PC pide la contraseña como siempre). El sistema
+# levanta solo cuando la usuaria INICIA SESIÓN (el vigilante corre "al iniciar
+# sesión"). Contra aceptada: tras un reinicio sin nadie, queda abajo hasta que
+# alguien inicie sesión. Por eso acá NO se marca como falta.
+Titulo "2. Arranque al iniciar sesión (modo seguro, sin auto-login)"
 
 $winlogon = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
 $autoOn = $false
@@ -93,13 +96,14 @@ try {
   $usr = (Get-ItemProperty -Path $winlogon -Name DefaultUserName -ErrorAction SilentlyContinue).DefaultUserName
   $autoOn = ($val -eq "1") -and $usr
 } catch {}
-if (Marcar $autoOn "El auto-login de Windows está activado." "El auto-login NO está activado (si la PC reinicia, el sistema no vuelve solo).") {
+if ($autoOn) {
+  Warn "El auto-login de Windows está ACTIVADO en esta PC."
+  Info "En el modo seguro elegido no hace falta. Si querés desactivarlo: Win+R -> netplwiz."
 } else {
-  Info "Activalo a mano (necesita la contraseña de la PC, por eso NO lo hace este script):"
-  Info "  1) Win+R -> escribí  netplwiz  -> Enter"
-  Info "  2) Destildá 'Los usuarios deben escribir su nombre y contraseña'"
-  Info "  3) Aceptar -> te pide la contraseña de la usuaria dos veces."
+  Ok "Sin auto-login (modo seguro): la PC pide la contraseña de la usuaria."
 }
+Info "El sistema levanta solo cuando la usuaria INICIA SESIÓN. Tras un reinicio,"
+Info "alguien tiene que iniciar sesión (con la contraseña) para que vuelva a arrancar."
 
 # ---------- 3) Docker Desktop arranca al iniciar sesión ----------
 Titulo "3. Docker Desktop arranca solo al iniciar sesión"
