@@ -1,11 +1,15 @@
-# Instalación en la PC de Vanina — paso a paso
+# Instalación del Sistema de Calidad — paso a paso
 
-> Seguí estos pasos **una sola vez**. Después, cada vez que Vanina **inicie sesión en
-> Windows** el sistema levanta solo (en 1-2 minutos) y se mantiene y repara solo
-> mientras la PC está prendida. **Vanina no tiene que abrir ni configurar nada del
-> sistema.**
+> **Quién hace esto:** la instalación (pasos 0 a 6) la hace **una sola vez** quien
+> prepara la PC, con **permisos de administrador**. Lleva unos **30 a 45 minutos**
+> la primera vez (la mayor parte es esperar descargas).
+>
+> **Vanina no instala nada.** Ella solo prende la PC, inicia sesión y abre el
+> navegador — ver **"Uso diario"** al final.
 
-## Datos que vas a necesitar (ya están, no hay que buscarlos)
+---
+
+## Datos que vas a necesitar (copialos de acá)
 
 | Qué | Valor |
 |---|---|
@@ -16,150 +20,241 @@
 | Token de ngrok | `3GrusSzHu6fedxjLuO6pjn5wzmk_5qcrdEYnULg5GN7VKwodd` |
 | Verify token del webhook | `calidad-ford-2026-xK9m` |
 
+## Antes de empezar — requisitos
+
+- Una PC con **Windows 10 u 11** y una cuenta con **permisos de administrador**.
+- **Conexión a internet** (se descargan Docker y ngrok).
+- El archivo **`Vanina-Sistema-Calidad.zip`**.
+- Que la PC tenga la **virtualización activada** (casi siempre viene así; si no,
+  Docker te lo avisa y lo resolvés en el Paso 2.5).
+
 ---
 
-## Paso 1 — Copiar la carpeta
+## Paso 0 — Descomprimir la carpeta
 
-Copiá **toda** la carpeta `Vanina` a la PC de Vanina, a donde quieras (por ejemplo
-`C:\Calidad\Vanina`). Los scripts detectan solos dónde quedó, no hay que editar rutas.
+1. Copiá el archivo **`Vanina-Sistema-Calidad.zip`** a la PC de Vanina (por USB o
+   descargándolo).
+2. Hacé **clic derecho** sobre el zip → **"Extraer todo…"**.
+3. En la ventana que aparece, escribí o elegí una carpeta simple, por ejemplo
+   **`C:\Calidad`**, y tocá **"Extraer"**.
+4. Te va a quedar la carpeta **`C:\Calidad\Vanina`** con todo adentro. Esa es la
+   carpeta del proyecto. *(Podés usar otra ruta; los scripts se ubican solos.)*
 
-- ✅ Tiene que ir el archivo **`.env.prod`** (viene adentro de la carpeta; ahí están
-  las claves de Meta, Gemini y el sistema).
-- Si están, podés **borrar antes** de copiar `node_modules` y `.git`: no hacen falta
-  y pesan mucho.
+> ✅ Para confirmar que está bien: dentro de `C:\Calidad\Vanina` tenés que ver
+> carpetas como `backend`, `frontend`, `scripts`, y archivos como
+> `docker-compose.prod.yml`.
 
-## Paso 2 — Instalar Docker y ngrok
+---
 
-1. Instalá **Docker Desktop** (https://www.docker.com/products/docker-desktop/) y
-   abrilo una vez para que termine de instalarse.
-2. Instalá **ngrok**. En PowerShell:
+## Paso 1 — Instalar Docker Desktop
+
+Docker es el motor que hace correr el sistema.
+
+1. Entrá a **https://www.docker.com/products/docker-desktop/** y descargá
+   **"Docker Desktop for Windows"**.
+2. Ejecutá el instalador descargado (`Docker Desktop Installer.exe`).
+3. Dejá **todas las opciones por defecto** (que quede tildado "Use WSL 2"). Tocá
+   **"Ok"** / "Install" y esperá.
+4. Cuando termine, **puede pedir reiniciar la PC**. Reiniciá si lo pide.
+5. Después del reinicio, **abrí Docker Desktop** (buscalo en el menú Inicio).
+   - La primera vez muestra unos términos: aceptalos ("Accept").
+   - Puede pedir iniciar sesión / crear cuenta: **se puede saltear** ("Skip" / "Continue without signing in").
+   - Esperá a que abajo a la izquierda el **ícono de la ballena quede verde** y
+     diga **"Engine running"**. Eso puede tardar 1-2 minutos.
+
+### Paso 2.5 — Si Docker se queja de la virtualización (solo si pasa)
+Si Docker muestra un error de "virtualization" o "WSL 2":
+1. Abrí PowerShell **como administrador** (ver cómo en el Paso 4) y ejecutá:
+   ```powershell
+   wsl --install
+   ```
+2. Reiniciá la PC.
+3. Si sigue fallando, hay que **activar la virtualización en la BIOS** (buscá
+   "Intel VT-x" / "AMD-V" / "SVM"): se entra a la BIOS al prender la PC (tecla
+   Supr / F2 / F10 según la marca), se activa y se guarda. Ante la duda, esto lo
+   hace alguien con experiencia; es un paso poco frecuente.
+
+---
+
+## Paso 2 — Instalar ngrok y pegar su token
+
+ngrok es lo que permite que los WhatsApp de los clientes lleguen a la PC.
+
+1. Abrí **PowerShell** (todavía NO hace falta que sea como administrador):
+   menú Inicio → escribí **`powershell`** → Enter.
+2. Instalá ngrok copiando y pegando esto (Enter al final):
    ```powershell
    winget install Ngrok.Ngrok
    ```
-3. Pegá el token de ngrok (una sola vez):
+   Si pregunta por términos/origen, aceptá (tecla `Y` + Enter).
+3. Pegá el **token** (una sola vez). Es lo que conecta con la cuenta dueña del
+   dominio; **tiene que ser exactamente este**:
    ```powershell
    ngrok config add-authtoken 3GrusSzHu6fedxjLuO6pjn5wzmk_5qcrdEYnULg5GN7VKwodd
    ```
-   > Importante: este token es de la cuenta dueña del dominio
-   > `antitrust-trace-unloader.ngrok-free.dev`. **Tiene que ser ese token**, si no,
-   > no llegan los WhatsApp.
+   Tiene que responder algo como *"Authtoken saved to configuration file"*.
 
-## Paso 3 — Evitar que Docker se cuelgue (PC con poca memoria)
-
-Creá el archivo **`C:\Users\<usuario-de-la-PC>\.wslconfig`** con este contenido
-(hay una copia lista para copiar en `scripts\windows\wslconfig-8gb.txt`):
-
-```ini
-[wsl2]
-memory=2GB
-processors=4
-swap=4GB
-
-[experimental]
-autoMemoryReclaim=gradual
-sparseVhd=true
-```
-
-Después, en PowerShell: `wsl --shutdown` (o reiniciá la PC). Esto es lo que evita que
-Docker se caiga en una PC con poca RAM. *(Si la PC tiene más memoria, ver la tabla en
-la sección de referencia más abajo.)*
-
-## Paso 4 — Correr el instalador (un solo comando)
-
-Abrí **PowerShell como administrador** (clic derecho → "Ejecutar como administrador"),
-entrá a la carpeta y corré:
-
-```powershell
-cd C:\Calidad\Vanina
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\configurar-pc.ps1
-```
-
-Esto deja **todo listo en un paso**: configura la PC para **que no se suspenda ni
-hiberne** (si durmiera, el sistema quedaría pausado y no responderían los WhatsApp),
-levanta el sistema (la **primera vez tarda unos minutos** armando todo), y registra el
-"vigilante" que lo revisa y repara cada 5 minutos. Al final muestra un checklist con lo
-que quedó **OK** o lo que **falta**.
-
-## Paso 5 — Cómo arranca (no hay que hacer nada más)
-
-Por seguridad, esta PC **no** usa inicio de sesión automático: pide la contraseña de
-Windows como siempre. El sistema levanta solo **cuando Vanina inicia sesión** en
-Windows (el vigilante corre "al iniciar sesión" y cada 5 minutos). En 1-2 minutos
-queda todo arriba, sin abrir nada.
-
-**Qué pasa si la PC se reinicia sola** (corte de luz, actualización de Windows de
-noche): queda esperando en la pantalla de contraseña de Windows. En cuanto **Vanina
-inicie sesión** (a la mañana, como siempre), el sistema vuelve solo. Mientras la PC
-está en uso, el vigilante lo mantiene arriba.
-
-> Si en el futuro preferís que arranque **incluso sin que nadie inicie sesión**, se
-> puede activar el inicio automático de Windows (`netplwiz`), idealmente con bloqueo de
-> pantalla. Es más cómodo pero menos seguro (cualquiera que prenda la PC entra a la
-> sesión de Vanina). Con la opción actual no hace falta.
+> ⚠️ Si este token no es el de la cuenta dueña del dominio
+> `antitrust-trace-unloader.ngrok-free.dev`, **no van a llegar los WhatsApp**. Usá
+> el de la tabla de arriba tal cual.
 
 ---
 
-## ¿Quedó bien?
+## Paso 3 — Configurar la memoria (evita que Docker se cuelgue)
 
-- El checklist del instalador dice **`TODO CUBIERTO`**.
-- Abrí el navegador en **http://localhost** e iniciá sesión con el usuario y la
-  contraseña de la tabla de arriba.
+En una PC con poca RAM, Docker puede tumbarse. Este archivo lo evita.
 
-Si algo falta, el instalador lo marca en rojo. Podés volver a correrlo cuando quieras
-para verificar (sin cambiar nada):
+1. Abrí el **Bloc de notas**.
+2. Pegá **exactamente** esto:
+   ```ini
+   [wsl2]
+   memory=2GB
+   processors=4
+   swap=4GB
 
+   [experimental]
+   autoMemoryReclaim=gradual
+   sparseVhd=true
+   ```
+   *(Hay una copia lista para copiar en `C:\Calidad\Vanina\scripts\windows\wslconfig-8gb.txt`.)*
+3. Guardalo así: **Archivo → Guardar como…**
+   - Andá a la carpeta de tu usuario: en la barra de arriba escribí **`%USERPROFILE%`** y Enter.
+   - En **"Nombre"** poné, **con comillas**: **`".wslconfig"`** (las comillas son importantes para que no le agregue `.txt`).
+   - En **"Tipo"** elegí **"Todos los archivos"**.
+   - **Guardar**.
+4. Volvé a PowerShell y ejecutá para aplicarlo:
+   ```powershell
+   wsl --shutdown
+   ```
+
+> Si la PC tiene más de 6 GB de RAM, se pueden subir esos números (ver la tabla en
+> "Referencia técnica"). Con 2GB anda bien en una PC de 6 GB.
+
+---
+
+## Paso 4 — Correr el instalador (un solo comando)
+
+Este comando deja **todo listo de una vez**: no permite que la PC se suspenda,
+levanta el sistema, y lo pone a arrancar solo y a repararse cada 5 minutos.
+
+1. Abrí **PowerShell COMO ADMINISTRADOR**:
+   - Menú Inicio → escribí **`powershell`**.
+   - Sobre **"Windows PowerShell"**, hacé **clic derecho → "Ejecutar como administrador"**.
+   - Si Windows pregunta "¿Permitir que esta app haga cambios?", decí **"Sí"**.
+   - La ventana tiene que decir **"Administrador: Windows PowerShell"** en el título.
+2. Entrá a la carpeta del proyecto (ajustá la ruta si la extrajiste en otro lado):
+   ```powershell
+   cd C:\Calidad\Vanina
+   ```
+3. Ejecutá el instalador:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\windows\configurar-pc.ps1
+   ```
+4. **Qué va a pasar** (la primera vez tarda **varios minutos** porque arma el
+   sistema):
+   - Va mostrando pasos: Energía, Docker, Vigilante, Arranque…
+   - Cuando "arma las imágenes" por primera vez, se queda un rato sin mostrar
+     nada nuevo: **es normal, esperá** (puede ser 3-8 minutos).
+   - Al final imprime un **checklist**. Si dice **`TODO CUBIERTO`** en verde,
+     quedó listo. Si algo aparece en **rojo (`FALTA`)**, resolvé eso (suele ser el
+     token de ngrok o Docker que todavía no arrancó) y volvé a correr el comando.
+
+> Podés volver a correrlo cuando quieras **solo para verificar**, sin cambiar
+> nada:
+> ```powershell
+> powershell -ExecutionPolicy Bypass -File .\scripts\windows\configurar-pc.ps1 -SoloVerificar
+> ```
+
+---
+
+## Paso 5 — Verificar que quedó andando
+
+1. Abrí un navegador (Chrome / Edge) y entrá a **http://localhost**.
+   - Si no abre al toque, esperá **1-2 minutos** (Docker puede seguir arrancando)
+     y recargá.
+2. Tiene que aparecer la **pantalla de inicio de sesión** del sistema.
+3. Iniciá sesión con el usuario y la contraseña de la **tabla del principio**.
+4. Si entrás y ves el panel, **está funcionando** 🎉.
+
+---
+
+## Paso 6 — Dejarla lista para el día a día
+
+- **No hace falta activar inicio de sesión automático** (por seguridad, la PC pide
+  la contraseña de Windows como siempre).
+- Dejá la PC **prendida** durante el horario de trabajo.
+- El sistema ya está configurado para **no suspenderse** y para **levantarse solo
+  cuando Vanina inicia sesión**.
+
+---
+
+## Uso diario (esto lo hace Vanina — no instala nada)
+
+1. Prende la PC e **inicia sesión en Windows** con su contraseña, como siempre.
+2. **Espera 1 o 2 minutos** (el sistema levanta solo por detrás).
+3. Abre el navegador en **http://localhost** e inicia sesión en el sistema.
+4. Listo. No tiene que abrir Docker, ni ngrok, ni ninguna ventana negra.
+
+**Si la PC se reinició sola de noche** (corte de luz, actualización): queda en la
+pantalla de contraseña de Windows. En cuanto Vanina inicia sesión a la mañana, el
+sistema vuelve solo.
+
+**Para que siga recibiendo WhatsApp fuera de hora:** dejá la PC **prendida y con la
+sesión iniciada** (podés **bloquear la pantalla** con `Win + L`, eso NO frena
+nada). Solo se corta si se **apaga** o se **cierra sesión**.
+
+---
+
+## Si algo sale mal (problemas comunes)
+
+| Síntoma | Qué hacer |
+|---|---|
+| **http://localhost no abre** | Esperá 1-2 min y recargá. Si sigue, abrí Docker Desktop y esperá la ballena verde; después volvé a correr el instalador (Paso 4). |
+| **El checklist dice FALTA ngrok / token** | Repetí el Paso 2 (el comando `add-authtoken` con el token de la tabla). |
+| **El checklist dice FALTA Docker** | Abrí Docker Desktop a mano y esperá "Engine running"; después corré el instalador de nuevo. |
+| **No llegan los WhatsApp** | Verificá que ngrok tenga el token correcto (Paso 2) y que la PC no esté suspendida. El vigilante reintenta solo cada 5 min. |
+| **Docker se queja de virtualización** | Ver Paso 2.5. |
+| **Quiero ver qué está haciendo el sistema** | Abrí `C:\Calidad\Vanina\scripts\windows\vigilante.log` (dice qué reparó y cuándo). |
+
+Para una revisión rápida del estado, corré (PowerShell como administrador, en la
+carpeta del proyecto):
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\windows\configurar-pc.ps1 -SoloVerificar
 ```
 
-**Listo.** Cada mañana, cuando Vanina inicie sesión en Windows, el sistema levanta solo
-en 1-2 minutos y se mantiene arriba durante el día. No tiene que abrir ni configurar
-nada.
-
 ---
 ---
 
-# Referencia técnica (no hace falta para instalar)
+# Referencia técnica (avanzado — no hace falta para instalar)
 
-Tres piezas hacen que el sistema corra **desatendido**:
+Tres piezas hacen que el sistema corra **desatendido**. Las tres **detectan solas**
+dónde está la carpeta, así que se puede copiar a cualquier ruta sin editar nada.
 
 | Script | Cuándo corre | Para qué |
 |---|---|---|
-| `configurar-pc.ps1` | **Una vez, al instalar** (como admin) | Deja todo listo y verificado en un paso. Imprime un checklist. |
-| `vigilante.ps1` | **Cada 5 minutos** (lo registra el instalador) | Detecta y repara: Docker caído, contenedores caídos, API sin responder, ngrok caído. |
+| `configurar-pc.ps1` | Una vez, al instalar (como admin) | Deja todo listo y verificado en un paso. Imprime un checklist. |
+| `vigilante.ps1` | Cada 5 minutos (lo registra el instalador) | Detecta y repara: Docker caído, contenedores caídos, API sin responder, ngrok caído. |
 | `iniciar-sistema.bat` | Al iniciar Windows (opcional) | Levanta el stack + ngrok. Con el vigilante registrado es opcional. |
-
-Los tres **detectan solos** dónde está la carpeta del proyecto, así que la carpeta se
-puede copiar a cualquier ruta sin editar nada.
 
 ## Qué hace el vigilante en cada corrida
 
-1. **Docker Desktop**: si el engine no responde, lo inicia y espera. Si la app está
-   abierta pero colgada, la cierra y la vuelve a abrir.
-2. **Contenedores**: si falta alguno de los 5 (`postgres`, `redis`, `backend`, `web`,
-   `backup`), levanta el stack de producción.
-3. **API**: llama de verdad a `http://localhost/api/health`. Si no responde, distingue
-   la causa (puerto roto tras reiniciar WSL → reinicia `web`; backend caído → reinicia
-   `backend`; si aun así falla → reinicia todo). Nunca reinicia un backend que todavía
-   está arrancando.
-4. **ngrok**: si el proceso no está, o está pero sin el túnel del dominio, lo relanza.
-5. **Log**: `scripts/windows/vigilante.log`. Es silencioso: si todo está bien escribe
-   **una sola línea `[OK]` por día**; sólo escribe cuando repara algo o cuando falla.
-
-Ejemplo de log de una recuperación real:
-
-```
-2026-07-23 11:28:59  [ACCION]  El backend responde dentro de Docker pero no desde afuera
-                               (publicacion del puerto rota): reiniciando 'web'.
-2026-07-23 11:29:15  [ACCION]  El sistema volvio a responder OK.
-2026-07-23 11:29:30  [ACCION]  Tunel de ngrok activo en https://antitrust-trace-unloader.ngrok-free.dev
-```
+1. **Docker Desktop**: si el engine no responde, lo inicia y espera. Si está
+   colgado, lo cierra y lo reabre.
+2. **Contenedores**: si falta alguno de los 5 (`postgres`, `redis`, `backend`,
+   `web`, `backup`), levanta el stack de producción.
+3. **API**: llama a `http://localhost/api/health`. Si no responde, distingue la
+   causa (puerto roto tras reiniciar WSL → reinicia `web`; backend caído →
+   reinicia `backend`; si aun así falla → reinicia todo). Nunca reinicia un
+   backend que todavía está arrancando.
+4. **ngrok**: si el proceso no está, o está pero sin el túnel del dominio, lo
+   relanza.
+5. **Log**: `scripts/windows/vigilante.log`. Es silencioso: si todo está bien
+   escribe **una línea `[OK]` por día**; solo escribe cuando repara algo o falla.
 
 ## Memoria de WSL2 según la RAM de la PC
 
-Docker en Windows corre dentro de **WSL2**, que por defecto toma hasta el 50 % de la RAM
-y no la devuelve. En una PC con poca memoria eso tumba Docker. El `.wslconfig` (Paso 3)
-lo limita. Valores según la RAM (el sistema usa ~100 MB en reposo y ~1 GB con carga):
+Docker corre dentro de WSL2, que por defecto toma hasta el 50 % de la RAM y no la
+devuelve. El `.wslconfig` (Paso 3) lo limita. Valores según la RAM:
 
 | RAM de la PC | `memory` | `processors` | `swap` |
 |---|---|---|---|
@@ -168,14 +263,14 @@ lo limita. Valores según la RAM (el sistema usa ~100 MB en reposo y ~1 GB con c
 | 16 GB | `6GB` | 6 | `4GB` |
 | 32 GB o más | `8GB` | 8 | `8GB` |
 
-Regla: **dejarle a Windows al menos 3 GB libres**. Verificar cuánto quedó:
+Regla: dejarle a Windows al menos 3 GB libres. Verificar cuánto quedó:
 `wsl -d docker-desktop -- free -m`.
 
 ## Energía: la PC no debe dormir
 
-Si la PC entra en **suspensión o hibernación**, se congela todo (Docker, ngrok, backend)
-y no responde a los WhatsApp mientras duerme. El instalador ya lo configura en "Nunca",
-pero para verificar/forzar a mano (PowerShell como administrador):
+Si la PC entra en suspensión/hibernación, se congela todo (Docker, ngrok, backend)
+y no responde a los WhatsApp mientras duerme. El instalador ya lo pone en "Nunca".
+Para verificar/forzar a mano (PowerShell como administrador):
 
 ```powershell
 powercfg /change standby-timeout-ac 0
@@ -183,10 +278,7 @@ powercfg /change standby-timeout-dc 0
 powercfg /change hibernate-timeout-ac 0
 powercfg /change hibernate-timeout-dc 0
 ```
-
-O por menú: Configuración → Sistema → Energía → **"Suspensión" = Nunca**. En una
-notebook, además, conviene que **cerrar la tapa no la suspenda** (el instalador también
-lo deja así). Es normal que la **pantalla** se apague sola; eso no frena el sistema.
+Es normal que la **pantalla** se apague sola; eso no frena el sistema.
 
 ## Comandos útiles
 
@@ -205,11 +297,11 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod down
 docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail 100
 ```
 
-## El webhook de Meta (ya configurado, sólo como referencia)
+## El webhook de Meta (ya configurado, solo como referencia)
 
 - URL: `https://antitrust-trace-unloader.ngrok-free.dev/api/webhooks/whatsapp`
 - Verify token: `calidad-ford-2026-xK9m`
 - Suscrito a: `messages`, `message_template_status_update`, `phone_number_quality_update`
 
-No hay que reconfigurarlo al mover la PC: mientras ngrok levante el **mismo dominio** con
-el **mismo token**, Meta sigue llegando igual.
+No hay que reconfigurarlo al mover la PC: mientras ngrok levante el **mismo
+dominio** con el **mismo token**, Meta sigue llegando igual.
