@@ -22,11 +22,27 @@
 
 ## Antes de empezar — requisitos
 
-- Una PC con **Windows 10 u 11** y una cuenta con **permisos de administrador**.
+- Una PC con **Windows 10 u 11**.
 - **Conexión a internet** (se descargan Docker y ngrok).
 - El archivo **`Vanina-Sistema-Calidad.zip`**.
 - Que la PC tenga la **virtualización activada** (casi siempre viene así; si no,
   Docker te lo avisa y lo resolvés en el Paso 2.5).
+
+> ### 🔑 Importante: con qué cuenta de Windows instalar
+> **Hacé toda la instalación logueado con la MISMA cuenta de Windows que Vanina va
+> a usar todos los días**, y esa cuenta tiene que tener **permisos de
+> administrador**.
+>
+> ¿Por qué? El sistema se arranca y se repara solo mediante un "vigilante" que
+> queda **atado a la cuenta que corre el instalador** y se dispara cuando **esa**
+> cuenta inicia sesión en Windows. Si instalás desde otra cuenta (ej. un
+> "Administrador" distinto), cuando Vanina entre a la suya el sistema no
+> arrancaría solo.
+>
+> **NO hace falta** crear ni iniciar sesión en ninguna **cuenta de Docker** (se
+> saltea con "Skip") **ni de ngrok** (se usa solo el token). La única sesión que
+> importa es la **de Windows** de Vanina: como no hay auto-login (modo seguro),
+> ella inicia sesión cada día y ahí el sistema levanta solo.
 
 ---
 
