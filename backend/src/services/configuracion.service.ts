@@ -68,6 +68,9 @@ export const CLAVES_META = {
   TEMPLATE_NAME: "meta.templateName",
   TEMPLATE_LANG: "meta.templateLang",
   FIDELIZACION_TEMPLATE_NAME: "meta.fidelizacionTemplateName",
+  // Estado de la plantilla de fidelización según Meta (lo actualiza el webhook
+  // message_template_status_update): APPROVED / PENDING / REJECTED / ... o "".
+  FIDELIZACION_TEMPLATE_STATUS: "meta.fidelizacionTemplateStatus",
 } as const;
 
 const CLAVES_META_CIFRADAS = new Set<string>([CLAVES_META.TOKEN, CLAVES_META.VERIFY_TOKEN]);
@@ -144,6 +147,27 @@ export async function guardarCredencialesMeta(d: GuardarMeta): Promise<void> {
   if (d.templateLang !== undefined) await set(CLAVES_META.TEMPLATE_LANG, d.templateLang, false);
   if (d.fidelizacionTemplateName !== undefined)
     await set(CLAVES_META.FIDELIZACION_TEMPLATE_NAME, d.fidelizacionTemplateName, false);
+}
+
+// ---------- Estado de la plantilla de Fidelización (lo setea el webhook) ----------
+// Meta avisa por el webhook message_template_status_update cuando una plantilla
+// cambia de estado. Guardamos el estado para saber si ya se puede enviar el
+// recordatorio de fidelización sin necesidad de "probar y ver".
+
+export async function guardarEstadoPlantillaFidelizacion(estado: string): Promise<void> {
+  await prisma.configuracion.upsert({
+    where: { clave: CLAVES_META.FIDELIZACION_TEMPLATE_STATUS },
+    create: { clave: CLAVES_META.FIDELIZACION_TEMPLATE_STATUS, valor: estado },
+    update: { valor: estado },
+  });
+}
+
+/** Estado conocido de la plantilla de fidelización ("" = sin confirmar todavía). */
+export async function obtenerEstadoPlantillaFidelizacion(): Promise<string> {
+  const fila = await prisma.configuracion.findUnique({
+    where: { clave: CLAVES_META.FIDELIZACION_TEMPLATE_STATUS },
+  });
+  return fila?.valor ?? "";
 }
 
 // Estado enmascarado para la pantalla (NUNCA devuelve el token completo).

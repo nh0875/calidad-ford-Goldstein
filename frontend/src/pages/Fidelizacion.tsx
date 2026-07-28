@@ -61,6 +61,12 @@ interface Progreso {
   completados: number;
   fallidos: number;
 }
+interface EstadoPlantilla {
+  templateName: string;
+  estado: string; // "APPROVED" | "PENDING" | "REJECTED" | ... | "" (sin confirmar)
+  aprobada: boolean;
+  puedeEnviar: boolean;
+}
 
 const TONO_ESTADO: Record<ClienteFidel["estado"], "azul" | "verde" | "rojo" | "gris"> = {
   PENDIENTE: "azul",
@@ -92,6 +98,7 @@ export default function Fidelizacion() {
 
   const [detalle, setDetalle] = useState<DetalleCarga | null>(null);
   const [progreso, setProgreso] = useState<Progreso | null>(null);
+  const [plantilla, setPlantilla] = useState<EstadoPlantilla | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function cargarLista() {
@@ -108,6 +115,7 @@ export default function Fidelizacion() {
 
   useEffect(() => {
     cargarLista();
+    apiGet<EstadoPlantilla>("/api/fidelizacion/plantilla").then(setPlantilla).catch(() => {});
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
@@ -193,10 +201,29 @@ export default function Fidelizacion() {
         <span className="font-medium">Recordatorio de service pendiente.</span> El sistema lee la columna{" "}
         <span className="font-medium">"Comentario del Asesor"</span> y detecta los clientes con el{" "}
         <span className="font-medium">1° a 5° service de mantenimiento</span> pendiente para mandarles un recordatorio
-        por WhatsApp. No clasifica la respuesta: es solo un aviso. La plantilla{" "}
-        <span className="font-mono text-xs">fidelizacion_posventa</span> está pendiente de aprobación en Meta: podés
-        cargar y detectar ahora; los mensajes recién saldrán cuando Meta la apruebe.
+        por WhatsApp. No clasifica la respuesta: es solo un aviso.
       </Alert>
+
+      {/* Estado de la plantilla en Meta: el sistema se entera solo por el webhook */}
+      {plantilla &&
+        (plantilla.aprobada ? (
+          <Alert tono="exito">
+            Plantilla <span className="font-mono text-xs">{plantilla.templateName}</span> <strong>aprobada por Meta</strong>{" "}
+            ✓ — ya se pueden enviar los recordatorios.
+          </Alert>
+        ) : plantilla.estado ? (
+          <Alert tono="advertencia">
+            La plantilla <span className="font-mono text-xs">{plantilla.templateName}</span> está en estado{" "}
+            <strong>{plantilla.estado}</strong> en Meta: todavía no se puede enviar. El sistema detecta solo cuando Meta
+            la apruebe y habilita el envío.
+          </Alert>
+        ) : (
+          <Alert tono="info">
+            Todavía no hay confirmación de Meta sobre la plantilla{" "}
+            <span className="font-mono text-xs">{plantilla.templateName}</span>. Podés cargar y detectar clientes ahora;
+            cuando Meta apruebe la plantilla el sistema lo detecta y habilita el envío.
+          </Alert>
+        ))}
 
       {error && <Alert tono="error">{error}</Alert>}
       {mensaje && <Alert tono="exito">{mensaje}</Alert>}
@@ -288,13 +315,18 @@ export default function Fidelizacion() {
                         <button onClick={() => verDetalle(c.id)} className="text-xs font-medium text-accent-dark hover:underline">
                           <Users className="mr-1 inline h-3.5 w-3.5" />Ver
                         </button>
-                        {c.pendientes > 0 && (
+                        {c.pendientes + c.errores > 0 && (
                           <button
                             onClick={() => enviar(c.id)}
+                            disabled={plantilla ? !plantilla.puedeEnviar : false}
                             className={claseBoton("primario", "!py-1 !px-2 !text-xs")}
-                            title={`Enviar recordatorio a ${c.pendientes} cliente(s)`}
+                            title={
+                              plantilla && !plantilla.puedeEnviar
+                                ? "La plantilla todavía no está aprobada por Meta"
+                                : `Enviar recordatorio a ${c.pendientes + c.errores} cliente(s)`
+                            }
                           >
-                            <Send className="h-3.5 w-3.5" /> Enviar ({c.pendientes})
+                            <Send className="h-3.5 w-3.5" /> Enviar ({c.pendientes + c.errores})
                           </button>
                         )}
                         {esAdmin && (
@@ -313,22 +345,32 @@ export default function Fidelizacion() {
       </Card>
 
       {/* Detalle de la carga seleccionada */}
-      {detalle && <DetalleClientes detalle={detalle} onEnviar={() => enviar(detalle.upload.id)} onCerrar={() => setDetalle(null)} />}
+      {detalle && (
+        <DetalleClientes
+          detalle={detalle}
+          puedeEnviar={plantilla ? plantilla.puedeEnviar : true}
+          onEnviar={() => enviar(detalle.upload.id)}
+          onCerrar={() => setDetalle(null)}
+        />
+      )}
     </div>
   );
 }
 
 function DetalleClientes({
   detalle,
+  puedeEnviar,
   onEnviar,
   onCerrar,
 }: {
   detalle: DetalleCarga;
+  puedeEnviar: boolean;
   onEnviar: () => void;
   onCerrar: () => void;
 }) {
   const { upload, clientes } = detalle;
-  const pendientes = clientes.filter((c) => c.estado === "PENDIENTE").length;
+  // "Por enviar" = pendientes + los que quedaron en error (se reintentan).
+  const porEnviar = clientes.filter((c) => c.estado === "PENDIENTE" || c.estado === "ERROR").length;
   const porServicio = clientes.reduce<Record<number, number>>((acc, c) => {
     acc[c.numeroServicio] = (acc[c.numeroServicio] ?? 0) + 1;
     return acc;
@@ -349,9 +391,14 @@ function DetalleClientes({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {pendientes > 0 && (
-            <button onClick={onEnviar} className={claseBoton("primario", "!py-1.5")}>
-              <Send className="h-4 w-4" /> Enviar recordatorios ({pendientes})
+          {porEnviar > 0 && (
+            <button
+              onClick={onEnviar}
+              disabled={!puedeEnviar}
+              className={claseBoton("primario", "!py-1.5")}
+              title={puedeEnviar ? undefined : "La plantilla todavía no está aprobada por Meta"}
+            >
+              <Send className="h-4 w-4" /> Enviar recordatorios ({porEnviar})
             </button>
           )}
           <button onClick={onCerrar} className={claseBoton("fantasma", "border border-gray-300 !py-1.5")}>Cerrar</button>

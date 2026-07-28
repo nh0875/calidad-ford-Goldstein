@@ -191,6 +191,14 @@ export function parsearFidelizacion(
  * "Enviar recordatorios".
  */
 export async function encolarEnviosFidelizacion(uploadId: string): Promise<number> {
+  // Reintento: los que quedaron en ERROR (típico si se envió ANTES de que Meta
+  // aprobara la plantilla) vuelven a PENDIENTE para poder reenviarlos. Los
+  // OMITIDO (sin teléfono / suprimidos) NO se tocan: son descartes a propósito.
+  await prisma.clienteFidelizacion.updateMany({
+    where: { uploadId, estado: EstadoFidelizacion.ERROR },
+    data: { estado: EstadoFidelizacion.PENDIENTE, error: null },
+  });
+
   const clientes = await prisma.clienteFidelizacion.findMany({
     where: { uploadId, estado: EstadoFidelizacion.PENDIENTE },
     select: { id: true },

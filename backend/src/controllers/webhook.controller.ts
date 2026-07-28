@@ -4,7 +4,7 @@ import { prisma } from "../config/prisma";
 import { normalizarTelefonoAR } from "../services/telefono.service";
 import { marcarOptOutSiCorresponde } from "../services/agradecimiento.service";
 import { programarAnalisis } from "../services/analisis.service";
-import { obtenerCredencialesMeta } from "../services/configuracion.service";
+import { guardarEstadoPlantillaFidelizacion, obtenerCredencialesMeta } from "../services/configuracion.service";
 
 // ---------- GET: verificación inicial del webhook por parte de Meta ----------
 
@@ -148,6 +148,23 @@ export async function recibirWebhook(req: Request, res: Response) {
       for (const cambio of entrada?.changes ?? []) {
         const valor = cambio?.value;
         if (!valor) continue;
+
+        // Cambio de estado de una plantilla: Meta avisa cuando aprueba/rechaza.
+        // Se guarda el estado de la plantilla de fidelización para saber si ya
+        // se puede enviar el recordatorio (sin "probar y ver"). Este cambio no
+        // trae messages/statuses, así que se procesa y se pasa al siguiente.
+        if (cambio?.field === "message_template_status_update") {
+          try {
+            const creds = await obtenerCredencialesMeta();
+            if (valor.message_template_name === creds.fidelizacionTemplateName && valor.event) {
+              await guardarEstadoPlantillaFidelizacion(String(valor.event));
+              console.log(`[webhook] plantilla ${valor.message_template_name} → ${valor.event}`);
+            }
+          } catch (err) {
+            console.error("[webhook] error procesando estado de plantilla:", err);
+          }
+          continue;
+        }
 
         // Cada mensaje se aísla: si uno falla (DB, análisis, etc.) no debe
         // abortar el resto de la tanda ni perder los otros mensajes del batch.

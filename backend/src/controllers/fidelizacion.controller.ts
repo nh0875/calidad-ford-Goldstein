@@ -9,8 +9,18 @@ import {
   parsearFidelizacion,
   progresoColaFidelizacion,
 } from "../services/fidelizacion.service";
-import { estadoMeta } from "../services/configuracion.service";
+import {
+  estadoMeta,
+  obtenerCredencialesMeta,
+  obtenerEstadoPlantillaFidelizacion,
+} from "../services/configuracion.service";
 import { ACCIONES, auditar } from "../services/audit.service";
+
+// Estados de Meta que NO permiten enviar (todo lo que no sea aprobado). "" =
+// sin confirmar todavía: se deja intentar (si falla, el error lo explica).
+function plantillaBloqueaEnvio(estado: string): boolean {
+  return estado !== "" && estado.toUpperCase() !== "APPROVED";
+}
 
 // ---------- POST /api/fidelizacion (subir Excel y detectar candidatos) ----------
 // A diferencia del Contacto Posventa, acá NO hay paso de preview/confirm ni
@@ -221,6 +231,18 @@ export async function enviarFidelizacion(req: Request, res: Response) {
           "Cargálas y probá la conexión antes de enviar.",
       });
     }
+    // La plantilla tiene que estar aprobada por Meta. Si Meta ya avisó por el
+    // webhook que NO está aprobada, no se envía (para no dejar todo en Error).
+    const estadoPlantilla = await obtenerEstadoPlantillaFidelizacion();
+    if (plantillaBloqueaEnvio(estadoPlantilla)) {
+      const creds = await obtenerCredencialesMeta();
+      return res.status(409).json({
+        message:
+          `La plantilla "${creds.fidelizacionTemplateName}" todavía no está aprobada por Meta ` +
+          `(estado actual: ${estadoPlantilla}). Vas a poder enviar los recordatorios en cuanto ` +
+          `Meta la apruebe; el sistema lo detecta solo.`,
+      });
+    }
   }
 
   const encolados = await encolarEnviosFidelizacion(upload.id);
@@ -249,6 +271,23 @@ export async function enviarFidelizacion(req: Request, res: Response) {
 
 export async function progresoFidelizacion(_req: Request, res: Response) {
   res.json(await progresoColaFidelizacion());
+}
+
+// ---------- GET /api/fidelizacion/plantilla (estado de la plantilla en Meta) ----------
+
+export async function estadoPlantillaFidelizacion(_req: Request, res: Response) {
+  const [creds, estado] = await Promise.all([
+    obtenerCredencialesMeta(),
+    obtenerEstadoPlantillaFidelizacion(),
+  ]);
+  res.json({
+    templateName: creds.fidelizacionTemplateName,
+    estado, // "APPROVED" | "PENDING" | "REJECTED" | ... | "" (sin confirmar)
+    aprobada: estado.toUpperCase() === "APPROVED",
+    // Se puede intentar enviar si está aprobada o si todavía no hay confirmación
+    // de Meta (en ese caso, un fallo del envío avisará el motivo real).
+    puedeEnviar: !plantillaBloqueaEnvio(estado),
+  });
 }
 
 // ---------- DELETE /api/fidelizacion/:id (borrado lógico, solo ADMIN) ----------

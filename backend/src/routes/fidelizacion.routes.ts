@@ -6,6 +6,7 @@ import {
   detalleFidelizacion,
   eliminarFidelizacion,
   enviarFidelizacion,
+  estadoPlantillaFidelizacion,
   listarFidelizacion,
   progresoFidelizacion,
   subirFidelizacion,
@@ -22,6 +23,9 @@ router.get("/", asyncHandler(listarFidelizacion));
 
 // Progreso de la cola de envío (antes de /:id para que no lo capture como id).
 router.get("/progreso", asyncHandler(progresoFidelizacion));
+
+// Estado de la plantilla de fidelización en Meta (aprobada / pendiente / ...).
+router.get("/plantilla", asyncHandler(estadoPlantillaFidelizacion));
 
 // Encolar el envío de los recordatorios PENDIENTE de una carga.
 router.post("/:id/enviar", asyncHandler(enviarFidelizacion));
