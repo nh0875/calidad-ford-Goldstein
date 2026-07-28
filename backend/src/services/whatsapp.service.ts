@@ -124,15 +124,20 @@ async function llamarGraphApi(
  */
 export async function sendTemplateMessage(
   telefono: string,
-  variables: string[]
+  variables: string[],
+  // Override opcional del nombre de la plantilla. Por defecto usa la de contacto
+  // (creds.templateName); Fidelización pasa la suya (fidelizacion_posventa). El
+  // idioma es el mismo configurado para el número.
+  templateNameOverride?: string
 ): Promise<RespuestaEnvio & { templateName: string }> {
   const creds = await obtenerCredencialesMeta();
+  const templateName = templateNameOverride || creds.templateName;
   const r = await llamarGraphApi(creds, {
     messaging_product: "whatsapp",
     to: telefono,
     type: "template",
     template: {
-      name: creds.templateName,
+      name: templateName,
       language: { code: creds.templateLang },
       // Sin variables → se omite "components" por completo.
       ...(variables.length > 0
@@ -147,7 +152,7 @@ export async function sendTemplateMessage(
         : {}),
     },
   });
-  return { ...r, templateName: creds.templateName };
+  return { ...r, templateName };
 }
 
 /**

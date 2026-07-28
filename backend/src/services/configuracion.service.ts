@@ -67,6 +67,7 @@ export const CLAVES_META = {
   VERIFY_TOKEN: "meta.webhookVerifyToken",
   TEMPLATE_NAME: "meta.templateName",
   TEMPLATE_LANG: "meta.templateLang",
+  FIDELIZACION_TEMPLATE_NAME: "meta.fidelizacionTemplateName",
 } as const;
 
 const CLAVES_META_CIFRADAS = new Set<string>([CLAVES_META.TOKEN, CLAVES_META.VERIFY_TOKEN]);
@@ -90,18 +91,20 @@ export interface CredencialesMeta {
   webhookVerifyToken: string;
   templateName: string;
   templateLang: string;
+  fidelizacionTemplateName: string;
   graphBaseUrl: string;
 }
 
 // Credenciales efectivas para USAR (envío, verificación de webhook): primero lo
 // guardado en /configuracion; si algo falta, cae al .env (bootstrap/migración).
 export async function obtenerCredencialesMeta(): Promise<CredencialesMeta> {
-  const [token, phone, verify, tName, tLang] = await Promise.all([
+  const [token, phone, verify, tName, tLang, tFidel] = await Promise.all([
     leerMeta(CLAVES_META.TOKEN),
     leerMeta(CLAVES_META.PHONE_NUMBER_ID),
     leerMeta(CLAVES_META.VERIFY_TOKEN),
     leerMeta(CLAVES_META.TEMPLATE_NAME),
     leerMeta(CLAVES_META.TEMPLATE_LANG),
+    leerMeta(CLAVES_META.FIDELIZACION_TEMPLATE_NAME),
   ]);
   return {
     token: token || env.meta.token,
@@ -109,6 +112,7 @@ export async function obtenerCredencialesMeta(): Promise<CredencialesMeta> {
     webhookVerifyToken: verify || env.meta.webhookVerifyToken,
     templateName: tName || env.meta.templateName,
     templateLang: tLang || env.meta.templateLang,
+    fidelizacionTemplateName: tFidel || env.meta.fidelizacionTemplateName,
     graphBaseUrl: env.meta.graphBaseUrl, // la base no es secreto: va por .env
   };
 }
@@ -119,6 +123,7 @@ export interface GuardarMeta {
   webhookVerifyToken?: string;
   templateName?: string;
   templateLang?: string;
+  fidelizacionTemplateName?: string;
 }
 
 export async function guardarCredencialesMeta(d: GuardarMeta): Promise<void> {
@@ -137,6 +142,8 @@ export async function guardarCredencialesMeta(d: GuardarMeta): Promise<void> {
   if (d.phoneNumberId !== undefined) await set(CLAVES_META.PHONE_NUMBER_ID, d.phoneNumberId, false);
   if (d.templateName !== undefined) await set(CLAVES_META.TEMPLATE_NAME, d.templateName, false);
   if (d.templateLang !== undefined) await set(CLAVES_META.TEMPLATE_LANG, d.templateLang, false);
+  if (d.fidelizacionTemplateName !== undefined)
+    await set(CLAVES_META.FIDELIZACION_TEMPLATE_NAME, d.fidelizacionTemplateName, false);
 }
 
 // Estado enmascarado para la pantalla (NUNCA devuelve el token completo).
@@ -151,6 +158,7 @@ export async function estadoMeta() {
     verifyTokenConfigurado: Boolean(c.webhookVerifyToken),
     templateName: c.templateName,
     templateLang: c.templateLang,
+    fidelizacionTemplateName: c.fidelizacionTemplateName,
     completo: Boolean(c.token && c.phoneNumberId),
   };
 }

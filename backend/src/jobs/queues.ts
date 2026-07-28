@@ -3,6 +3,7 @@ import { redisConnection } from "../config/redis";
 
 export const QUEUE_NAMES = {
   WHATSAPP_ENVIO: "whatsapp-envio",
+  FIDELIZACION_ENVIO: "fidelizacion-envio",
   ANALISIS_SENTIMIENTO: "analisis-sentimiento",
   AGRADECIMIENTO: "agradecimiento",
   PROCESAR_EXCEL: "procesar-excel",
@@ -10,6 +11,12 @@ export const QUEUE_NAMES = {
 } as const;
 
 export const whatsappQueue = new Queue(QUEUE_NAMES.WHATSAPP_ENVIO, {
+  connection: redisConnection,
+});
+
+// Envío del recordatorio de Fidelización (Parte C). Cola aparte de la de
+// contacto: usa otra plantilla y NO dispara agradecimiento ni análisis.
+export const fidelizacionQueue = new Queue(QUEUE_NAMES.FIDELIZACION_ENVIO, {
   connection: redisConnection,
 });
 

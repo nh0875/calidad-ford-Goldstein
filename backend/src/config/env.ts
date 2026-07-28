@@ -11,6 +11,9 @@ export const env = {
     webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN ?? "",
     templateName: process.env.META_TEMPLATE_NAME ?? "contacto_posventa",
     templateLang: process.env.META_TEMPLATE_LANG ?? "es_AR",
+    // Plantilla del recordatorio de Fidelización (Parte C). Mismo idioma que la
+    // de contacto. Pendiente de aprobación en Meta: cuando se apruebe, ya sale.
+    fidelizacionTemplateName: process.env.META_FIDELIZACION_TEMPLATE_NAME ?? "fidelizacion_posventa",
     graphBaseUrl: process.env.META_GRAPH_BASE_URL ?? "https://graph.facebook.com/v20.0",
   },
   whatsappEnvioDelayMs: Number(process.env.WHATSAPP_ENVIO_DELAY_MS ?? 2500),

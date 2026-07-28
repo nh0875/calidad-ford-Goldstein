@@ -1,4 +1,4 @@
-import { EstadoContacto, MessageDirection, Prisma, Semaforo, TipoAviso } from "@prisma/client";
+import { EstadoContacto, EstadoFidelizacion, MessageDirection, Prisma, Semaforo, TipoAviso } from "@prisma/client";
 import { DelayedError, Job, UnrecoverableError, Worker } from "bullmq";
 import { env } from "../config/env";
 import { cupoDisponibleHoy, dentroDeVentana, msHastaProximaApertura } from "../services/ventana-envio.service";
@@ -21,7 +21,7 @@ import {
 } from "../services/analisis.service";
 import { crearAviso } from "../services/aviso.service";
 import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
-import { CLAVES_CONFIG, obtenerConfiguracion } from "../services/configuracion.service";
+import { CLAVES_CONFIG, obtenerConfiguracion, obtenerCredencialesMeta } from "../services/configuracion.service";
 import { QUEUE_NAMES } from "./queues";
 
 // ---------- Worker de envío de WhatsApp ----------
@@ -467,6 +467,83 @@ async function procesarAgradecimiento(job: Job<DatosAgradecimiento>) {
   return { enviado: true, semaforo };
 }
 
+// ---------- Worker de envío de Fidelización (Parte C) ----------
+// Manda UN recordatorio con la plantilla "fidelizacion_posventa". NO clasifica
+// la respuesta, NO agenda agradecimiento ni análisis: es solo un recordatorio.
+
+interface DatosFidelizacion {
+  clienteId: string;
+}
+
+async function procesarEnvioFidelizacion(job: Job<DatosFidelizacion>, token?: string) {
+  const cliente = await prisma.clienteFidelizacion.findUnique({ where: { id: job.data.clienteId } });
+  if (!cliente) {
+    throw new UnrecoverableError("El cliente de fidelización ya no existe en la base.");
+  }
+
+  // Idempotencia: si ya no está PENDIENTE (ya se envió/omitió), no se reenvía.
+  if (cliente.estado !== EstadoFidelizacion.PENDIENTE) {
+    return { omitido: true, motivo: `estado ${cliente.estado}` };
+  }
+
+  // Teléfono contactable (E.164). Si no hay, se omite (no es un fallo).
+  const telefono = cliente.telefonosNorm[0];
+  if (!telefono) {
+    await prisma.clienteFidelizacion.update({
+      where: { id: cliente.id },
+      data: { estado: EstadoFidelizacion.OMITIDO, error: "Sin teléfono válido (WhatsApp/celular)." },
+    });
+    return { omitido: true, motivo: "sin teléfono" };
+  }
+
+  // Lista de supresión (incluye a quien pidió la BAJA/STOP): no se lo molesta.
+  if (estaSuprimido(cliente.telefonosNorm, await telefonosSuprimidos())) {
+    await prisma.clienteFidelizacion.update({
+      where: { id: cliente.id },
+      data: { estado: EstadoFidelizacion.OMITIDO, error: "El cliente pidió no ser contactado (lista de supresión)." },
+    });
+    return { omitido: true, motivo: "teléfono suprimido" };
+  }
+
+  // Ventana horaria: fuera de hora, se re-agenda (no cuenta como intento ni fallo).
+  if (!dentroDeVentana()) {
+    await job.moveToDelayed(Date.now() + msHastaProximaApertura(), token);
+    throw new DelayedError();
+  }
+
+  // Plantilla de fidelización (texto fijo, sin variables — igual que contacto).
+  const creds = await obtenerCredencialesMeta();
+  let waMessageId: string;
+  try {
+    ({ waMessageId } = await sendTemplateMessage(telefono, [], creds.fidelizacionTemplateName));
+  } catch (err) {
+    // Número inválido / plantilla no aprobada / credenciales: no se reintenta.
+    if (err instanceof WhatsappApiError && !err.reintenable) {
+      throw new UnrecoverableError(err.message);
+    }
+    // Rate limit, timeout, 5xx: BullMQ reintenta con backoff.
+    throw err;
+  }
+
+  // El mensaje YA SALIÓ: un fallo de base acá NO debe reintentar el job (mandaría
+  // el WhatsApp de nuevo). Se marca ENVIADO; si el update falla, es irrecuperable.
+  try {
+    await prisma.clienteFidelizacion.update({
+      where: { id: cliente.id },
+      data: { estado: EstadoFidelizacion.ENVIADO, waMessageId, enviadoEn: new Date(), error: null },
+    });
+  } catch (err) {
+    throw new UnrecoverableError(
+      `El recordatorio se envió pero no se pudo registrar: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  console.log(
+    `[fidelizacion-envio] recordatorio de ${cliente.numeroServicio}° service enviado a ${cliente.nombre} (${telefono})`
+  );
+  return { enviado: true, waMessageId };
+}
+
 // ---------- Arranque de todos los workers ----------
 
 export function startWorkers() {
@@ -500,6 +577,38 @@ export function startWorkers() {
       });
     } catch (updateErr) {
       console.error(`[whatsapp-envio] no se pudo marcar ERROR el caso ${job.data.casoId}:`, updateErr);
+    }
+  });
+
+  const fidelizacionWorker = new Worker<DatosFidelizacion>(
+    QUEUE_NAMES.FIDELIZACION_ENVIO,
+    procesarEnvioFidelizacion,
+    {
+      connection: redisConnection,
+      concurrency: 1, // salen de a uno, espaciados por el delay del encolado
+    }
+  );
+
+  // Marca ERROR cuando el envío del recordatorio falla definitivamente.
+  fidelizacionWorker.on("failed", async (job, err) => {
+    if (!job?.data?.clienteId) return;
+    if (err instanceof DelayedError) return; // re-agendado por ventana, no es fallo
+    const sinReintentosPendientes =
+      err instanceof UnrecoverableError || job.attemptsMade >= (job.opts.attempts ?? 1);
+    if (!sinReintentosPendientes) {
+      console.warn(
+        `[fidelizacion-envio] intento ${job.attemptsMade} falló para ${job.data.clienteId}, se reintenta: ${err.message}`
+      );
+      return;
+    }
+    console.error(`[fidelizacion-envio] envío fallido para ${job.data.clienteId}: ${err.message}`);
+    try {
+      await prisma.clienteFidelizacion.update({
+        where: { id: job.data.clienteId },
+        data: { estado: EstadoFidelizacion.ERROR, error: err.message.slice(0, 500) },
+      });
+    } catch (updateErr) {
+      console.error(`[fidelizacion-envio] no se pudo marcar ERROR ${job.data.clienteId}:`, updateErr);
     }
   });
 
@@ -570,5 +679,12 @@ export function startWorkers() {
   }
 
   console.log("Workers de BullMQ iniciados");
-  return [whatsappWorker, analisisWorker, agradecimientoWorker, excelWorker, mantenimientoWorker];
+  return [
+    whatsappWorker,
+    fidelizacionWorker,
+    analisisWorker,
+    agradecimientoWorker,
+    excelWorker,
+    mantenimientoWorker,
+  ];
 }

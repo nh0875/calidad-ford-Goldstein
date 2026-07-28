@@ -13,6 +13,16 @@ enum TipoUpload {
   CONTACTO_POSVENTA
   CONTACTO_VENTAS
   ENCUESTA_FORD
+  FIDELIZACION
+}
+
+// Estado del recordatorio de fidelización por cliente (Parte C: recordatorio de
+// service pendiente). No se clasifica la respuesta: es solo un recordatorio.
+enum EstadoFidelizacion {
+  PENDIENTE // detectado, todavía no se envió el recordatorio
+  ENVIADO   // recordatorio enviado por WhatsApp
+  ERROR     // falló el envío (número inválido, template, etc.)
+  OMITIDO   // no se envió a propósito (opt-out / teléfono suprimido / sin teléfono)
 }
 
 // Estado de la encuesta oficial de Ford para un caso (Parte B)
@@ -144,11 +154,41 @@ model ExcelUpload {
   eliminadoPorId String?
   eliminadoPor   Usuario?  @relation("ExcelUploadEliminadoPor", fields: [eliminadoPorId], references: [id])
 
-  casos          Caso[]
-  tareasRefuerzo TareaRefuerzo[]
+  casos                Caso[]
+  tareasRefuerzo       TareaRefuerzo[]
+  clientesFidelizacion ClienteFidelizacion[]
 
   @@index([sucursal, periodo])
   @@index([eliminadoEn])
+}
+
+// Cliente detectado en el Excel de Fidelización con un service de mantenimiento
+// PENDIENTE (1° a 5°). Recibe UN recordatorio por WhatsApp (plantilla
+// "fidelizacion_posventa"). NO se clasifica la respuesta ni se crea un Caso:
+// es un flujo aparte, solo recordatorio. Cada fila es un destinatario.
+model ClienteFidelizacion {
+  id       String      @id @default(cuid())
+  uploadId String
+  upload   ExcelUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  nombre           String
+  telefono         String // el mejor teléfono contactable (E.164 si normalizó; si no, el crudo)
+  telefonosNorm    String[] // teléfonos normalizados (para chequear la lista de supresión)
+  modelo           String?
+  patente          String?
+  asesor           String?
+  numeroServicio   Int // el service pendiente detectado (1 a 5)
+  comentarioAsesor String  @db.Text // el texto original de donde se detectó
+  sucursal         String?
+
+  estado      EstadoFidelizacion @default(PENDIENTE)
+  waMessageId String? // id del mensaje en Meta (si se envió)
+  error       String? // motivo del fallo/omisión (si ERROR/OMITIDO)
+  enviadoEn   DateTime?
+  createdAt   DateTime           @default(now())
+
+  @@index([uploadId])
+  @@index([estado])
 }
 
 // Cada fila del seguimiento post-servicio ("Contacto Posterior")

@@ -67,6 +67,8 @@ services:
       META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
       META_TEMPLATE_NAME: ${META_TEMPLATE_NAME:-contacto_posventa}
       META_TEMPLATE_LANG: ${META_TEMPLATE_LANG:-es_AR}
+      # Plantilla del recordatorio de Fidelización (Parte C), pendiente de Meta
+      META_FIDELIZACION_TEMPLATE_NAME: ${META_FIDELIZACION_TEMPLATE_NAME:-fidelizacion_posventa}
       META_GRAPH_BASE_URL: ${META_GRAPH_BASE_URL:-https://graph.facebook.com/v20.0}
       WHATSAPP_ENVIO_DELAY_MS: ${WHATSAPP_ENVIO_DELAY_MS:-2500}
       DIAS_SIN_RESPUESTA_PARA_NC: ${DIAS_SIN_RESPUESTA_PARA_NC:-5}

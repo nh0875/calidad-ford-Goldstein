@@ -22,6 +22,7 @@ import refuerzoRoutes from "./refuerzo.routes";
 import supresionRoutes from "./supresion.routes";
 import normalizacionRoutes from "./normalizacion.routes";
 import avisoRoutes from "./aviso.routes";
+import fidelizacionRoutes from "./fidelizacion.routes";
 
 const router = Router();
 
@@ -62,5 +63,6 @@ router.use("/refuerzos", refuerzoRoutes); // tareas de refuerzo de encuesta Ford
 router.use("/supresion", supresionRoutes); // lista de supresión por teléfono (solo ADMIN)
 router.use("/normalizacion", normalizacionRoutes); // normalización de asesores/sucursales (solo ADMIN)
 router.use("/avisos", avisoRoutes); // cartel rojo en pantalla (RQR abierto, escaladas, amarillos)
+router.use("/fidelizacion", fidelizacionRoutes); // Parte C: recordatorio de service pendiente (1°-5°)
 
 export default router;

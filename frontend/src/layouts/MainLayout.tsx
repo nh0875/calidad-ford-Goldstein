@@ -4,6 +4,7 @@ import {
   ClipboardList,
   ClipboardPen,
   GitBranch,
+  Gift,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -37,6 +38,7 @@ const navItems: Array<{ to: string; label: string; icono: LucideIcon }> = [
   { to: "/rqr", label: "RQR", icono: MessageSquareWarning },
   { to: "/revision-manual", label: "Revisión manual", icono: ClipboardPen },
   { to: "/refuerzos", label: "Refuerzo Ford", icono: ClipboardCheck },
+  { to: "/fidelizacion", label: "Fidelización", icono: Gift },
 ];
 
 const pageTitles: Record<string, string> = {
@@ -53,6 +55,7 @@ const pageTitles: Record<string, string> = {
   "/auditoria": "Auditoría del sistema",
   "/configuracion": "Configuración",
   "/refuerzos": "Refuerzo de encuesta Ford",
+  "/fidelizacion": "Fidelización — recordatorio de service pendiente",
   "/cambiar-password": "Cambiar mi contraseña",
 };
 
