@@ -168,3 +168,65 @@ export async function sendTextMessage(telefono: string, texto: string): Promise<
     text: { body: texto },
   });
 }
+
+/**
+ * Baja un archivo de media de Meta (ej. una nota de voz) por su id. Son DOS
+ * pasos: 1) GET /{mediaId} devuelve una URL temporal (~5 min) + el mime;
+ * 2) GET de esa URL (host de Meta) con el mismo Bearer trae los bytes.
+ * La usa el worker de análisis para transcribir audios con Gemini.
+ */
+export async function descargarMedia(mediaId: string): Promise<{ bytes: Buffer; mimeType: string }> {
+  if (env.modoDemo) {
+    throw new WhatsappApiError("No se puede bajar media en MODO_DEMO.", 0, null, false);
+  }
+  const creds = await obtenerCredencialesMeta();
+  if (!creds.token) {
+    throw new WhatsappApiError("Falta el token de Meta para bajar la nota de voz.", 0, null, false);
+  }
+
+  // 1) Metadata: la URL temporal de descarga + el mime.
+  let metaRes: Response;
+  try {
+    metaRes = await fetch(`${creds.graphBaseUrl}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${creds.token}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
+    throw new WhatsappApiError(
+      `No se pudo consultar la media: ${err instanceof Error ? err.message : String(err)}`,
+      0,
+      null,
+      true
+    );
+  }
+  if (!metaRes.ok) {
+    const reintenable = metaRes.status === 429 || metaRes.status >= 500;
+    throw new WhatsappApiError(`Meta respondió ${metaRes.status} al pedir la media.`, metaRes.status, null, reintenable);
+  }
+  const meta: any = await metaRes.json().catch(() => null);
+  const url: string | undefined = meta?.url;
+  const mimeType: string = meta?.mime_type ?? "audio/ogg";
+  if (!url) throw new WhatsappApiError("La media no trae URL de descarga.", metaRes.status, null, false);
+
+  // 2) Descargar los bytes (URL de Meta; requiere el mismo Bearer).
+  let fileRes: Response;
+  try {
+    fileRes = await fetch(url, {
+      headers: { Authorization: `Bearer ${creds.token}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (err) {
+    throw new WhatsappApiError(
+      `No se pudo descargar la media: ${err instanceof Error ? err.message : String(err)}`,
+      0,
+      null,
+      true
+    );
+  }
+  if (!fileRes.ok) {
+    const reintenable = fileRes.status === 429 || fileRes.status >= 500;
+    throw new WhatsappApiError(`La descarga de la media respondió ${fileRes.status}.`, fileRes.status, null, reintenable);
+  }
+  const bytes = Buffer.from(await fileRes.arrayBuffer());
+  return { bytes, mimeType };
+}

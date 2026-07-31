@@ -225,6 +225,76 @@ async function llamarGemini(mensajes: MensajeIA[]): Promise<string> {
   return partes.map((p: { text?: string }) => p.text ?? "").join("");
 }
 
+// --- Transcripción de audios (notas de voz) con Gemini ---
+// Gemini 2.5-flash acepta audio/ogg (opus, el formato de WhatsApp) directo por
+// inlineData; probado que transcribe bien en español. SIEMPRE usa Gemini (Claude
+// no acepta audio): si no hay GEMINI_API_KEY, tira error definitivo y el worker
+// deja el audio en revisión manual (no lo pierde).
+export async function transcribirAudio(bytes: Buffer, mimeType: string): Promise<string> {
+  if (env.analisisModoMock) return "el servicio estuvo muy bien, gracias"; // mock para pruebas sin API
+
+  if (!env.geminiApiKey) {
+    throw new GeminiApiError("No hay GEMINI_API_KEY configurada para transcribir el audio.", 0, false);
+  }
+  // Gemini quiere el mime base ("audio/ogg"), sin el "; codecs=opus" que manda Meta.
+  const mime = (mimeType || "audio/ogg").split(";")[0].trim() || "audio/ogg";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${env.geminiModel}:generateContent?key=${env.geminiApiKey}`;
+  const soportaThinking = /2\.5|gemini-3|flash-latest/.test(env.geminiModel);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text:
+                  "Transcribí textualmente esta nota de voz de un cliente (está en español). Devolvé SOLO la " +
+                  "transcripción, sin comillas ni comentarios. Si no se entiende ninguna palabra, devolvé exactamente: (sin audio reconocible).",
+              },
+              { inline_data: { mime_type: mime, data: bytes.toString("base64") } },
+            ],
+          },
+        ],
+        generationConfig: {
+          maxOutputTokens: 1024,
+          temperature: 0,
+          ...(soportaThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+        },
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (err) {
+    throw new GeminiApiError(
+      `No se pudo conectar con Gemini para transcribir: ${err instanceof Error ? err.message : String(err)}`,
+      0,
+      true
+    );
+  }
+
+  if (!res.ok) {
+    const detalle = await res.text().catch(() => "");
+    const reintenable = res.status === 429 || res.status >= 500;
+    throw new GeminiApiError(`Gemini (audio) respondió ${res.status}: ${detalle.slice(0, 200)}`, res.status, reintenable);
+  }
+
+  const body: any = await res.json().catch(() => null);
+  const u = body?.usageMetadata;
+  if (u) {
+    console.log(
+      `[gemini-audio] tokens: prompt=${u.promptTokenCount ?? "?"} salida=${u.candidatesTokenCount ?? 0} total=${u.totalTokenCount ?? "?"}`
+    );
+  }
+  const partes = body?.candidates?.[0]?.content?.parts ?? [];
+  return partes
+    .map((p: { text?: string }) => p.text ?? "")
+    .join("")
+    .trim();
+}
+
 async function analizarConIA(
   texto: string,
   contexto: ContextoCaso,

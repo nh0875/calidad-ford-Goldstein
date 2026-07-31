@@ -59,7 +59,14 @@ export async function mensajesSinAnalizar(casoId: string) {
   return prisma.whatsappMessage.findMany({
     where: { casoId, direction: MessageDirection.ENTRANTE, analizadoEn: null },
     orderBy: { createdAt: "asc" },
-    select: { id: true, content: true, createdAt: true },
+    select: {
+      id: true,
+      content: true,
+      createdAt: true,
+      mediaId: true,
+      mediaMimeType: true,
+      mediaTipo: true,
+    },
   });
 }
 

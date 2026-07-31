@@ -32,6 +32,8 @@ interface MensajeEntranteMeta {
   // Reacción con emoji (el cliente "reacciona" a nuestro mensaje con 👍, ❤️, etc.).
   // Llega como type "reaction", NO como texto. emoji vacío = quitó la reacción.
   reaction?: { emoji?: string; message_id?: string };
+  // Nota de voz / audio: llega con type "audio" y el id del archivo en Meta.
+  audio?: { id?: string; mime_type?: string; voice?: boolean };
 }
 
 function extraerContenido(mensaje: MensajeEntranteMeta): string {
@@ -42,6 +44,8 @@ function extraerContenido(mensaje: MensajeEntranteMeta): string {
   if (mensaje.button?.text) return mensaje.button.text;
   if (mensaje.interactive?.button_reply?.title) return mensaje.interactive.button_reply.title;
   if (mensaje.interactive?.list_reply?.title) return mensaje.interactive.list_reply.title;
+  // Audio: placeholder inicial; el worker lo reemplaza por la transcripción de Gemini.
+  if (mensaje.audio?.id) return "[audio]";
   return `[mensaje de tipo ${mensaje.type}]`;
 }
 
@@ -115,6 +119,11 @@ async function procesarMensajeEntrante(mensaje: MensajeEntranteMeta) {
       content: contenido,
       waMessageId: mensaje.id,
       status: "recibido",
+      // Audio: se guarda el id del archivo en Meta para que el worker lo baje y
+      // Gemini lo transcriba (el análisis corre async, separado del webhook).
+      ...(mensaje.audio?.id
+        ? { mediaId: mensaje.audio.id, mediaMimeType: mensaje.audio.mime_type ?? null, mediaTipo: "audio" }
+        : {}),
     },
   });
 

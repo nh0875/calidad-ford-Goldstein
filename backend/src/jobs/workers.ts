@@ -6,8 +6,8 @@ import { prisma } from "../config/prisma";
 import { redisConnection } from "../config/redis";
 import { marcarNoRespondidos } from "../services/mantenimiento.service";
 import { crearRqrAutomatico } from "../services/rqr.service";
-import { analizarRespuesta, esErrorCuota, esErrorReintenable } from "../services/sentiment.service";
-import { WhatsappApiError, sendTemplateMessage, sendTextMessage } from "../services/whatsapp.service";
+import { analizarRespuesta, esErrorCuota, esErrorReintenable, transcribirAudio } from "../services/sentiment.service";
+import { WhatsappApiError, descargarMedia, sendTemplateMessage, sendTextMessage } from "../services/whatsapp.service";
 import { programarAgradecimiento, reemplazarPlaceholders } from "../services/agradecimiento.service";
 import {
   analisisPrincipal,
@@ -170,6 +170,36 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
   }
   const idsTanda = mensajes.map((m) => m.id);
   const ultimoId = idsTanda[idsTanda.length - 1];
+
+  // AUDIOS (notas de voz): se bajan de Meta y Gemini los transcribe, para
+  // clasificarlos como cualquier respuesta de texto. La transcripción reemplaza
+  // el placeholder "[audio]" (en la base y en memoria) y sigue el flujo normal.
+  // Si falla definitivamente (sin key de Gemini, media vencida, etc.), se deja
+  // "[audio]" y el caso cae a revisión manual: nunca se pierde el mensaje.
+  for (const m of mensajes) {
+    if (m.mediaTipo === "audio" && m.mediaId && m.content === "[audio]") {
+      try {
+        const { bytes, mimeType } = await descargarMedia(m.mediaId);
+        const transcripcion = (await transcribirAudio(bytes, mimeType)).trim();
+        const contenido =
+          transcripcion && transcripcion.toLowerCase() !== "(sin audio reconocible)"
+            ? transcripcion
+            : "[audio sin voz reconocible]";
+        await prisma.whatsappMessage.update({ where: { id: m.id }, data: { content: contenido } });
+        m.content = contenido;
+        console.log(`[analisis-sentimiento] caso ${caso.numeroOrden}: audio transcripto (${contenido.length} chars)`);
+      } catch (err) {
+        // Transitorio (rate limit / red / 5xx de Meta o Gemini) → BullMQ reintenta.
+        const reintentar = (err instanceof WhatsappApiError && err.reintenable) || esErrorReintenable(err);
+        if (reintentar) throw err;
+        console.warn(
+          `[analisis-sentimiento] caso ${caso.numeroOrden}: no se pudo transcribir el audio, va a revisión manual: ${err instanceof Error ? err.message : String(err)}`
+        );
+        // Fallo definitivo: se deja "[audio]" → cae a revisión manual (esNoTextual)
+      }
+    }
+  }
+
   const texto = consolidarTexto(mensajes);
 
   // ¿Es la primera vez que clasificamos este caso, o el cliente siguió
@@ -199,8 +229,10 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
   const soloEmoji = contenidos.every((c) => esSoloEmoji(c));
   const semaforoEmoji = soloEmoji ? sentimientoSoloEmoji(contenidos) : null;
 
-  // El webhook guarda las respuestas no textuales como "[mensaje de tipo audio]" etc.
-  const esNoTextual = /^\[mensaje de tipo .+\]$/.test(texto.trim());
+  // No textual = lo que no se pudo convertir a texto: media sin soportar
+  // ("[mensaje de tipo image]"), o un audio que no se pudo transcribir ("[audio]"
+  // / "[audio sin voz reconocible]"). Va a revisión manual.
+  const esNoTextual = /^\[(mensaje de tipo .+|audio.*)\]$/.test(texto.trim());
   // Emoji-solo que no se pudo clasificar de forma clara (negativo o ambiguo).
   const emojiSinClasificar = soloEmoji && semaforoEmoji === null;
 

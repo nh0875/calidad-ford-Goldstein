@@ -270,6 +270,14 @@ model WhatsappMessage {
   // true = mensaje de agradecimiento/recordatorio automático (Parte A),
   // para distinguirlo del template inicial en reportes y en el detalle del caso
   esAgradecimiento Boolean          @default(false)
+  // Media entrante (nota de voz, imagen, etc.): el id del archivo en Meta, su
+  // mime y el tipo. Se guarda porque el análisis corre async (separado del
+  // webhook) y necesita bajar el audio de Meta para que Gemini lo transcriba.
+  // Para audio, el `content` arranca como "[audio]" y se reemplaza por la
+  // transcripción cuando el worker la obtiene.
+  mediaId          String?
+  mediaMimeType    String?
+  mediaTipo        String? // "audio" | "image" | "document" | "video" (el type de Meta)
   // Marca que este mensaje ENTRANTE ya fue cubierto por un análisis. Una misma
   // tanda de mensajes del cliente se analiza JUNTA y en una sola llamada a la
   // IA, así que varios mensajes pueden compartir un único SentimentAnalysis:
