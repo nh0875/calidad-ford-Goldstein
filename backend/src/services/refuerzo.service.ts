@@ -1,4 +1,4 @@
-import { AreaTrabajo, AreaUsuario, EstadoTareaRefuerzo } from "@prisma/client";
+import { AreaTrabajo, AreaUsuario, EstadoTareaRefuerzo, Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { claveNormalizada } from "./normalizacion.service";
 
@@ -9,75 +9,35 @@ export function mismaProvincia(sucursalUsuario: string | null, sucursalCaso: str
   return claveNormalizada(sucursalUsuario) === claveNormalizada(sucursalCaso ?? "");
 }
 
-// Estados "abiertos" (cuentan como carga de trabajo del empleado)
+// Estados "abiertos": la tarea todavía está para trabajar (pendiente o en gestión).
 export const ESTADOS_ABIERTOS: EstadoTareaRefuerzo[] = [
   EstadoTareaRefuerzo.PENDIENTE,
   EstadoTareaRefuerzo.EN_GESTION,
 ];
 
-// Usuarios elegibles para recibir tareas: activos y que PARTICIPAN de los
-// refuerzos, con la cantidad de tareas ABIERTAS que ya tienen. El control es
-// `participaEnRefuerzos`, NO el rol: si el admin también gestiona casos (típico
-// cuando una sola persona opera el sistema), recibe tareas; para que un admin
-// solo supervise, se pone su `participaEnRefuerzos` en false.
-//
-// Se filtra por ÁREA y por PROVINCIA (sucursal) del caso, para no mezclar:
-//  - área:      solo los de esa área o de AMBAS (una tarea de VENTAS nunca va a POSVENTA).
-//  - provincia: solo los de esa sucursal o los "sin sucursal" (null = todas)
-//               (una tarea de un caso de Mendoza nunca va a alguien de San Juan).
-export async function usuariosElegiblesConCarga(
-  area?: AreaTrabajo,
-  sucursal?: string | null
-): Promise<{ id: string; nombre: string; abiertas: number }[]> {
-  // El ÁREA se filtra en la base (barato). La PROVINCIA se filtra en JS con
-  // claveNormalizada, insensible a mayúsculas Y acentos: el ILIKE de Postgres
-  // pliega mayúsculas pero NO tildes, y una provincia como "Córdoba" cargada de
-  // dos formas ("Cordoba"/"Córdoba") no matchearía. La tabla de usuarios es
-  // chica (el equipo), así que traerla y filtrar en memoria no cuesta nada.
-  const candidatos = await prisma.usuario.findMany({
-    where: {
-      activo: true,
-      participaEnRefuerzos: true,
-      ...(area ? { area: { in: [area === AreaTrabajo.VENTAS ? AreaUsuario.VENTAS : AreaUsuario.POSVENTA, AreaUsuario.AMBAS] } } : {}),
-    },
-    select: { id: true, nombre: true, sucursal: true },
-    orderBy: { createdAt: "asc" },
-  });
-  const suc = sucursal?.trim();
-  const usuarios = suc ? candidatos.filter((u) => mismaProvincia(u.sucursal, suc)) : candidatos;
-  if (usuarios.length === 0) return [];
-
-  const cargas = await prisma.tareaRefuerzo.groupBy({
-    by: ["asignadoAId"],
-    where: { estado: { in: ESTADOS_ABIERTOS }, asignadoAId: { in: usuarios.map((u) => u.id) } },
-    _count: { _all: true },
-  });
-  const mapa: Record<string, number> = {};
-  for (const c of cargas) if (c.asignadoAId) mapa[c.asignadoAId] = c._count._all;
-
-  return usuarios.map((u) => ({ id: u.id, nombre: u.nombre, abiertas: mapa[u.id] ?? 0 }));
+// Áreas de caso que VE un usuario según su AreaUsuario. null = ve todas (AMBAS).
+export function areasVisiblesPara(areaUsuario: AreaUsuario): AreaTrabajo[] | null {
+  if (areaUsuario === AreaUsuario.AMBAS) return null;
+  return areaUsuario === AreaUsuario.VENTAS ? [AreaTrabajo.VENTAS] : [AreaTrabajo.POSVENTA];
 }
 
 /**
- * Reparto equitativo: siempre asigna al que menos tareas abiertas tiene; ante
- * empate, rota (round-robin) porque tras cada asignación se re-ordena y el
- * recién elegido queda con una más. Mantiene el conteo en memoria durante la
- * importación para balancear también las tareas nuevas entre sí.
+ * MODELO DE POOL COMPARTIDO: las tareas de refuerzo NO tienen dueño. Cada
+ * empleado ve TODAS las tareas de su ÁREA + PROVINCIA. Este where filtra por
+ * ÁREA (en la base). La PROVINCIA NO se filtra acá porque Postgres no pliega
+ * acentos ("San Juan"/"San Juán"): se filtra en JS con mismaProvincia sobre
+ * caso.sucursal DESPUÉS de traer las filas. asignadoAId ya no es "dueño": es
+ * "gestor" (quién la está trabajando / la completó), y null = en el pool, sin tomar.
  */
-export class Repartidor {
-  constructor(private cola: { id: string; nombre: string; abiertas: number }[]) {}
-
-  get hayUsuarios(): boolean {
-    return this.cola.length > 0;
-  }
-
-  siguiente(): string | null {
-    if (this.cola.length === 0) return null;
-    this.cola.sort((a, b) => a.abiertas - b.abiertas);
-    const elegido = this.cola[0];
-    elegido.abiertas += 1;
-    return elegido.id;
-  }
+export function wherePoolArea(
+  areaUsuario: AreaUsuario,
+  estados?: EstadoTareaRefuerzo[]
+): Prisma.TareaRefuerzoWhereInput {
+  const areas = areasVisiblesPara(areaUsuario);
+  return {
+    ...(estados ? { estado: { in: estados } } : {}),
+    caso: { eliminadoEn: null, ...(areas ? { area: { in: areas } } : {}) },
+  };
 }
 
 // ¿Tiene el caso una tarea abierta (para idempotencia ante re-cargas)?
@@ -87,9 +47,39 @@ export async function tareaAbiertaDelCaso(casoId: string) {
   });
 }
 
-// Cantidad de tareas PENDIENTES del usuario (para el badge del sidebar)
-export async function contarPendientesDe(usuarioId: string): Promise<number> {
-  return prisma.tareaRefuerzo.count({
-    where: { asignadoAId: usuarioId, estado: EstadoTareaRefuerzo.PENDIENTE },
+// Integrantes del pool de un área+provincia: usuarios activos que participan de
+// los refuerzos y le corresponde esa área+provincia. Sirve para DETECTAR pools
+// sin nadie (tareas que nadie vería) al importar. El control es
+// `participaEnRefuerzos`, no el rol.
+export async function usuariosDelPool(
+  area?: AreaTrabajo,
+  sucursal?: string | null
+): Promise<{ id: string; nombre: string }[]> {
+  const candidatos = await prisma.usuario.findMany({
+    where: {
+      activo: true,
+      participaEnRefuerzos: true,
+      ...(area
+        ? { area: { in: [area === AreaTrabajo.VENTAS ? AreaUsuario.VENTAS : AreaUsuario.POSVENTA, AreaUsuario.AMBAS] } }
+        : {}),
+    },
+    select: { id: true, nombre: true, sucursal: true },
+    orderBy: { createdAt: "asc" },
   });
+  const suc = sucursal?.trim();
+  const usuarios = suc ? candidatos.filter((u) => mismaProvincia(u.sucursal, suc)) : candidatos;
+  return usuarios.map((u) => ({ id: u.id, nombre: u.nombre }));
+}
+
+// Cantidad de tareas PENDIENTES del POOL del usuario (para el badge del sidebar).
+// Trae las pendientes de su área y filtra la provincia en JS (acentos).
+export async function contarPendientesDelPool(usuario: {
+  area: AreaUsuario;
+  sucursal: string | null;
+}): Promise<number> {
+  const tareas = await prisma.tareaRefuerzo.findMany({
+    where: wherePoolArea(usuario.area, [EstadoTareaRefuerzo.PENDIENTE]),
+    select: { id: true, caso: { select: { sucursal: true } } },
+  });
+  return tareas.filter((t) => mismaProvincia(usuario.sucursal, t.caso.sucursal)).length;
 }

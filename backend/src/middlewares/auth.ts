@@ -35,14 +35,21 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
   const usuario = await prisma.usuario.findUnique({
     where: { id: payload.sub },
-    select: { id: true, nombre: true, email: true, rol: true, activo: true, area: true },
+    select: { id: true, nombre: true, email: true, rol: true, activo: true, area: true, sucursal: true },
   });
 
   if (!usuario || !usuario.activo) {
     return res.status(401).json({ message: "La sesión ya no es válida. Iniciá sesión de nuevo." });
   }
 
-  req.usuario = { id: usuario.id, nombre: usuario.nombre, email: usuario.email, rol: usuario.rol, area: usuario.area };
+  req.usuario = {
+    id: usuario.id,
+    nombre: usuario.nombre,
+    email: usuario.email,
+    rol: usuario.rol,
+    area: usuario.area,
+    sucursal: usuario.sucursal,
+  };
   req.token = { jti: payload.jti, exp: payload.exp };
   next();
 }

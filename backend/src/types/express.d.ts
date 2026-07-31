@@ -10,6 +10,7 @@ declare global {
         email: string;
         rol: RolUsuario;
         area: AreaUsuario;
+        sucursal: string | null; // provincia; null = atiende todas (para el pool de refuerzos)
       };
       // Datos del token en curso, para poder revocarlo al hacer logout
       token?: {

@@ -184,56 +184,9 @@ export async function patchUsuario(req: Request, res: Response) {
     select: SELECT_USUARIO,
   });
 
-  // Tareas que quedaron HUÉRFANAS y hay que redistribuir:
-  //  - si el usuario se desactivó o dejó de participar: TODAS sus tareas abiertas
-  //    (ya no puede trabajar ninguna);
-  //  - si cambió su alcance (área/provincia): las que quedaron fuera del nuevo alcance.
-  let tareasParaReasignar: Array<{ id: string; numeroOrden: string; nombrePropietario: string }> = [];
-  const seDesactiva = parsed.data.activo === false && usuario.activo;
-  const dejaParticipar = parsed.data.participaEnRefuerzos === false && usuario.participaEnRefuerzos;
-  const cambioAlcance =
-    (nuevaArea !== undefined && nuevaArea !== usuario.area) ||
-    (nuevaSucursal !== undefined && (nuevaSucursal ?? "") !== (usuario.sucursal ?? ""));
-  const restringido = actualizado.area !== AreaUsuario.AMBAS || !!actualizado.sucursal;
-
-  // Se evalúan sus tareas abiertas para detectar cuáles quedaron huérfanas.
-  // El filtro por provincia se hace en JS (mismaProvincia) porque el ILIKE de
-  // Postgres NO pliega acentos: "San Juan" vs "San Juán" no matchearían y una
-  // tarea fuera de alcance pasaría desapercibida (o al revés).
-  const evaluar = seDesactiva || dejaParticipar || (cambioAlcance && restringido);
-  if (evaluar) {
-    const abiertas = await prisma.tareaRefuerzo.findMany({
-      where: {
-        asignadoAId: actualizado.id,
-        estado: { in: [EstadoTareaRefuerzo.PENDIENTE, EstadoTareaRefuerzo.EN_GESTION] },
-        caso: { eliminadoEn: null },
-      },
-      select: {
-        id: true,
-        caso: { select: { numeroOrden: true, nombrePropietario: true, area: true, sucursal: true } },
-      },
-    });
-
-    const areaUsuario = actualizado.area;
-    const areaMatch = (areaCaso: AreaTrabajo) =>
-      areaUsuario === AreaUsuario.AMBAS ||
-      (areaUsuario === AreaUsuario.VENTAS ? areaCaso === AreaTrabajo.VENTAS : areaCaso === AreaTrabajo.POSVENTA);
-
-    // Al desactivar / dejar de participar: TODAS son huérfanas.
-    // Al cambiar de alcance: solo las que caen fuera del nuevo área o provincia.
-    const huerfanas =
-      seDesactiva || dejaParticipar
-        ? abiertas
-        : abiertas.filter(
-            (t) => !(areaMatch(t.caso.area) && mismaProvincia(actualizado.sucursal, t.caso.sucursal))
-          );
-
-    tareasParaReasignar = huerfanas.map((t) => ({
-      id: t.id,
-      numeroOrden: t.caso.numeroOrden,
-      nombrePropietario: t.caso.nombrePropietario,
-    }));
-  }
+  // POOL COMPARTIDO: las tareas de refuerzo NO tienen dueño (se ven por
+  // área+provincia). Al desactivar/cambiar el alcance de un usuario no hay tareas
+  // "huérfanas" que redistribuir: simplemente dejan de aparecerle en su pool.
 
   await auditar(req, {
     accion: ACCIONES.USUARIO_MODIFICADO,
@@ -247,7 +200,6 @@ export async function patchUsuario(req: Request, res: Response) {
       areaDespues: actualizado.area,
       sucursalAntes: usuario.sucursal,
       sucursalDespues: actualizado.sucursal,
-      tareasParaReasignar: tareasParaReasignar.length,
       participaEnRefuerzosAntes: usuario.participaEnRefuerzos,
       participaEnRefuerzosDespues: actualizado.participaEnRefuerzos,
     },
@@ -265,13 +217,8 @@ export async function patchUsuario(req: Request, res: Response) {
   if (parsed.data.participaEnRefuerzos !== undefined && parsed.data.participaEnRefuerzos !== usuario.participaEnRefuerzos) {
     cambios.push(actualizado.participaEnRefuerzos ? "participa en refuerzos" : "no participa en refuerzos");
   }
-  const avisoScope =
-    tareasParaReasignar.length > 0
-      ? ` Atención: tiene ${tareasParaReasignar.length} tarea(s) abierta(s) que ya no le corresponden; redistribuilas.`
-      : "";
   res.json({
-    message: `${actualizado.nombre}: ${cambios.join(", ") || "sin cambios"}.${avisoScope}`,
+    message: `${actualizado.nombre}: ${cambios.join(", ") || "sin cambios"}.`,
     data: actualizado,
-    tareasParaReasignar,
   });
 }

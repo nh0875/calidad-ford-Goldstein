@@ -9,7 +9,8 @@ import { prisma } from "../config/prisma";
 import { ACCIONES, DatosAuditoria } from "./audit.service";
 import { abrirWorkbook } from "./excel.service";
 import { normalizarTelefonoAR } from "./telefono.service";
-import { Repartidor, tareaAbiertaDelCaso, usuariosElegiblesConCarga } from "./refuerzo.service";
+import { tareaAbiertaDelCaso, usuariosDelPool } from "./refuerzo.service";
+import { claveNormalizada } from "./normalizacion.service";
 import {
   CampoFord,
   clasificarAreaFord,
@@ -152,23 +153,13 @@ export async function importarEncuestaFord(params: {
     },
   });
 
-  // Un repartidor por combinación ÁREA + PROVINCIA (sucursal), construido a
-  // demanda: las tareas de un caso VENTAS de Mendoza se reparten solo entre
-  // usuarios de (VENTAS o AMBAS) que atiendan Mendoza (o todas las provincias).
-  // Las sucursales son dinámicas (salen de los casos), por eso no se pre-arma
-  // un set fijo: se cachea por clave a medida que aparecen.
-  const cacheRepartidores = new Map<string, Repartidor>();
-  const repartidorPara = async (area: AreaTrabajo, sucursal: string): Promise<Repartidor> => {
-    const clave = `${area}|${sucursal.trim().toLowerCase()}`;
-    let r = cacheRepartidores.get(clave);
-    if (!r) {
-      r = new Repartidor(await usuariosElegiblesConCarga(area, sucursal));
-      cacheRepartidores.set(clave, r);
-    }
-    return r;
-  };
-  // ¿Hay ALGÚN usuario elegible en el sistema? (para el aviso "no había empleados").
-  const hayAlgunElegible = (await usuariosElegiblesConCarga()).length > 0;
+  // POOL COMPARTIDO: las tareas se crean SIN asignar (asignadoAId null); cada
+  // empleado ve las de su área+provincia. Acá solo se lleva la cuenta de cuántas
+  // tareas cae en cada combinación área+provincia, para después detectar los
+  // "pools sin nadie" (tareas que NINGÚN empleado vería).
+  const tareasPorPool = new Map<string, { area: AreaTrabajo; sucursal: string; count: number }>();
+  // ¿Hay ALGÚN usuario que participe de refuerzos? (para el aviso general).
+  const hayAlgunElegible = (await usuariosDelPool()).length > 0;
 
   const resumen: ResumenFord = {
     uploadId: upload.id,
@@ -346,28 +337,31 @@ export async function importarEncuestaFord(params: {
         continue;
       }
 
-      // Reparto según el área Y la provincia (sucursal) del caso matcheado.
-      const asignadoAId = (await repartidorPara(match.area, match.sucursal)).siguiente();
-      if (!asignadoAId) resumen.sinAsignar++;
-
-      const tarea = await prisma.tareaRefuerzo.create({
+      // La tarea cae directo al POOL de su área+provincia (sin dueño).
+      await prisma.tareaRefuerzo.create({
         data: {
           casoId: match.id,
           tipo: clasif.tipoTarea,
-          asignadoAId,
+          asignadoAId: null,
           origenUploadId: upload.id,
         },
       });
+      // Contar por pool (para el aviso de "pools sin empleados" al final).
+      const clavePool = `${match.area}|${claveNormalizada(match.sucursal)}`;
+      const p = tareasPorPool.get(clavePool) ?? { area: match.area, sucursal: match.sucursal, count: 0 };
+      p.count++;
+      tareasPorPool.set(clavePool, p);
+
       if (clasif.tipoTarea === TipoTareaRefuerzo.RECORDAR_ENCUESTA) resumen.tareasNuevas.RECORDAR_ENCUESTA++;
       else resumen.tareasNuevas.VERIFICAR_EMAIL++;
-
-      await auditar({
-        accion: ACCIONES.TAREA_ASIGNADA,
-        entidad: "TareaRefuerzo",
-        entidadId: tarea.id,
-        detalles: { casoId: match.id, numeroOrden: match.numeroOrden, tipo: clasif.tipoTarea, asignadoAId },
-      });
     }
+  }
+
+  // Pools (área+provincia) SIN ningún empleado que participe: sus tareas quedan
+  // invisibles para todos. Se cuentan como "sinAsignar" para avisarlo.
+  for (const p of tareasPorPool.values()) {
+    const gente = await usuariosDelPool(p.area, p.sucursal);
+    if (gente.length === 0) resumen.sinAsignar += p.count;
   }
 
   await auditar({

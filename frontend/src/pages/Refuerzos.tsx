@@ -1,9 +1,11 @@
 // Seguimiento de la encuesta de Ford: tareas de refuerzo gestionadas por HUMANOS.
-// CALIDAD ve "Mis casos a reforzar"; ADMIN además tiene la vista de administración
-// (todas las tareas, reparto, reasignación, mini-reporte por empleado).
-import { Fragment, useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ClipboardCheck, Info, Mail, SearchX, Shuffle } from "lucide-react";
-import { apiGet, apiPatchJson, apiPostJson } from "../lib/api";
+// MODELO DE POOL: las tareas NO tienen dueño. Cada empleado ve TODAS las tareas de
+// su ÁREA + PROVINCIA (Yesica de Mendoza/Posventa ve todo Mendoza/Posventa). Cuando
+// alguien la empieza/completa, queda registrado como "gestor" (para no llamar dos
+// veces al mismo cliente). ADMIN además tiene la vista por pool.
+import { useCallback, useEffect, useState } from "react";
+import { AlertTriangle, ClipboardCheck, Info, Mail, SearchX, UserCheck } from "lucide-react";
+import { apiGet, apiPatchJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
 import { fechaCorta } from "../lib/categorias";
 import { etiquetaArea, tonoArea } from "../lib/area";
@@ -14,10 +16,6 @@ import { claseBoton } from "../components/ui/Button";
 import { Campo, Select, Textarea } from "../components/ui/Field";
 import { EmptyState } from "../components/ui/EmptyState";
 
-// Compara provincias sin distinguir mayúsculas ni acentos (igual que el backend).
-function normProv(s: string | null | undefined): string {
-  return (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-}
 function provinciaLabel(s: string | null | undefined): string {
   return s && s.trim() ? s : "Todas";
 }
@@ -30,7 +28,7 @@ interface Tarea {
   notas: string | null;
   creadaEn: string;
   suprimido?: boolean;
-  asignadoA: { id: string; nombre: string; activo: boolean } | null;
+  asignadoA: { id: string; nombre: string; activo: boolean } | null; // gestor (quién la trabaja)
   caso: {
     id: string;
     numeroOrden: string;
@@ -80,7 +78,7 @@ export default function Refuerzos() {
     <div className="space-y-4">
       {esAdmin && (
         <div className="flex gap-2 border-b border-gray-200">
-          <TabBtn activo={tab === "mias"} onClick={() => setTab("mias")}>Mis casos a reforzar</TabBtn>
+          <TabBtn activo={tab === "mias"} onClick={() => setTab("mias")}>Casos del equipo</TabBtn>
           <TabBtn activo={tab === "admin"} onClick={() => setTab("admin")}>Administración</TabBtn>
         </div>
       )}
@@ -102,9 +100,10 @@ function TabBtn({ activo, onClick, children }: { activo: boolean; onClick: () =>
   );
 }
 
-// ---------- Vista del empleado (CALIDAD): mis tareas ----------
+// ---------- Vista del empleado: el POOL de su área + provincia ----------
 
 function MisTareas() {
+  const yoId = getUsuario()?.id;
   const [tareas, setTareas] = useState<Tarea[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
@@ -115,7 +114,7 @@ function MisTareas() {
       const { data } = await apiGet<{ data: Tarea[] }>("/api/refuerzos/mias");
       setTareas(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No pudimos cargar tus tareas.");
+      setError(err instanceof Error ? err.message : "No pudimos cargar las tareas.");
     }
   }, []);
   useEffect(() => { cargar(); }, [cargar]);
@@ -135,19 +134,36 @@ function MisTareas() {
 
   return (
     <div className="space-y-3">
+      <Alert tono="info">
+        <div className="flex items-start gap-1.5">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>
+            Estos son <strong>todos los casos de tu área y provincia</strong> (los ve todo el equipo). Cuando
+            empezás a gestionar uno, queda a tu nombre para que <strong>nadie más llame al mismo cliente</strong>.
+          </span>
+        </div>
+      </Alert>
       {error && <Alert tono="error">{error}</Alert>}
       {mensaje && <Alert tono="exito">{mensaje}</Alert>}
       {tareas.length === 0 && (
-        <EmptyState icono={ClipboardCheck} titulo="No tenés casos pendientes de refuerzo" descripcion="Cuando se importe una nueva tanda de encuestas de Ford, tus casos van a aparecer acá." />
+        <EmptyState icono={ClipboardCheck} titulo="No hay casos pendientes de refuerzo" descripcion="Cuando se importe una nueva tanda de encuestas de Ford, los casos de tu área y provincia van a aparecer acá." />
       )}
       {tareas.map((t) => (
-        <TareaCard key={t.id} tarea={t} onActualizar={actualizar} />
+        <TareaCard key={t.id} tarea={t} yoId={yoId} onActualizar={actualizar} />
       ))}
     </div>
   );
 }
 
-function TareaCard({ tarea, onActualizar }: { tarea: Tarea; onActualizar: (id: string, body: Record<string, unknown>, ok: string) => void }) {
+function TareaCard({
+  tarea,
+  yoId,
+  onActualizar,
+}: {
+  tarea: Tarea;
+  yoId?: string;
+  onActualizar: (id: string, body: Record<string, unknown>, ok: string) => void;
+}) {
   const info = TIPO_INFO[tarea.tipo];
   const Icono = info.icono;
   const [completando, setCompletando] = useState(false);
@@ -155,14 +171,22 @@ function TareaCard({ tarea, onActualizar }: { tarea: Tarea; onActualizar: (id: s
   const [notas, setNotas] = useState("");
   const semaforo = tarea.caso.analisis[0]?.semaforo ?? null;
   const requiereNotas = resultado !== "" && resultado !== "ENCUESTA_RESPONDIDA";
+  // ¿La está gestionando otra persona del equipo? (para avisar y evitar trabajo doble)
+  const gestorOtro = tarea.estado === "EN_GESTION" && tarea.asignadoA && tarea.asignadoA.id !== yoId;
 
   return (
     <Card padding="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge tono={info.tono}><Icono className="mr-1 inline h-3 w-3" aria-hidden="true" />{info.label}</Badge>
             <Badge tono={tarea.estado === "EN_GESTION" ? "amarillo" : "gris"}>{tarea.estado.replace("_", " ")}</Badge>
+            {tarea.asignadoA && tarea.estado === "EN_GESTION" && (
+              <Badge tono={gestorOtro ? "morado" : "verde"}>
+                <UserCheck className="mr-1 inline h-3 w-3" aria-hidden="true" />
+                {gestorOtro ? `La está gestionando ${tarea.asignadoA.nombre}` : "La estás gestionando vos"}
+              </Badge>
+            )}
             {semaforo && <PuntoSemaforo semaforo={semaforo} soloIcono />}
             {tarea.caso.tieneRqrAbierto && <Badge tono="rojo">RQR abierto</Badge>}
             {tarea.suprimido && (
@@ -189,8 +213,8 @@ function TareaCard({ tarea, onActualizar }: { tarea: Tarea; onActualizar: (id: s
 
       <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-gray-100 pt-3">
         {tarea.estado === "PENDIENTE" && (
-          <button onClick={() => onActualizar(tarea.id, { estado: "EN_GESTION" }, "Tarea en gestión.")} className={claseBoton("secundario", "!py-1.5")}>
-            Empezar gestión
+          <button onClick={() => onActualizar(tarea.id, { estado: "EN_GESTION" }, "La tomaste: quedó a tu nombre.")} className={claseBoton("secundario", "!py-1.5")}>
+            Tomar / empezar gestión
           </button>
         )}
         {!completando ? (
@@ -234,191 +258,133 @@ function Dato({ etiqueta, valor, resaltar }: { etiqueta: string; valor: string; 
   );
 }
 
-// ---------- Vista de administración (ADMIN) ----------
+// ---------- Vista de administración (ADMIN): por POOL ----------
 
-interface EmpleadoResumen {
-  id: string; nombre: string; rol: "ADMIN" | "CALIDAD"; activo: boolean; participaEnRefuerzos: boolean;
-  area: string; sucursal: string | null;
-  asignadas: number; completadas: number; abiertas: number; pctCompletadas: number;
-  resultados: Record<string, number>;
+interface PoolResumen {
+  area: string;
+  sucursal: string;
+  pendientes: number;
+  enGestion: number;
+  completadas: number;
+  canceladas: number;
+  integrantes: number;
+  sinGente: boolean;
 }
-
-// ¿Puede este empleado tomar esta tarea? (misma área y misma provincia, o "todas")
-function empleadoElegible(e: EmpleadoResumen, t: Tarea): boolean {
-  if (!e.activo) return false;
-  const areaOk = e.area === "AMBAS" || e.area === t.caso.area;
-  const provOk = !e.sucursal || normProv(e.sucursal) === normProv(t.caso.sucursal);
-  return areaOk && provOk;
+interface GestorResumen {
+  id: string;
+  nombre: string;
+  completadas: number;
 }
 
 function AdminTareas() {
   const [tareas, setTareas] = useState<Tarea[]>([]);
-  const [empleados, setEmpleados] = useState<EmpleadoResumen[]>([]);
-  const [sinAsignar, setSinAsignar] = useState(0);
+  const [pools, setPools] = useState<PoolResumen[]>([]);
+  const [porGestor, setPorGestor] = useState<GestorResumen[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [mensaje, setMensaje] = useState<string | null>(null);
-  const [filtroEmpleado, setFiltroEmpleado] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("");
 
   const cargar = useCallback(async () => {
     setError(null);
     try {
       const params = new URLSearchParams();
-      if (filtroEmpleado) params.set("asignadoAId", filtroEmpleado);
       if (filtroEstado) params.set("estado", filtroEstado);
-      const [t, e] = await Promise.all([
+      const [t, r] = await Promise.all([
         apiGet<{ data: Tarea[] }>(`/api/refuerzos?${params}`),
-        apiGet<{ data: EmpleadoResumen[]; sinAsignar: number }>("/api/refuerzos/resumen-empleados"),
+        apiGet<{ pools: PoolResumen[]; porGestor: GestorResumen[] }>("/api/refuerzos/resumen-empleados"),
       ]);
       setTareas(t.data);
-      setEmpleados(e.data);
-      setSinAsignar(e.sinAsignar);
+      setPools(r.pools);
+      setPorGestor(r.porGestor);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos cargar las tareas.");
     }
-  }, [filtroEmpleado, filtroEstado]);
+  }, [filtroEstado]);
   useEffect(() => { cargar(); }, [cargar]);
 
-  async function reasignar(id: string, asignadoAId: string) {
-    if (!asignadoAId) return;
-    setError(null); setMensaje(null);
-    try {
-      const { message } = await apiPostJson<{ message: string }>(`/api/refuerzos/${id}/reasignar`, { asignadoAId });
-      setMensaje(message);
-      await cargar();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No pudimos reasignar la tarea.");
-    }
-  }
-
-  const [redistribuyendo, setRedistribuyendo] = useState(false);
-
-  // Reparto en masa: sin `deUsuarioId` reparte las SIN asignar; con `deUsuarioId`
-  // vacía las tareas de ese empleado (no disponible) entre el resto del equipo.
-  async function redistribuir(deUsuarioId?: string, nombre?: string) {
-    if (deUsuarioId && !window.confirm(`¿Repartir todas las tareas abiertas de ${nombre} entre el resto del equipo?`)) return;
-    setError(null); setMensaje(null); setRedistribuyendo(true);
-    try {
-      const { message } = await apiPostJson<{ message: string }>("/api/refuerzos/redistribuir", deUsuarioId ? { deUsuarioId } : {});
-      setMensaje(message);
-      await cargar();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No pudimos redistribuir las tareas.");
-    } finally {
-      setRedistribuyendo(false);
-    }
-  }
-
-  const inactivosConTareas = tareas.filter((t) => t.asignadoA && !t.asignadoA.activo);
+  const poolsSinGente = pools.filter((p) => p.sinGente && p.pendientes + p.enGestion > 0);
 
   return (
     <div className="space-y-4">
       {error && <Alert tono="error">{error}</Alert>}
-      {mensaje && <Alert tono="exito">{mensaje}</Alert>}
 
-      {/* Cómo funciona el reparto (para que no sea ambiguo) */}
       <Alert tono="info">
         <div className="flex items-start gap-1.5">
           <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
           <span>
-            Los casos se reparten <strong>solos</strong> al importar la encuesta Ford, equilibrados y{" "}
-            <strong>sin mezclar área ni provincia</strong> (un caso de Posventa/Mendoza solo va a alguien de
-            Posventa que atienda Mendoza). Acá ves el reparto y podés ajustarlo: si alguien no está disponible,
-            usá <strong>"Repartir sus casos"</strong> para pasarle sus tareas al resto de su misma área y provincia.
+            Los casos ya <strong>no se reparten por persona</strong>: cada empleado ve <strong>todos</strong> los
+            casos de su <strong>área y provincia</strong> (pool compartido). Cuando alguien empieza a gestionar uno,
+            queda a su nombre para que no lo trabaje otro.
           </span>
         </div>
       </Alert>
 
-      {sinAsignar > 0 && (
+      {poolsSinGente.length > 0 && (
         <Alert tono="advertencia">
-          <div className="flex flex-wrap items-center gap-3">
-            <span>
-              <AlertTriangle className="mr-1 inline h-4 w-4" /> Hay {sinAsignar} caso(s) <strong>sin asignar</strong>{" "}
-              (no había nadie de esa área/provincia al importar).
-            </span>
-            <button
-              onClick={() => redistribuir()}
-              disabled={redistribuyendo}
-              className={claseBoton("primario", "!py-1.5")}
-            >
-              <Shuffle className="mr-1 inline h-4 w-4" aria-hidden="true" />
-              {redistribuyendo ? "Repartiendo…" : "Repartir los sin asignar"}
-            </button>
-          </div>
-        </Alert>
-      )}
-      {inactivosConTareas.length > 0 && (
-        <Alert tono="advertencia">
-          <AlertTriangle className="mr-1 inline h-4 w-4" /> Hay {inactivosConTareas.length} caso(s) asignados a empleados
-          inactivos. Usá "Repartir sus casos" en la fila de esa persona para moverlos.
+          <AlertTriangle className="mr-1 inline h-4 w-4" /> Hay {poolsSinGente.length} grupo(s){" "}
+          <strong>sin ningún empleado</strong> — esos casos no los ve nadie. Creá o habilitá un usuario para:{" "}
+          {poolsSinGente.map((p) => `${etiquetaArea(p.area)}/${provinciaLabel(p.sucursal)}`).join(", ")}.
         </Alert>
       )}
 
-      {/* Reparto por empleado (con su área y provincia) */}
+      {/* Estado de cada pool (área + provincia) */}
       <Card padding="p-0" className="overflow-x-auto">
         <div className="border-b bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
-          Equipo — carga por empleado
+          Estado por grupo (área + provincia)
         </div>
         <table className="min-w-full text-sm">
           <thead>
             <tr className="border-b bg-gray-50 text-left text-xs uppercase text-ink-muted">
-              <th className="px-3 py-2">Empleado</th>
               <th className="px-3 py-2">Área</th>
               <th className="px-3 py-2">Provincia</th>
-              <th className="px-3 py-2 text-right">Abiertas</th>
+              <th className="px-3 py-2 text-right">Pendientes</th>
+              <th className="px-3 py-2 text-right">En gestión</th>
               <th className="px-3 py-2 text-right">Completadas</th>
-              <th className="px-3 py-2 text-right">% Compl.</th>
-              <th className="px-3 py-2">Estado</th>
-              <th className="px-3 py-2">Acción</th>
+              <th className="px-3 py-2 text-right">Empleados</th>
             </tr>
           </thead>
           <tbody>
-            {empleados.map((e) => (
-              <tr key={e.id} className="border-b border-gray-100">
-                <td className="px-3 py-2 text-ink">
-                  {e.nombre}
-                  {e.rol === "ADMIN" && <span className="ml-1 text-xs text-ink-muted">(admin)</span>}
-                </td>
-                <td className="px-3 py-2">
-                  <Badge tono={tonoArea(e.area)} className="cursor-default">{etiquetaArea(e.area)}</Badge>
-                </td>
-                <td className="px-3 py-2 text-ink-muted">{provinciaLabel(e.sucursal)}</td>
-                <td className="px-3 py-2 text-right font-medium text-ink">{e.abiertas}</td>
-                <td className="px-3 py-2 text-right text-ink-muted">{e.completadas}</td>
-                <td className="px-3 py-2 text-right text-ink-muted">{e.pctCompletadas}%</td>
-                <td className="px-3 py-2">
-                  {!e.activo ? <Badge tono="rojo">Inactivo</Badge> : !e.participaEnRefuerzos ? <Badge tono="gris">No participa</Badge> : <Badge tono="verde">Activo</Badge>}
-                </td>
-                <td className="px-3 py-2">
-                  {/* "No disponible": pasa sus casos abiertos al resto de su misma área+provincia. */}
-                  {e.abiertas > 0 && (
-                    <button
-                      onClick={() => redistribuir(e.id, e.nombre)}
-                      disabled={redistribuyendo}
-                      className="inline-flex items-center gap-1 text-xs font-medium text-accent-dark hover:underline disabled:opacity-50"
-                      title={`Pasar los ${e.abiertas} caso(s) abiertos de ${e.nombre} al resto del equipo de su misma área y provincia (ej. si no está disponible)`}
-                    >
-                      <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
-                      Repartir sus casos
-                    </button>
-                  )}
+            {pools.map((p) => (
+              <tr key={`${p.area}|${p.sucursal}`} className="border-b border-gray-100">
+                <td className="px-3 py-2"><Badge tono={tonoArea(p.area)} className="cursor-default">{etiquetaArea(p.area)}</Badge></td>
+                <td className="px-3 py-2 text-ink-muted">{provinciaLabel(p.sucursal)}</td>
+                <td className="px-3 py-2 text-right font-medium text-ink">{p.pendientes}</td>
+                <td className="px-3 py-2 text-right text-ink-muted">{p.enGestion}</td>
+                <td className="px-3 py-2 text-right text-green-700">{p.completadas}</td>
+                <td className="px-3 py-2 text-right">
+                  {p.sinGente ? <Badge tono="rojo">nadie</Badge> : <span className="text-ink-muted">{p.integrantes}</span>}
                 </td>
               </tr>
             ))}
+            {pools.length === 0 && (
+              <tr><td colSpan={6} className="px-3 py-4 text-center text-ink-muted">Todavía no hay tareas de refuerzo.</td></tr>
+            )}
           </tbody>
         </table>
       </Card>
 
+      {/* Productividad: completadas por persona (gestor) */}
+      {porGestor.length > 0 && (
+        <Card padding="p-0" className="overflow-x-auto">
+          <div className="border-b bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+            Completadas por persona
+          </div>
+          <table className="min-w-full text-sm">
+            <tbody>
+              {porGestor.map((g) => (
+                <tr key={g.id} className="border-b border-gray-100">
+                  <td className="px-3 py-2 text-ink">{g.nombre}</td>
+                  <td className="px-3 py-2 text-right font-medium text-green-700">{g.completadas}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+
       {/* Filtros + listado de todas las tareas */}
-      <Card className="grid gap-3 sm:grid-cols-3">
-        <Campo etiqueta="Empleado">
-          <Select value={filtroEmpleado} onChange={(e) => setFiltroEmpleado(e.target.value)}>
-            <option value="">Todos</option>
-            {empleados.map((e) => <option key={e.id} value={e.id}>{e.nombre}</option>)}
-          </Select>
-        </Campo>
+      <Card>
         <Campo etiqueta="Estado">
-          <Select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
+          <Select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)} className="max-w-xs">
             <option value="">Todos</option>
             {["PENDIENTE", "EN_GESTION", "COMPLETADA", "CANCELADA"].map((s) => <option key={s} value={s}>{s.replace("_", " ")}</option>)}
           </Select>
@@ -434,53 +400,28 @@ function AdminTareas() {
               <th className="px-3 py-2">Área</th>
               <th className="px-3 py-2">Provincia</th>
               <th className="px-3 py-2">Estado</th>
-              <th className="px-3 py-2">Asignado a</th>
-              <th className="px-3 py-2">Mover a</th>
+              <th className="px-3 py-2">Gestionado por</th>
             </tr>
           </thead>
           <tbody>
-            {tareas.map((t) => {
-              const activa = t.estado !== "COMPLETADA" && t.estado !== "CANCELADA";
-              const elegibles = empleados.filter((e) => empleadoElegible(e, t) && e.id !== t.asignadoA?.id);
-              return (
-                <tr key={t.id} className="border-b border-gray-100">
-                  <td className="px-3 py-2 text-ink">{t.caso.nombrePropietario}<span className="ml-1 text-xs text-ink-muted">#{t.caso.numeroOrden}</span></td>
-                  <td className="px-3 py-2"><Badge tono={TIPO_INFO[t.tipo].tono}>{TIPO_INFO[t.tipo].label}</Badge></td>
-                  <td className="px-3 py-2">
-                    <Badge tono={tonoArea(t.caso.area)} className="cursor-default">{etiquetaArea(t.caso.area)}</Badge>
-                  </td>
-                  <td className="px-3 py-2 text-ink-muted">{provinciaLabel(t.caso.sucursal)}</td>
-                  <td className="px-3 py-2 text-ink-muted">{t.estado.replace("_", " ")}</td>
-                  <td className="px-3 py-2">
-                    {t.asignadoA ? (
-                      <span className={!t.asignadoA.activo ? "text-red-700" : "text-ink"}>{t.asignadoA.nombre}{!t.asignadoA.activo && " (inactivo)"}</span>
-                    ) : (
-                      <Badge tono="amarillo">Sin asignar</Badge>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    {activa &&
-                      (elegibles.length > 0 ? (
-                        <Select defaultValue="" onChange={(e) => reasignar(t.id, e.target.value)} className="!py-1 text-xs">
-                          <option value="">Mover a…</option>
-                          {elegibles.map((e) => (
-                            <option key={e.id} value={e.id}>
-                              {e.nombre}
-                              {e.rol === "ADMIN" ? " (admin)" : ""}
-                            </option>
-                          ))}
-                        </Select>
-                      ) : (
-                        <span className="text-xs text-ink-muted" title="No hay otro empleado de esa área y provincia">
-                          sin equipo
-                        </span>
-                      ))}
-                  </td>
-                </tr>
-              );
-            })}
+            {tareas.map((t) => (
+              <tr key={t.id} className="border-b border-gray-100">
+                <td className="px-3 py-2 text-ink">{t.caso.nombrePropietario}<span className="ml-1 text-xs text-ink-muted">#{t.caso.numeroOrden}</span></td>
+                <td className="px-3 py-2"><Badge tono={TIPO_INFO[t.tipo].tono}>{TIPO_INFO[t.tipo].label}</Badge></td>
+                <td className="px-3 py-2"><Badge tono={tonoArea(t.caso.area)} className="cursor-default">{etiquetaArea(t.caso.area)}</Badge></td>
+                <td className="px-3 py-2 text-ink-muted">{provinciaLabel(t.caso.sucursal)}</td>
+                <td className="px-3 py-2 text-ink-muted">{t.estado.replace("_", " ")}</td>
+                <td className="px-3 py-2">
+                  {t.asignadoA ? (
+                    <span className={!t.asignadoA.activo ? "text-red-700" : "text-ink"}>{t.asignadoA.nombre}{!t.asignadoA.activo && " (inactivo)"}</span>
+                  ) : (
+                    <span className="text-xs text-ink-muted">— en el pool</span>
+                  )}
+                </td>
+              </tr>
+            ))}
             {tareas.length === 0 && (
-              <tr><td colSpan={7}><EmptyState icono={SearchX} titulo="No hay tareas con estos filtros" /></td></tr>
+              <tr><td colSpan={6}><EmptyState icono={SearchX} titulo="No hay tareas con estos filtros" /></td></tr>
             )}
           </tbody>
         </table>

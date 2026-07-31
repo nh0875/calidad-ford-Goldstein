@@ -219,8 +219,11 @@ function ResultadoFord({ resumen, onReiniciar }: { resumen: ResumenFord; onReini
         Importación terminada: {resumen.matcheados} casos cruzados, {resumen.respondidas} respondieron,{" "}
         {resumen.tareasNuevas.RECORDAR_ENCUESTA + resumen.tareasNuevas.VERIFICAR_EMAIL} tareas nuevas.
       </Alert>
-      {!resumen.hayUsuariosElegibles && (
-        <Alert tono="advertencia">No había empleados elegibles para el reparto: {resumen.sinAsignar} tarea(s) quedaron SIN asignar. Asignalas desde Refuerzos → Administración.</Alert>
+      {resumen.sinAsignar > 0 && (
+        <Alert tono="advertencia">
+          {resumen.sinAsignar} tarea(s) quedaron en grupos (área + provincia) <strong>sin ningún empleado</strong>: nadie
+          las va a ver. Creá o habilitá un usuario de esa área y provincia (en Usuarios) para que aparezcan en su pool.
+        </Alert>
       )}
 
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
