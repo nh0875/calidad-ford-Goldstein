@@ -123,7 +123,11 @@ services:
     restart: unless-stopped
     mem_limit: 128m
     ports:
-      - "${HTTP_PORT:-80}:80"
+      # HTTP_BIND permite atar el puerto solo a localhost cuando adelante hay un
+      # reverse proxy (ej. el nginx del servidor de la empresa): HTTP_BIND=127.0.0.1
+      # deja el sitio accesible SOLO por ese nginx, no directo por la IP de la VM.
+      # Por defecto 0.0.0.0 (comportamiento actual en la PC local).
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
     depends_on:
       - backend
 
