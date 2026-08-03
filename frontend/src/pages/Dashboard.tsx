@@ -294,8 +294,8 @@ export default function Dashboard() {
           </Card>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <TablaRanking titulo="Sucursales con peor desempeño" filas={resumen.rankingSucursales} minimo={resumen.minimoCasosRanking} />
-            <TablaRanking titulo="Asesores con peor desempeño" filas={resumen.rankingAsesores} minimo={resumen.minimoCasosRanking} />
+            <TablaRanking titulo="Sucursales a priorizar" filas={resumen.rankingSucursales} minimo={resumen.minimoCasosRanking} />
+            <TablaRanking titulo="Asesores a priorizar" filas={resumen.rankingAsesores} minimo={resumen.minimoCasosRanking} />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
