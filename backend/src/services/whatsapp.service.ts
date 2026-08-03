@@ -125,20 +125,23 @@ async function llamarGraphApi(
 export async function sendTemplateMessage(
   telefono: string,
   variables: string[],
-  // Override opcional del nombre de la plantilla. Por defecto usa la de contacto
-  // (creds.templateName); Fidelización pasa la suya (fidelizacion_posventa). El
-  // idioma es el mismo configurado para el número.
-  templateNameOverride?: string
+  // Override opcional de la plantilla (nombre + idioma). Por defecto usa la de
+  // contacto POSVENTA (creds.templateName / templateLang). Cada caso pasa la que
+  // le corresponde: Ventas la suya, Fidelización la suya. IMPORTANTE: el idioma
+  // tiene que ser EXACTAMENTE el que esa plantilla tiene aprobado en Meta, o el
+  // envío falla con 132001 ("template does not exist in this language").
+  override?: { name?: string; lang?: string }
 ): Promise<RespuestaEnvio & { templateName: string }> {
   const creds = await obtenerCredencialesMeta();
-  const templateName = templateNameOverride || creds.templateName;
+  const templateName = override?.name || creds.templateName;
+  const templateLang = override?.lang || creds.templateLang;
   const r = await llamarGraphApi(creds, {
     messaging_product: "whatsapp",
     to: telefono,
     type: "template",
     template: {
       name: templateName,
-      language: { code: creds.templateLang },
+      language: { code: templateLang },
       // Sin variables → se omite "components" por completo.
       ...(variables.length > 0
         ? {

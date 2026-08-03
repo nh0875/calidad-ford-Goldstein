@@ -9,10 +9,15 @@ export const env = {
     token: process.env.META_WHATSAPP_TOKEN ?? "",
     phoneNumberId: process.env.META_PHONE_NUMBER_ID ?? "",
     webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN ?? "",
+    // Plantilla de contacto POSVENTA (Contacto Posventa). Cada área usa la suya.
     templateName: process.env.META_TEMPLATE_NAME ?? "contacto_posventa",
     templateLang: process.env.META_TEMPLATE_LANG ?? "es_AR",
-    // Plantilla del recordatorio de Fidelización (Parte C). Mismo idioma que la
-    // de contacto. Pendiente de aprobación en Meta: cuando se apruebe, ya sale.
+    // Plantilla de contacto VENTAS (Contacto Ventas). Un caso de Ventas se
+    // contacta con ESTA, no con la de posventa. El idioma por defecto es el mismo
+    // que la de posventa; se puede ajustar por separado en Configuración.
+    templateVentaName: process.env.META_TEMPLATE_VENTA_NAME ?? "contacto_venta",
+    // Plantilla del recordatorio de Fidelización (Parte C). Pendiente de
+    // aprobación en Meta: cuando se apruebe, ya sale.
     fidelizacionTemplateName: process.env.META_FIDELIZACION_TEMPLATE_NAME ?? "fidelizacion_posventa",
     graphBaseUrl: process.env.META_GRAPH_BASE_URL ?? "https://graph.facebook.com/v20.0",
   },

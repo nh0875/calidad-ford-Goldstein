@@ -7,6 +7,7 @@ import { mismaProvincia } from "../services/refuerzo.service";
 import { estadoVentana, telefonoContactable, ultimoEntranteAt } from "../services/seguimiento.service";
 import { sendTemplateMessage, sendTextMessage, WhatsappApiError } from "../services/whatsapp.service";
 import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
+import { plantillaContactoPara } from "../services/configuracion.service";
 import { agradecimientoQueue } from "../jobs/queues";
 import { ACCIONES, auditar } from "../services/audit.service";
 
@@ -359,7 +360,8 @@ export async function reenviarPlantilla(req: Request, res: Response) {
   let waMessageId: string;
   let templateName: string;
   try {
-    ({ waMessageId, templateName } = await sendTemplateMessage(tel, []));
+    // La plantilla del ÁREA del caso (posventa vs ventas).
+    ({ waMessageId, templateName } = await sendTemplateMessage(tel, [], await plantillaContactoPara(caso.area)));
   } catch (err) {
     return responderErrorWhatsapp(res, err);
   }

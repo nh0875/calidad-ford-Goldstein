@@ -21,7 +21,12 @@ import {
 } from "../services/analisis.service";
 import { crearAviso } from "../services/aviso.service";
 import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
-import { CLAVES_CONFIG, obtenerConfiguracion, obtenerCredencialesMeta } from "../services/configuracion.service";
+import {
+  CLAVES_CONFIG,
+  obtenerConfiguracion,
+  obtenerCredencialesMeta,
+  plantillaContactoPara,
+} from "../services/configuracion.service";
 import { QUEUE_NAMES } from "./queues";
 
 // ---------- Worker de envío de WhatsApp ----------
@@ -91,10 +96,16 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
   //   [caso.nombrePropietario || "cliente", caso.modelo || "su vehículo", formatearFecha(caso.fechaSalida)]
   const variables: string[] = [];
 
+  // Plantilla según el ÁREA del caso: Posventa usa contacto_posventa, Ventas
+  // usa contacto_venta (cada una con su idioma aprobado en Meta).
   let waMessageId: string;
   let templateName: string;
   try {
-    ({ waMessageId, templateName } = await sendTemplateMessage(telefono, variables));
+    ({ waMessageId, templateName } = await sendTemplateMessage(
+      telefono,
+      variables,
+      await plantillaContactoPara(caso.area)
+    ));
   } catch (err) {
     // Número inválido / template mal / credenciales: no tiene sentido reintentar
     if (err instanceof WhatsappApiError && !err.reintenable) {
@@ -569,7 +580,10 @@ async function procesarEnvioFidelizacion(job: Job<DatosFidelizacion>, token?: st
   const creds = await obtenerCredencialesMeta();
   let waMessageId: string;
   try {
-    ({ waMessageId } = await sendTemplateMessage(telefono, [], creds.fidelizacionTemplateName));
+    ({ waMessageId } = await sendTemplateMessage(telefono, [], {
+      name: creds.fidelizacionTemplateName,
+      lang: creds.fidelizacionTemplateLang,
+    }));
   } catch (err) {
     // Número inválido / plantilla no aprobada / credenciales: no se reintenta.
     if (err instanceof WhatsappApiError && !err.reintenable) {

@@ -169,6 +169,10 @@ interface EstadoMeta {
   verifyTokenConfigurado: boolean;
   templateName: string;
   templateLang: string;
+  templateVentaName: string;
+  templateVentaLang: string;
+  fidelizacionTemplateName: string;
+  fidelizacionTemplateLang: string;
   completo: boolean;
 }
 
@@ -186,6 +190,10 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [templateName, setTemplateName] = useState("");
   const [templateLang, setTemplateLang] = useState("");
+  const [templateVentaName, setTemplateVentaName] = useState("");
+  const [templateVentaLang, setTemplateVentaLang] = useState("");
+  const [fidelizacionTemplateName, setFidelizacionTemplateName] = useState("");
+  const [fidelizacionTemplateLang, setFidelizacionTemplateLang] = useState("");
 
   const cargar = useCallback(async () => {
     try {
@@ -194,6 +202,10 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
       setPhoneNumberId(data.phoneNumberId);
       setTemplateName(data.templateName);
       setTemplateLang(data.templateLang);
+      setTemplateVentaName(data.templateVentaName);
+      setTemplateVentaLang(data.templateVentaLang);
+      setFidelizacionTemplateName(data.fidelizacionTemplateName);
+      setFidelizacionTemplateLang(data.fidelizacionTemplateLang);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos cargar la configuración de WhatsApp.");
     }
@@ -207,7 +219,15 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
     setError(null);
     setMensaje(null);
     try {
-      const body: Record<string, string> = { phoneNumberId, templateName, templateLang };
+      const body: Record<string, string> = {
+        phoneNumberId,
+        templateName,
+        templateLang,
+        templateVentaName,
+        templateVentaLang,
+        fidelizacionTemplateName,
+        fidelizacionTemplateLang,
+      };
       if (token.trim()) body.token = token.trim();
       if (verify.trim()) body.webhookVerifyToken = verify.trim();
       const r = await apiPatchJson<{ message: string; data: EstadoMeta }>("/api/configuracion/whatsapp", body);
@@ -268,11 +288,23 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
         <Campo etiqueta="Verify token del webhook" hint={estado.verifyTokenConfigurado ? "Configurado. Dejalo vacío para no cambiarlo." : "Todavía no configurado."}>
           <Input type="password" value={verify} onChange={(e) => setVerify(e.target.value)} placeholder={estado.verifyTokenConfigurado ? "•••••••• (sin cambios)" : "Elegí un token aleatorio"} disabled={!esAdmin} autoComplete="off" />
         </Campo>
-        <Campo etiqueta="Nombre del template aprobado">
-          <Input type="text" value={templateName} onChange={(e) => setTemplateName(e.target.value)} disabled={!esAdmin} />
+        <Campo etiqueta="Plantilla de contacto POSVENTA" hint="A los casos de Posventa se les manda ESTA.">
+          <Input type="text" value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="contacto_posventa" disabled={!esAdmin} />
         </Campo>
-        <Campo etiqueta="Idioma del template">
+        <Campo etiqueta="Idioma (posventa)">
           <Input type="text" value={templateLang} onChange={(e) => setTemplateLang(e.target.value)} placeholder="es_AR" disabled={!esAdmin} />
+        </Campo>
+        <Campo etiqueta="Plantilla de contacto VENTAS" hint="A los casos de Ventas se les manda ESTA.">
+          <Input type="text" value={templateVentaName} onChange={(e) => setTemplateVentaName(e.target.value)} placeholder="contacto_venta" disabled={!esAdmin} />
+        </Campo>
+        <Campo etiqueta="Idioma (ventas)">
+          <Input type="text" value={templateVentaLang} onChange={(e) => setTemplateVentaLang(e.target.value)} placeholder="es" disabled={!esAdmin} />
+        </Campo>
+        <Campo etiqueta="Plantilla de Fidelización">
+          <Input type="text" value={fidelizacionTemplateName} onChange={(e) => setFidelizacionTemplateName(e.target.value)} placeholder="fidelizacion_posventa" disabled={!esAdmin} />
+        </Campo>
+        <Campo etiqueta="Idioma (fidelización)">
+          <Input type="text" value={fidelizacionTemplateLang} onChange={(e) => setFidelizacionTemplateLang(e.target.value)} placeholder="es" disabled={!esAdmin} />
         </Campo>
       </div>
 

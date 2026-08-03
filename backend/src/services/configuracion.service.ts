@@ -1,3 +1,4 @@
+import { AreaTrabajo } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { env } from "../config/env";
 import { cifradoDisponible, cifrar, descifrar } from "./cripto.service";
@@ -65,9 +66,12 @@ export const CLAVES_META = {
   TOKEN: "meta.whatsappToken",
   PHONE_NUMBER_ID: "meta.phoneNumberId",
   VERIFY_TOKEN: "meta.webhookVerifyToken",
-  TEMPLATE_NAME: "meta.templateName",
+  TEMPLATE_NAME: "meta.templateName", // contacto POSVENTA
   TEMPLATE_LANG: "meta.templateLang",
+  TEMPLATE_VENTA_NAME: "meta.templateVentaName", // contacto VENTAS
+  TEMPLATE_VENTA_LANG: "meta.templateVentaLang",
   FIDELIZACION_TEMPLATE_NAME: "meta.fidelizacionTemplateName",
+  FIDELIZACION_TEMPLATE_LANG: "meta.fidelizacionTemplateLang",
   // Estado de la plantilla de fidelización según Meta (lo actualiza el webhook
   // message_template_status_update): APPROVED / PENDING / REJECTED / ... o "".
   FIDELIZACION_TEMPLATE_STATUS: "meta.fidelizacionTemplateStatus",
@@ -92,30 +96,59 @@ export interface CredencialesMeta {
   token: string;
   phoneNumberId: string;
   webhookVerifyToken: string;
-  templateName: string;
+  templateName: string; // contacto POSVENTA
   templateLang: string;
+  templateVentaName: string; // contacto VENTAS
+  templateVentaLang: string;
   fidelizacionTemplateName: string;
+  fidelizacionTemplateLang: string;
   graphBaseUrl: string;
+}
+
+/**
+ * Elige la plantilla de contacto INICIAL según el área del caso: un caso de
+ * Posventa se contacta con la plantilla de posventa y uno de Ventas con la de
+ * ventas. Cada una tiene su nombre y su idioma (pueden diferir en Meta).
+ */
+export function plantillaContacto(area: AreaTrabajo, creds: CredencialesMeta): { name: string; lang: string } {
+  if (area === AreaTrabajo.VENTAS) {
+    return { name: creds.templateVentaName, lang: creds.templateVentaLang };
+  }
+  return { name: creds.templateName, lang: creds.templateLang };
+}
+
+/** Igual que plantillaContacto pero resolviendo las credenciales por dentro. */
+export async function plantillaContactoPara(area: AreaTrabajo): Promise<{ name: string; lang: string }> {
+  return plantillaContacto(area, await obtenerCredencialesMeta());
 }
 
 // Credenciales efectivas para USAR (envío, verificación de webhook): primero lo
 // guardado en /configuracion; si algo falta, cae al .env (bootstrap/migración).
 export async function obtenerCredencialesMeta(): Promise<CredencialesMeta> {
-  const [token, phone, verify, tName, tLang, tFidel] = await Promise.all([
+  const [token, phone, verify, tName, tLang, tVentaName, tVentaLang, tFidel, tFidelLang] = await Promise.all([
     leerMeta(CLAVES_META.TOKEN),
     leerMeta(CLAVES_META.PHONE_NUMBER_ID),
     leerMeta(CLAVES_META.VERIFY_TOKEN),
     leerMeta(CLAVES_META.TEMPLATE_NAME),
     leerMeta(CLAVES_META.TEMPLATE_LANG),
+    leerMeta(CLAVES_META.TEMPLATE_VENTA_NAME),
+    leerMeta(CLAVES_META.TEMPLATE_VENTA_LANG),
     leerMeta(CLAVES_META.FIDELIZACION_TEMPLATE_NAME),
+    leerMeta(CLAVES_META.FIDELIZACION_TEMPLATE_LANG),
   ]);
+  const templateLang = tLang || env.meta.templateLang;
   return {
     token: token || env.meta.token,
     phoneNumberId: phone || env.meta.phoneNumberId,
     webhookVerifyToken: verify || env.meta.webhookVerifyToken,
     templateName: tName || env.meta.templateName,
-    templateLang: tLang || env.meta.templateLang,
+    templateLang,
+    templateVentaName: tVentaName || env.meta.templateVentaName,
+    // Por defecto, el idioma de la de ventas es el mismo que la de posventa
+    // (hoy ambas en español); se puede fijar aparte si difieren en Meta.
+    templateVentaLang: tVentaLang || templateLang,
     fidelizacionTemplateName: tFidel || env.meta.fidelizacionTemplateName,
+    fidelizacionTemplateLang: tFidelLang || templateLang,
     graphBaseUrl: env.meta.graphBaseUrl, // la base no es secreto: va por .env
   };
 }
@@ -126,7 +159,10 @@ export interface GuardarMeta {
   webhookVerifyToken?: string;
   templateName?: string;
   templateLang?: string;
+  templateVentaName?: string;
+  templateVentaLang?: string;
   fidelizacionTemplateName?: string;
+  fidelizacionTemplateLang?: string;
 }
 
 export async function guardarCredencialesMeta(d: GuardarMeta): Promise<void> {
@@ -145,8 +181,12 @@ export async function guardarCredencialesMeta(d: GuardarMeta): Promise<void> {
   if (d.phoneNumberId !== undefined) await set(CLAVES_META.PHONE_NUMBER_ID, d.phoneNumberId, false);
   if (d.templateName !== undefined) await set(CLAVES_META.TEMPLATE_NAME, d.templateName, false);
   if (d.templateLang !== undefined) await set(CLAVES_META.TEMPLATE_LANG, d.templateLang, false);
+  if (d.templateVentaName !== undefined) await set(CLAVES_META.TEMPLATE_VENTA_NAME, d.templateVentaName, false);
+  if (d.templateVentaLang !== undefined) await set(CLAVES_META.TEMPLATE_VENTA_LANG, d.templateVentaLang, false);
   if (d.fidelizacionTemplateName !== undefined)
     await set(CLAVES_META.FIDELIZACION_TEMPLATE_NAME, d.fidelizacionTemplateName, false);
+  if (d.fidelizacionTemplateLang !== undefined)
+    await set(CLAVES_META.FIDELIZACION_TEMPLATE_LANG, d.fidelizacionTemplateLang, false);
 }
 
 // ---------- Estado de la plantilla de Fidelización (lo setea el webhook) ----------
@@ -182,7 +222,10 @@ export async function estadoMeta() {
     verifyTokenConfigurado: Boolean(c.webhookVerifyToken),
     templateName: c.templateName,
     templateLang: c.templateLang,
+    templateVentaName: c.templateVentaName,
+    templateVentaLang: c.templateVentaLang,
     fidelizacionTemplateName: c.fidelizacionTemplateName,
+    fidelizacionTemplateLang: c.fidelizacionTemplateLang,
     completo: Boolean(c.token && c.phoneNumberId),
   };
 }

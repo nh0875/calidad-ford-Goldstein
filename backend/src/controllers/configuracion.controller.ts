@@ -58,6 +58,10 @@ const metaSchema = z.object({
   webhookVerifyToken: z.string().trim().optional(),
   templateName: z.string().trim().optional(),
   templateLang: z.string().trim().optional(),
+  templateVentaName: z.string().trim().optional(),
+  templateVentaLang: z.string().trim().optional(),
+  fidelizacionTemplateName: z.string().trim().optional(),
+  fidelizacionTemplateLang: z.string().trim().optional(),
 });
 
 export async function patchMeta(req: Request, res: Response) {
