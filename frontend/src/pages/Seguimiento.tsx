@@ -135,6 +135,10 @@ export default function Seguimiento() {
   const [conversaciones, setConversaciones] = useState<Conversacion[]>([]);
   const [filtro, setFiltro] = useState<"todas" | "revision" | "rojos">("todas");
   const [q, setQ] = useState("");
+  // Filtros extra (solo aparecen para quien ve más de una provincia / área)
+  const [provincia, setProvincia] = useState("");
+  const [area, setArea] = useState("");
+  const [opciones, setOpciones] = useState<{ provincias: string[]; areas: string[] }>({ provincias: [], areas: [] });
   const [seleccionadoId, setSeleccionadoId] = useState<string | null>(params.get("caso"));
   const [hilo, setHilo] = useState<Hilo | null>(null);
   const [texto, setTexto] = useState("");
@@ -146,13 +150,18 @@ export default function Seguimiento() {
 
   const cargarLista = useCallback(async () => {
     try {
-      const url = `/api/seguimiento?filtro=${filtro}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
-      const r = await apiGet<{ data: Conversacion[] }>(url);
+      const url =
+        `/api/seguimiento?filtro=${filtro}` +
+        (q ? `&q=${encodeURIComponent(q)}` : "") +
+        (area ? `&area=${area}` : "") +
+        (provincia ? `&sucursal=${encodeURIComponent(provincia)}` : "");
+      const r = await apiGet<{ data: Conversacion[]; opciones?: { provincias: string[]; areas: string[] } }>(url);
       setConversaciones(r.data);
+      if (r.opciones) setOpciones(r.opciones);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos cargar las conversaciones.");
     }
-  }, [filtro, q]);
+  }, [filtro, q, area, provincia]);
 
   const cargarHilo = useCallback(async (casoId: string) => {
     try {
@@ -262,6 +271,34 @@ export default function Seguimiento() {
               className="w-full rounded-md border border-gray-300 py-2 pl-8 pr-3 text-sm focus:border-accent focus:outline-none"
             />
           </div>
+          {(opciones.provincias.length > 1 || opciones.areas.length > 1) && (
+            <div className="flex gap-1.5">
+              {opciones.provincias.length > 1 && (
+                <select
+                  value={provincia}
+                  onChange={(e) => setProvincia(e.target.value)}
+                  className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-ink focus:border-accent focus:outline-none"
+                >
+                  <option value="">Toda provincia</option>
+                  {opciones.provincias.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              )}
+              {opciones.areas.length > 1 && (
+                <select
+                  value={area}
+                  onChange={(e) => setArea(e.target.value)}
+                  className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-ink focus:border-accent focus:outline-none"
+                >
+                  <option value="">Toda área</option>
+                  {opciones.areas.map((a) => (
+                    <option key={a} value={a}>{etiquetaArea(a)}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
           <div className="flex gap-1">
             {FILTROS.map((f) => (
               <button

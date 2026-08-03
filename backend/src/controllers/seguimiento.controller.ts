@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { EstadoContacto, MessageDirection, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
-import { parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
+import { areaPermitida, parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
 import { mismaProvincia } from "../services/refuerzo.service";
 import { estadoVentana, telefonoContactable, ultimoEntranteAt } from "../services/seguimiento.service";
 import { sendTemplateMessage, sendTextMessage, WhatsappApiError } from "../services/whatsapp.service";
@@ -54,6 +54,8 @@ const listQuerySchema = z.object({
   // "todas" (default) | "revision" (pendientes de clasificar) | "rojos"
   filtro: z.enum(["todas", "revision", "rojos"]).default("todas"),
   q: z.string().trim().max(80).optional(),
+  // Filtro por provincia (solo NARROWING: nunca deja ver fuera de lo permitido).
+  sucursal: z.string().trim().max(80).optional(),
 });
 
 export async function listarConversaciones(req: Request, res: Response) {
@@ -61,13 +63,17 @@ export async function listarConversaciones(req: Request, res: Response) {
   if (!parsed.success) {
     return res.status(400).json({ message: "Filtro inválido." });
   }
-  const { filtro, q } = parsed.data;
-  const areaWhere = whereArea(req.usuario!, parsearAreaQuery(req.query.area));
+  const { filtro, q, sucursal } = parsed.data;
+  const areaPedida = parsearAreaQuery(req.query.area); // VENTAS | POSVENTA | null
+  const sucursalPedida = sucursal ?? "";
+  // Para la base traemos SOLO con la restricción de área del usuario (NO el
+  // filtro pedido), así los desplegables pueden ofrecer todas sus opciones.
+  const restringido = areaPermitida(req.usuario!);
 
   const casos = await prisma.caso.findMany({
     where: {
       eliminadoEn: null,
-      ...areaWhere,
+      ...(restringido ? { area: restringido } : {}),
       mensajes: { some: {} }, // solo casos con actividad de WhatsApp
     },
     select: {
@@ -98,10 +104,20 @@ export async function listarConversaciones(req: Request, res: Response) {
     take: 500,
   });
 
+  // Alcance real del usuario (su provincia; null = ve todas). Se filtra en JS
+  // por los acentos (Postgres no los pliega).
+  const visibles = casos.filter((c) => mismaProvincia(req.usuario!.sucursal, c.sucursal));
+
+  // Opciones para los desplegables: todo lo que el usuario PUEDE ver, ANTES de
+  // aplicar los filtros pedidos (así no se vacían al elegir uno).
+  const provincias = [...new Set(visibles.map((c) => c.sucursal).filter(Boolean))].sort();
+  const areas = [...new Set(visibles.map((c) => c.area))].sort();
+
   const termino = q?.toLowerCase();
-  const lista = casos
-    // Provincia (acentos): se filtra en JS sobre lo que trajo la base.
-    .filter((c) => mismaProvincia(req.usuario!.sucursal, c.sucursal))
+  const lista = visibles
+    // Filtros pedidos (área + provincia): solo ACOTAN lo que ya puede ver.
+    .filter((c) => !areaPedida || c.area === areaPedida)
+    .filter((c) => !sucursalPedida || mismaProvincia(sucursalPedida, c.sucursal))
     .map((c) => {
       const um = c.mensajes[0];
       const a = c.analisis[0];
@@ -143,7 +159,7 @@ export async function listarConversaciones(req: Request, res: Response) {
       return tb - ta; // más reciente primero (como WhatsApp)
     });
 
-  res.json({ data: lista, total: lista.length });
+  res.json({ data: lista, total: lista.length, opciones: { provincias, areas } });
 }
 
 // ---------- GET /api/seguimiento/pendientes (badge del menú, por provincia) ----------
