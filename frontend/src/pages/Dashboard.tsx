@@ -240,7 +240,7 @@ export default function Dashboard() {
               <DistribucionSemaforo totales={resumen.semaforo.totales} porcentajes={resumen.semaforo.porcentajes} />
               {resumen.semaforo.totales.revisionManual > 0 && (
                 <Link
-                  to="/revision-manual"
+                  to="/seguimiento"
                   className="mt-2 inline-block text-xs font-medium text-purple-700 hover:underline"
                 >
                   ⚠ {resumen.semaforo.totales.revisionManual} respuesta(s) pendientes de revisión manual — clasificar →
@@ -294,8 +294,8 @@ export default function Dashboard() {
           </Card>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <TablaRanking titulo="Sucursales a priorizar" filas={resumen.rankingSucursales} minimo={resumen.minimoCasosRanking} />
-            <TablaRanking titulo="Asesores a priorizar" filas={resumen.rankingAsesores} minimo={resumen.minimoCasosRanking} />
+            <TablaRanking titulo="Todas las sucursales" filas={resumen.rankingSucursales} minimo={resumen.minimoCasosRanking} />
+            <TablaRanking titulo="Todos los asesores" filas={resumen.rankingAsesores} minimo={resumen.minimoCasosRanking} />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -486,42 +486,64 @@ function BadgeRojos({ pct }: { pct: number }) {
 }
 
 function TablaRanking({ titulo, filas, minimo }: { titulo: string; filas: Ranking[]; minimo: number }) {
+  const hayPocos = filas.some((f) => f.total < minimo);
   return (
-    <Card className="overflow-x-auto">
-      <h3 className="mb-2 text-sm font-semibold text-ink">{titulo}</h3>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b text-xs uppercase text-ink-muted">
-            <th className="px-2 py-1.5 text-left">Nombre</th>
-            <th className="px-2 py-1.5 text-right">Verdes</th>
-            <th className="px-2 py-1.5 text-right">Amar.</th>
-            <th className="px-2 py-1.5 text-right">Rojos</th>
-            <th className="px-2 py-1.5 text-right">Total</th>
-            <th className="px-2 py-1.5 text-right">% Rojos</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filas.map((f) => (
-            <tr key={f.nombre} className="border-b border-gray-100">
-              <td className="px-2 py-1.5 text-ink">{f.nombre}</td>
-              <td className="px-2 py-1.5 text-right text-ink-muted">{f.VERDE}</td>
-              <td className="px-2 py-1.5 text-right text-ink-muted">{f.AMARILLO}</td>
-              <td className="px-2 py-1.5 text-right text-ink-muted">{f.ROJO}</td>
-              <td className="px-2 py-1.5 text-right text-ink-muted">{f.total}</td>
-              <td className="px-2 py-1.5 text-right">
-                <BadgeRojos pct={f.pctRojos} />
-              </td>
+    <Card>
+      <h3 className="mb-2 flex items-center justify-between text-sm font-semibold text-ink">
+        <span>{titulo}</span>
+        {filas.length > 0 && <span className="text-xs font-normal text-ink-muted">{filas.length}</span>}
+      </h3>
+      {/* Scroll interno: la lista puede ser larga (están todos) */}
+      <div className="max-h-96 overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-white">
+            <tr className="border-b text-xs uppercase text-ink-muted">
+              <th className="px-2 py-1.5 text-left">Nombre</th>
+              <th className="px-2 py-1.5 text-right">Verdes</th>
+              <th className="px-2 py-1.5 text-right">Amar.</th>
+              <th className="px-2 py-1.5 text-right">Rojos</th>
+              <th className="px-2 py-1.5 text-right">Total</th>
+              <th className="px-2 py-1.5 text-right">% Rojos</th>
             </tr>
-          ))}
-          {filas.length === 0 && (
-            <tr>
-              <td colSpan={6} className="py-6 text-center text-xs text-ink-muted">
-                Todavía nadie alcanza el mínimo de {minimo} casos clasificados en el período.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {filas.map((f) => {
+              const pocos = f.total < minimo;
+              return (
+                <tr key={f.nombre} className="border-b border-gray-100">
+                  <td className="px-2 py-1.5 text-ink">
+                    {f.nombre}
+                    {pocos && (
+                      <span className="ml-1 text-[10px] text-ink-muted" title={`Pocos casos (menos de ${minimo}): el % puede no ser representativo.`}>
+                        ·pocos
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.VERDE}</td>
+                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.AMARILLO}</td>
+                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.ROJO}</td>
+                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.total}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    {pocos ? <span className="text-xs text-ink-muted">{f.pctRojos}%</span> : <BadgeRojos pct={f.pctRojos} />}
+                  </td>
+                </tr>
+              );
+            })}
+            {filas.length === 0 && (
+              <tr>
+                <td colSpan={6} className="py-6 text-center text-xs text-ink-muted">
+                  Todavía no hay casos clasificados en el período.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {hayPocos && (
+        <p className="mt-1.5 text-[11px] text-ink-muted">
+          "·pocos" = menos de {minimo} casos; el % de rojos puede no ser representativo.
+        </p>
+      )}
     </Card>
   );
 }

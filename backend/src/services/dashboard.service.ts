@@ -198,8 +198,11 @@ export async function dashboardResumen(f: FiltrosReporte) {
     evolucion: sentimiento.evolucion,
     topCategorias,
     rqrAbiertos,
-    rankingSucursales: sentimiento.porSucursal.filter((s) => s.total >= MINIMO_CASOS_RANKING),
-    rankingAsesores: sentimiento.porAsesor.filter((a) => a.total >= MINIMO_CASOS_RANKING),
+    // TODOS los asesores y sucursales con su semáforo (sin ocultar los de pocos
+    // casos). El frontend marca los que tienen menos de MINIMO_CASOS_RANKING,
+    // donde el % de rojos puede no ser representativo.
+    rankingSucursales: sentimiento.porSucursal,
+    rankingAsesores: sentimiento.porAsesor,
     minimoCasosRanking: MINIMO_CASOS_RANKING,
     porOrigen,
     desgloseArea,
