@@ -23,6 +23,7 @@ import supresionRoutes from "./supresion.routes";
 import normalizacionRoutes from "./normalizacion.routes";
 import avisoRoutes from "./aviso.routes";
 import fidelizacionRoutes from "./fidelizacion.routes";
+import seguimientoRoutes from "./seguimiento.routes";
 
 const router = Router();
 
@@ -64,5 +65,6 @@ router.use("/supresion", supresionRoutes); // lista de supresión por teléfono 
 router.use("/normalizacion", normalizacionRoutes); // normalización de asesores/sucursales (solo ADMIN)
 router.use("/avisos", avisoRoutes); // cartel rojo en pantalla (RQR abierto, escaladas, amarillos)
 router.use("/fidelizacion", fidelizacionRoutes); // Parte C: recordatorio de service pendiente (1°-5°)
+router.use("/seguimiento", seguimientoRoutes); // WhatsApp interno: conversaciones + respuesta manual (por provincia)
 
 export default router;

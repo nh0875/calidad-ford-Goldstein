@@ -61,6 +61,22 @@ export async function crearAviso(datos: DatosAviso): Promise<void> {
 }
 
 /**
+ * Apaga (marca como vistos) los avisos de un tipo para un caso. Se usa cuando
+ * la razón del aviso se resolvió sola: p. ej. se clasificó a mano un caso que
+ * estaba en revisión manual, o se respondió. No lanza: es un efecto lateral.
+ */
+export async function apagarAvisosCaso(casoId: string, tipo: TipoAviso): Promise<void> {
+  try {
+    await prisma.aviso.updateMany({
+      where: { casoId, tipo, vistoEn: null },
+      data: { vistoEn: new Date() },
+    });
+  } catch (err) {
+    console.error(`[avisos] no se pudo apagar el aviso ${tipo} del caso ${casoId}:`, err);
+  }
+}
+
+/**
  * Avisos vigentes para el usuario: los de su área (ADMIN y área AMBAS ven
  * todos), sin marcar como vistos, y descartando los que quedaron obsoletos
  * porque el RQR asociado ya se cerró o el caso se borró.

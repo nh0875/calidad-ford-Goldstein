@@ -1,9 +1,10 @@
 import { Request, Response } from "express";
-import { AreaTrabajo, Prisma, Semaforo } from "@prisma/client";
+import { AreaTrabajo, Prisma, Semaforo, TipoAviso } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { CATEGORIAS_CAUSA_RAIZ } from "../services/sentiment.service";
 import { ACCIONES, auditar } from "../services/audit.service";
+import { apagarAvisosCaso } from "../services/aviso.service";
 import { parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
 
 const INCLUDE_CASO = {
@@ -193,6 +194,12 @@ export async function patchSentimentAnalysis(req: Request, res: Response) {
     },
     include: INCLUDE_CASO,
   });
+
+  // Al clasificar a mano, el caso deja de estar pendiente de revisión: se apaga
+  // su aviso del cartel (si tenía uno). Así el aviso "se apaga solo" al resolver.
+  if (!actualizado.requiereRevisionManual && actualizado.casoId) {
+    await apagarAvisosCaso(actualizado.casoId, TipoAviso.REVISION_MANUAL);
+  }
 
   await auditar(req, {
     accion: ACCIONES.SENTIMENT_CORREGIDO,

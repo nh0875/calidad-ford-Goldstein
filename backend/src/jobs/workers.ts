@@ -256,6 +256,16 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
     });
     await marcarAnalizados(idsTanda);
     console.log(`[analisis-sentimiento] caso ${caso.numeroOrden}: ${motivo}, marcada para revisión manual`);
+    // Cartel de aviso: alguien tiene que mirar esta respuesta a mano antes de las 24 hs.
+    await crearAviso({
+      tipo: TipoAviso.REVISION_MANUAL,
+      area: caso.area,
+      casoId: caso.id,
+      titulo: `${caso.nombrePropietario}: respuesta para clasificar a mano`,
+      detalle:
+        `El cliente respondió algo que la IA no pudo clasificar (${esNoTextual ? "audio/imagen que no se pudo leer" : "reacción ambigua"}). ` +
+        `Miralo en Seguimiento antes de que pasen 24 hs.`,
+    });
     // Edge: respuesta no clasificable → igual se programa el agradecimiento (variante VERDE/AMARILLO)
     await programarAgradecimiento(casoId);
     return { revisionManual: true };
@@ -330,6 +340,18 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
     },
   });
   await marcarAnalizados(idsTanda);
+
+  // La IA a veces clasifica PERO pide confirmación humana (baja confianza / caso
+  // borroso): también va al cartel de avisos, salvo que sea un seguimiento menor.
+  if (resultado.requiereRevisionManual && !quedaComoSeguimiento) {
+    await crearAviso({
+      tipo: TipoAviso.REVISION_MANUAL,
+      area: caso.area,
+      casoId: caso.id,
+      titulo: `${caso.nombrePropietario}: respuesta para revisar a mano`,
+      detalle: `La IA marcó esta respuesta para que la confirme una persona. Miralo en Seguimiento antes de que pasen 24 hs.`,
+    });
+  }
 
   // Invariante: un solo análisis principal por caso. Si este pasa a principal
   // (escaló o reemplaza a uno sin clasificar), el anterior pasa a seguimiento.

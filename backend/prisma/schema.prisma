@@ -522,6 +522,7 @@ enum TipoAviso {
   RQR_ABIERTO // se abrió un RQR automático a partir de la respuesta del cliente
   ESCALADO // el cliente ya había sido clasificado y una respuesta posterior empeoró el semáforo
   AMARILLO_SIN_RQR // semáforo amarillo que no llegó a abrir RQR, pero conviene mirar
+  REVISION_MANUAL // el cliente respondió algo que la IA no pudo clasificar: mirarlo antes de las 24 h
 }
 
 model Aviso {
