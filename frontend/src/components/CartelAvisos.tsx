@@ -12,7 +12,7 @@ import { apiGet, apiPostJson } from "../lib/api";
 
 interface Aviso {
   id: string;
-  tipo: "RQR_ABIERTO" | "ESCALADO" | "AMARILLO_SIN_RQR";
+  tipo: "RQR_ABIERTO" | "ESCALADO" | "AMARILLO_SIN_RQR" | "REVISION_MANUAL";
   titulo: string;
   detalle: string;
   creadoEn: string;
@@ -32,6 +32,7 @@ const ETIQUETA_TIPO: Record<Aviso["tipo"], string> = {
   RQR_ABIERTO: "RQR para tratar",
   ESCALADO: "El cliente empeoró",
   AMARILLO_SIN_RQR: "Amarillo para mirar",
+  REVISION_MANUAL: "Para revisar a mano",
 };
 
 // Cada cuánto se vuelve a preguntar. 60 s alcanza: un RQR no es un chat.
@@ -151,7 +152,16 @@ export default function CartelAvisos() {
                       Abrir {a.rqr?.numeroRQR ?? "RQR"}
                     </Link>
                   )}
-                  {!a.rqrId && a.casoId && (
+                  {!a.rqrId && a.casoId && a.tipo === "REVISION_MANUAL" && (
+                    <Link
+                      to={`/seguimiento?caso=${a.casoId}`}
+                      onClick={() => setAbierto(false)}
+                      className="rounded-md bg-accent px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-accent-dark"
+                    >
+                      Abrir chat
+                    </Link>
+                  )}
+                  {!a.rqrId && a.casoId && a.tipo !== "REVISION_MANUAL" && (
                     <Link
                       to="/casos"
                       onClick={() => setAbierto(false)}

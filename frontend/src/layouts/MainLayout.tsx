@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import {
   ClipboardCheck,
   ClipboardList,
-  ClipboardPen,
   GitBranch,
   Gift,
   KeyRound,
@@ -11,6 +10,7 @@ import {
   LucideIcon,
   GitMerge,
   MessageSquareWarning,
+  MessagesSquare,
   MonitorPlay,
   PhoneOff,
   ScrollText,
@@ -36,7 +36,7 @@ const navItems: Array<{ to: string; label: string; icono: LucideIcon }> = [
   { to: "/reportes/sentimiento", label: "Reporte de Sentimiento", icono: SmilePlus },
   { to: "/reportes/causas-raiz", label: "Causas Raíz", icono: GitBranch },
   { to: "/rqr", label: "RQR", icono: MessageSquareWarning },
-  { to: "/revision-manual", label: "Revisión manual", icono: ClipboardPen },
+  { to: "/seguimiento", label: "Seguimiento", icono: MessagesSquare },
   { to: "/refuerzos", label: "Refuerzo Ford", icono: ClipboardCheck },
   { to: "/fidelizacion", label: "Fidelización", icono: Gift },
 ];
@@ -48,7 +48,7 @@ const pageTitles: Record<string, string> = {
   "/reportes/sentimiento": "Reporte de Sentimiento",
   "/reportes/causas-raiz": "Reporte de Causas Raíz",
   "/rqr": "Reclamos / Quejas / Reportes (RQR)",
-  "/revision-manual": "Casos para revisar a mano",
+  "/seguimiento": "Seguimiento — chat con el cliente",
   "/usuarios": "Usuarios del sistema",
   "/normalizacion": "Normalización de asesores / sucursales",
   "/supresion": "Lista de supresión (no contactar)",
@@ -72,7 +72,7 @@ export default function MainLayout() {
     apiGet<{ pendientes: number }>("/api/refuerzos/mias/pendientes")
       .then((r) => setPendientesRefuerzo(r.pendientes))
       .catch(() => {});
-    apiGet<{ pendientes: number }>("/api/sentiment-analysis/revision-manual/pendientes")
+    apiGet<{ pendientes: number }>("/api/seguimiento/pendientes")
       .then((r) => setPendientesRevision(r.pendientes))
       .catch(() => {});
   }, [pathname]);
@@ -142,7 +142,7 @@ export default function MainLayout() {
                   {pendientesRefuerzo}
                 </span>
               )}
-              {item.to === "/revision-manual" && pendientesRevision > 0 && (
+              {item.to === "/seguimiento" && pendientesRevision > 0 && (
                 <span className="ml-auto inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-bold text-white">
                   {pendientesRevision}
                 </span>
