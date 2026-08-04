@@ -99,13 +99,16 @@ const PUNTO_SEMAFORO: Record<"VERDE" | "AMARILLO" | "ROJO", string> = {
   ROJO: "bg-red-500",
 };
 
+// Hora/fecha en horario de Argentina. Los timestamps vienen en UTC desde el
+// backend; antes se leía el UTC crudo del texto y quedaba 3 h adelantado.
+const TZ_AR = "America/Argentina/Buenos_Aires";
 function hora(iso: string): string {
-  const m = iso.match(/T(\d{2}):(\d{2})/);
-  return m ? `${m[1]}:${m[2]}` : "";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", timeZone: TZ_AR });
 }
 function fechaCorta(iso: string): string {
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return m ? `${m[3]}/${m[2]}` : "";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", timeZone: TZ_AR });
 }
 
 // Estado de un mensaje NUESTRO (saliente): tilde según el acuse de Meta.
