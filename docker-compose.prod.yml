@@ -59,7 +59,6 @@ services:
       # es_AR y Meta rechazó todos los envíos con el error 132001).
       # ENTORNO_PROD existe SOLO en .env.prod, así que sin --env-file esto falla
       # de entrada en vez de arrancar mal.
-      ENTORNO_PROD: ${ENTORNO_PROD:?falta --env-file .env.prod (sin eso se usan los valores de .env, que son los de desarrollo)}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-calidad_ford}?schema=public
       REDIS_URL: redis://redis:6379
       META_WHATSAPP_TOKEN: ${META_WHATSAPP_TOKEN:-}
