@@ -7,7 +7,7 @@
 $ErrorActionPreference = "Stop"
 
 # ---------- AJUSTAR si hace falta ----------
-# Carpeta donde está el sistema en la PC de Vanina (donde está docker-compose.prod.yml):
+# Carpeta donde está el sistema en la PC de Vanina (donde está docker-compose.yml):
 $proyecto   = "C:\Sistema-Calidad"
 # Copia FUERA de la PC (la carpeta de red que te dio Santiago). Si da error de
 # permisos con la cuenta de Vanina, avisale a INDEN o usá OneDrive / un pendrive:
@@ -26,12 +26,12 @@ if (-not (Test-Path $localDir)) { New-Item -ItemType Directory -Force $localDir 
 
 # 1) Dump de la base DENTRO del contenedor (binario -Fc) y lo sacamos con "cp".
 #    (NO se usa el ">" de PowerShell: corrompe los archivos binarios.)
-docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T postgres `
+docker compose -f docker-compose.yml --env-file .env.prod exec -T postgres `
   sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" -f /tmp/cal.dump'
 if ($LASTEXITCODE -ne 0) { throw "Falló el pg_dump (¿está prendido Docker y el sistema?)" }
 
-docker compose -f docker-compose.prod.yml --env-file .env.prod cp postgres:/tmp/cal.dump $localFile
-docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T postgres rm -f /tmp/cal.dump
+docker compose -f docker-compose.yml --env-file .env.prod cp postgres:/tmp/cal.dump $localFile
+docker compose -f docker-compose.yml --env-file .env.prod exec -T postgres rm -f /tmp/cal.dump
 
 # 2) Copia FUERA de la PC + una copia del .env.prod (hace falta para restaurar:
 #    tiene la clave que descifra el token de Meta guardado en la base).

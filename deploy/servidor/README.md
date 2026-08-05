@@ -9,7 +9,7 @@ Dudas de la app: **Juan Ignacio Hilliard**.
 - **No se compila en el servidor.** Las imágenes las construye **GitHub Actions**
   (`.github/workflows/docker-build.yml`) y las publica en **GHCR**, etiquetadas por
   rama: `dev` (VM de desarrollo) y `main` (VM de producción).
-- El stack del servidor es **`docker-compose.servidor.yml`**: usa `image:` de GHCR
+- El stack del servidor es **`docker-compose.yml`**: usa `image:` de GHCR
   (sin `build:`), rutas en minúsculas, **solo volúmenes nombrados**, y **un puerto
   alto** (8080) para que **NPM** enrute. No se tocan 80/443 ni el firewall.
 - Las credenciales se cargan como **variables en Portainer** (nunca en el repo).
@@ -37,9 +37,9 @@ Portainer → **Stacks → + Add stack**, nombre `calidad`.
 - **Build method: Repository**
   - Repository URL: `https://github.com/nh0875/calidad-ford-Goldstein.git`
   - Reference: `refs/heads/main` (prod) — en la VM de dev: `refs/heads/dev`
-  - **Compose path: `docker-compose.servidor.yml`**
+  - **Compose path: `docker-compose.yml`**
   - Authentication: usuario de GitHub + PAT (repo privado)
-  > (También sirve **Web editor** pegando el `docker-compose.servidor.yml`, porque
+  > (También sirve **Web editor** pegando el `docker-compose.yml`, porque
   > ya no compila nada: solo baja imágenes.)
 
 ## 3. Variables de entorno (en Portainer)
