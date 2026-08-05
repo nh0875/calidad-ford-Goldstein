@@ -19,5 +19,9 @@ FROM nginx:1.27-alpine
 
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx-prod.conf /etc/nginx/conf.d/default.conf
+# El entrypoint del nginx oficial corre este script antes de arrancar: fija el
+# resolver de DNS según el contenedor (Docker 127.0.0.11 vs Podman otra IP).
+COPY 40-set-resolver.sh /docker-entrypoint.d/40-set-resolver.sh
+RUN chmod +x /docker-entrypoint.d/40-set-resolver.sh
 
 EXPOSE 80
