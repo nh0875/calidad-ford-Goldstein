@@ -16,6 +16,10 @@ backups/
 *.sql
 *.sql.gz
 *.dump
+
+# Copia local de datos/credenciales traídos de la PC de Vanina (NUNCA al repo:
+# tiene el dump con datos reales y el env.prod con las claves).
+pcvanina/
 # ...PERO las migraciones de Prisma SÍ se versionan (son esquema/código, no datos).
 # Sin esta excepción, la regla *.sql las excluiría y la PC nueva no podría crear
 # el esquema con `prisma migrate deploy`.
