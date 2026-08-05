@@ -1,0 +1,57 @@
+name: Build and Push to GHCR
+
+# Construye las 3 imágenes (backend, web, backup) y las sube a GitHub Container
+# Registry, etiquetadas por rama. El servidor (Podman rootless) NO compila: solo
+# baja estas imágenes. dev -> VM de desarrollo · main -> VM de producción.
+on:
+  push:
+    branches: [dev, main]
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preparar variables (minúsculas y rama)
+        run: |
+          echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
+          echo "BRANCH_NAME=${GITHUB_REF_NAME}" >> ${GITHUB_ENV}
+
+      - name: Login en GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Backend (API + workers)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile.prod
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.REPO_LC }}-backend:${{ env.BRANCH_NAME }}
+
+      - name: Web (frontend + nginx interno)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile.prod
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.REPO_LC }}-web:${{ env.BRANCH_NAME }}
+
+      - name: Backup (pg_dump + offsite)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backup
+          file: ./backup/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.REPO_LC }}-backup:${{ env.BRANCH_NAME }}
