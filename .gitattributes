@@ -1,0 +1,10 @@
+# Normalización de fin de línea, independiente del sistema del que se commitee.
+* text=auto
+
+# Scripts de shell SIEMPRE en LF: corren en Linux (contenedores). Con CRLF fallan
+# con "bad interpreter: /bin/sh^M" y el contenedor no arranca.
+*.sh text eol=lf
+
+# Scripts de Windows: CRLF nativo.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
