@@ -143,3 +143,8 @@ volumes:
   redisdata_prod:
   backups:
   backup_status:
+
+networks:
+  npm_network:
+    name: red-proxy
+    external: true
