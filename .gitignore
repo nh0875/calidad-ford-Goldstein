@@ -1,6 +1,9 @@
 # ===== Secretos y entorno (NUNCA a git) =====
 # Cualquier variante: .env, .env.prod, .env.local, .env.backup, .env.viejo, etc.
 .env*
+# También cualquier archivo que TERMINE en .env (ej: no.env, local.env): suelen
+# ser copias/renombres del .env con credenciales. NUNCA al repo.
+*.env
 # ...pero SÍ se versionan las plantillas de ejemplo (sin valores reales):
 !.env.example
 !.env.prod.example

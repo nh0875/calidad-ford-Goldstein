@@ -33,8 +33,6 @@ services:
     build: ./backend
     container_name: calidad-backend
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-calidad}:${POSTGRES_PASSWORD:-calidad}@postgres:5432/${POSTGRES_DB:-calidad_ford}?schema=public
       REDIS_URL: redis://redis:6379
