@@ -104,18 +104,10 @@ services:
   web:
     image: ghcr.io/nh0875/calidad-ford-goldstein-web:${TAG:-main}
     restart: unless-stopped
-    # Puerto ALTO en el host: NPM enruta calidad.apps... -> este puerto.
-    # (80/443 los ocupa NPM; no se tocan ni el firewall.)
-    ports:
-      - "${HTTP_PORT:-8080}:80"
+    # Sin puerto publicado en el host: NPM lo alcanza por la red red-proxy.
     networks:
-      # default: para hablar con el backend por la red interna del stack.
-      default: {}
-      # red-proxy: la red compartida con NPM. NPM llega al sitio por el nombre
-      # "calidad-web" (puerto 80), sin depender de IPs ni del puerto publicado.
-      npm_network:
-        aliases:
-          - calidad-web
+      - default
+      - npm_network
     depends_on:
       - backend
 
