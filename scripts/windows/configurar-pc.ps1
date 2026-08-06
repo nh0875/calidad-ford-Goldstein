@@ -95,8 +95,13 @@ if (-not $SoloVerificar) {
     # En notebooks: cerrar la tapa NO debe suspender (el sistema tiene que seguir vivo).
     powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0 | Out-Null
     powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0 | Out-Null
+    # El botón de suspender tampoco suspende (por si lo aprieta sin querer).
+    powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS SBUTTONACTION 0 | Out-Null
+    powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS SBUTTONACTION 0 | Out-Null
     powercfg /S SCHEME_CURRENT | Out-Null
-    Ok "La PC quedó configurada para NO suspenderse ni hibernar (ni al cerrar la tapa)."
+    # Sacar "Suspender" del menú de Inicio/apagado, para que no se pueda elegir a mano.
+    reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FlyoutMenuSettings" /v ShowSleepOption /t REG_DWORD /d 0 /f | Out-Null
+    Ok "La PC quedó configurada para NO suspenderse ni hibernar (ni al cerrar la tapa, ni a mano)."
   } catch {
     Warn ("No pude ajustar la energía automáticamente: " + $_.Exception.Message)
     Info "Hacelo a mano: Configuración -> Sistema -> Energía -> 'Suspensión' = Nunca."
