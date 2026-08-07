@@ -36,21 +36,19 @@
 
 # PARTE A — En tu PC (armar el paquete con los datos)
 
-### A1. Sacá un respaldo FRESCO de la base actual
+### A1. El dump con los datos (ya lo tenés)
 
-Es lo que va a tener Yesica el día 1. En **PowerShell**, en la carpeta del sistema
-que tengas andando:
+Usá **`pcvanina\respaldo-antes-de-actualizar.dump`** — es el más completo que hay
+(169 casos y mensajes **hasta el 04/08**). El otro, `calidad-produccion.dump`, llega
+solo hasta el 31/07, así que **NO uses ese**. Copialo a la carpeta del proyecto con
+un nombre corto:
 
 ```powershell
-# Detecta el contenedor de Postgres que esté corriendo y saca el dump.
-$c = (docker ps --filter "name=postgres" --format "{{.Names}}" | Select-Object -First 1)
-docker exec $c sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" -f /tmp/mig.dump'
-docker cp "${c}:/tmp/mig.dump" ".\calidad-migracion.dump"
-docker exec $c rm -f /tmp/mig.dump
+Copy-Item ".\pcvanina\respaldo-antes-de-actualizar.dump" ".\calidad-migracion.dump"
 ```
 
-> Te queda **`calidad-migracion.dump`** en la carpeta. *(Alternativa: usá el
-> último `calidad_*.dump` del respaldo de SharePoint, sirve igual.)*
+> *(Si algún día querés el dump exacto de ese momento, sacalo de la base que tengas
+> andando con `pg_dump -Fc`. Para esta migración, el de arriba es el más nuevo.)*
 
 ### A2. Armá el ZIP para llevar a la PC de Yesica
 
@@ -116,16 +114,26 @@ La primera vez tarda **varios minutos** (compila las imágenes). Esperá a que
 terminen de arrancar los 5 contenedores (`docker ps` los muestra).
 
 ### B6. 🔁 Restaurar los datos (el dump)
-Con los contenedores arriba, importá la base de Vanina:
+Con los contenedores arriba, importá la base:
 ```powershell
 $c = (docker ps --filter "name=postgres" --format "{{.Names}}" | Select-Object -First 1)
 docker cp ".\calidad-migracion.dump" "${c}:/tmp/mig.dump"
 docker exec $c sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/mig.dump'
 docker exec $c rm -f /tmp/mig.dump
 ```
-> Puede tirar algún *warning* de "already exists" al restaurar sobre el esquema
-> recién creado: es normal (`--clean --if-exists` lo maneja). Lo que importa es
-> que al final los casos/clientes estén.
+> Va a tirar algún *warning* ("already exists", "errors ignored on restore: 1"):
+> es **NORMAL** (`--clean --if-exists` lo maneja) y **no pierde datos**.
+
+### B6.5. 🔁 Reiniciar el backend (pone el esquema al día) — ¡NO te lo saltees!
+El dump trae el esquema de esa fecha (anterior a las últimas actualizaciones del
+sistema). Al restaurarlo, el esquema "vuelve para atrás"; reiniciar el backend hace
+que `prisma migrate deploy` lo ponga al día **automáticamente y sin perder datos**:
+```powershell
+$b = (docker ps -a --filter "name=backend" --format "{{.Names}}" | Select-Object -First 1)
+docker restart $b
+```
+Esperá ~1-2 min a que el backend vuelva a estar sano (`docker ps` lo muestra como
+`healthy`). *(Probado: los casos y mensajes quedan intactos y el esquema queda al día.)*
 
 ### B7. Dejar todo automático (anti-suspensión + vigilante + arranque)
 En la **misma PowerShell de administrador**:
