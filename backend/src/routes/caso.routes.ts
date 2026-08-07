@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../middlewares/asyncHandler";
 import { requireAdmin } from "../middlewares/auth";
-import { buscarCasos, crearCasoManual, editarCaso, listCasos, opcionesCasos } from "../controllers/caso.controller";
+import { buscarCasos, crearCasoManual, editarCaso, exportarCasos, listCasos, opcionesCasos } from "../controllers/caso.controller";
 import { eliminarCaso } from "../controllers/admin.controller";
 
 const router = Router();
@@ -11,6 +11,9 @@ router.get("/opciones", asyncHandler(opcionesCasos));
 
 // Autocompletado por nombre/teléfono/patente/orden (para vincular RQR manual)
 router.get("/buscar", asyncHandler(buscarCasos));
+
+// Exportar a Excel todos los casos del filtro actual (sin paginar)
+router.get("/exportar", asyncHandler(exportarCasos));
 
 // Listado con paginación y filtros: sucursal, asesor, estadoContacto,
 // origenAgendamiento, periodo, fechaDesde/fechaHasta

@@ -185,7 +185,14 @@ model ClienteFidelizacion {
   waMessageId String? // id del mensaje en Meta (si se envió)
   error       String? // motivo del fallo/omisión (si ERROR/OMITIDO)
   enviadoEn   DateTime?
+  // El cliente apretó el botón "Agendar mi Turno con un Asesor": queda pendiente
+  // de que un asesor lo llame. Se resalta en Seguimiento. null = no lo pidió.
+  quiereAsesorEn DateTime?
   createdAt   DateTime           @default(now())
+
+  // Conversación: recordatorio saliente + respuestas del cliente (se ven en
+  // Seguimiento igual que las de un Caso).
+  mensajes    WhatsappMessage[]
 
   @@index([uploadId])
   @@index([estado])
@@ -260,8 +267,13 @@ model Caso {
 
 model WhatsappMessage {
   id               String           @id @default(cuid())
-  casoId           String
-  caso             Caso             @relation(fields: [casoId], references: [id], onDelete: Cascade)
+  // Un mensaje pertenece a un Caso (Contacto Posventa/Ventas) O a un
+  // ClienteFidelizacion (recordatorio de Fidelización): exactamente uno de los
+  // dos. Por eso ambos son opcionales (antes casoId era obligatorio).
+  casoId                String?
+  caso                  Caso?                @relation(fields: [casoId], references: [id], onDelete: Cascade)
+  clienteFidelizacionId String?
+  clienteFidelizacion   ClienteFidelizacion? @relation(fields: [clienteFidelizacionId], references: [id], onDelete: Cascade)
   direction        MessageDirection
   content          String           @db.Text
   templateName     String?
@@ -288,6 +300,7 @@ model WhatsappMessage {
   analisis SentimentAnalysis[]
 
   @@index([casoId])
+  @@index([clienteFidelizacionId])
   // Único: el id de Meta identifica la entrega; ante un reintento del webhook
   // (Meta reenvía la misma notificación) esto impide duplicar el mensaje
   // entrante y volver a disparar el análisis. Los salientes con waMessageId

@@ -6,6 +6,7 @@ import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.servic
 import { areaEfectiva, areaPermitida, parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { normalizarTelefonoAR } from "../services/telefono.service";
+import { excelCasos } from "../services/exportacion.service";
 import {
   aplicarAlias,
   cargarAliasMap,
@@ -29,9 +30,8 @@ interface CasoBusqueda {
   tieneRqrAbierto: boolean;
 }
 
-const casosQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+// Filtros del listado (los comparten el listado paginado y la exportación).
+const casosFiltrosSchema = z.object({
   sucursal: z.string().trim().min(1).optional(),
   asesor: z.string().trim().min(1).optional(),
   estadoContacto: z.nativeEnum(EstadoContacto).optional(),
@@ -49,6 +49,34 @@ const casosQuerySchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha 'hasta' tiene que tener el formato AAAA-MM-DD.")
     .optional(),
 });
+
+const casosQuerySchema = casosFiltrosSchema.extend({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+// Arma el WHERE del listado a partir de los filtros ya validados. Incluye la
+// restricción por área del usuario. Lo usan el listado y la exportación, para
+// que el Excel salga EXACTAMENTE con los casos que se están viendo en pantalla.
+function whereCasosDesdeFiltros(req: Request, q: z.infer<typeof casosFiltrosSchema>): Prisma.CasoWhereInput {
+  return {
+    eliminadoEn: null, // los casos borrados lógicamente no aparecen
+    ...whereArea(req.usuario!, parsearAreaQuery(req.query.area)),
+    ...(q.sucursal ? { sucursal: { equals: q.sucursal, mode: "insensitive" } } : {}),
+    ...(q.asesor ? { asesor: { contains: q.asesor, mode: "insensitive" } } : {}),
+    ...(q.estadoContacto ? { estadoContacto: q.estadoContacto } : {}),
+    ...(q.origenAgendamiento ? { origenAgendamiento: q.origenAgendamiento } : {}),
+    ...(q.periodo ? { upload: { periodo: q.periodo } } : {}),
+    ...(q.fechaDesde || q.fechaHasta
+      ? {
+          fechaProgramacion: {
+            ...(q.fechaDesde ? { gte: new Date(`${q.fechaDesde}T00:00:00`) } : {}),
+            ...(q.fechaHasta ? { lte: new Date(`${q.fechaHasta}T23:59:59.999`) } : {}),
+          },
+        }
+      : {}),
+  };
+}
 
 // ---------- GET /api/casos/buscar?q= (autocompletado para vincular RQR) ----------
 
@@ -134,23 +162,7 @@ export async function listCasos(req: Request, res: Response) {
 
   const q = parsed.data;
 
-  const where: Prisma.CasoWhereInput = {
-    eliminadoEn: null, // los casos borrados lógicamente no aparecen en el listado
-    ...whereArea(req.usuario!, parsearAreaQuery(req.query.area)), // restricción por área
-    ...(q.sucursal ? { sucursal: { equals: q.sucursal, mode: "insensitive" } } : {}),
-    ...(q.asesor ? { asesor: { contains: q.asesor, mode: "insensitive" } } : {}),
-    ...(q.estadoContacto ? { estadoContacto: q.estadoContacto } : {}),
-    ...(q.origenAgendamiento ? { origenAgendamiento: q.origenAgendamiento } : {}),
-    ...(q.periodo ? { upload: { periodo: q.periodo } } : {}),
-    ...(q.fechaDesde || q.fechaHasta
-      ? {
-          fechaProgramacion: {
-            ...(q.fechaDesde ? { gte: new Date(`${q.fechaDesde}T00:00:00`) } : {}),
-            ...(q.fechaHasta ? { lte: new Date(`${q.fechaHasta}T23:59:59.999`) } : {}),
-          },
-        }
-      : {}),
-  };
+  const where: Prisma.CasoWhereInput = whereCasosDesdeFiltros(req, q);
 
   const [total, casos, suprimidos] = await Promise.all([
     prisma.caso.count({ where }),
@@ -192,6 +204,27 @@ export async function listCasos(req: Request, res: Response) {
       totalPages: Math.max(1, Math.ceil(total / q.pageSize)),
     },
   });
+}
+
+// ---------- GET /api/casos/exportar ----------
+// Descarga a Excel TODOS los casos del filtro actual (sin paginar), con sus
+// variables. Respeta la restricción por área igual que el listado.
+
+export async function exportarCasos(req: Request, res: Response) {
+  const parsed = casosFiltrosSchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: `Hay filtros con formato incorrecto: ${parsed.error.errors.map((e) => e.message).join(" ")}`,
+    });
+  }
+
+  const where = whereCasosDesdeFiltros(req, parsed.data);
+  const buffer = await excelCasos(where);
+  const fecha = new Date().toISOString().slice(0, 10);
+  res
+    .setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    .setHeader("Content-Disposition", `attachment; filename="casos-${fecha}.xlsx"`)
+    .send(buffer);
 }
 
 // ---------- POST /api/casos ----------

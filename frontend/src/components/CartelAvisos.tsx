@@ -154,7 +154,7 @@ export default function CartelAvisos() {
                   )}
                   {!a.rqrId && a.casoId && a.tipo === "REVISION_MANUAL" && (
                     <Link
-                      to={`/seguimiento?caso=${a.casoId}`}
+                      to={`/seguimiento?caso=${encodeURIComponent(`caso:${a.casoId}`)}`}
                       onClick={() => setAbierto(false)}
                       className="rounded-md bg-accent px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-accent-dark"
                     >

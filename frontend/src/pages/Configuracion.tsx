@@ -16,6 +16,10 @@ const K = {
   VERDE_AMARILLO: "agradecimiento.textoVerdeAmarillo",
   ROJO: "agradecimiento.textoRojo",
   ENVIAR_A_ROJOS: "agradecimiento.enviarARojos",
+  // Fidelización: respuesta al 3er botón ("Agendar mi Turno con un Asesor").
+  FIDEL_RESPUESTA: "fidelizacion.respuestaBotonAsesor",
+  FIDEL_ENVIAR: "fidelizacion.enviarRespuestaBotonAsesor",
+  FIDEL_BOTON_TEXTO: "fidelizacion.textoBotonAsesor",
 };
 
 // Cliente de ejemplo para la vista previa (mismos reemplazos que el backend)
@@ -61,6 +65,9 @@ export default function Configuracion() {
         [K.VERDE_AMARILLO]: cfg[K.VERDE_AMARILLO],
         [K.ROJO]: cfg[K.ROJO],
         [K.ENVIAR_A_ROJOS]: cfg[K.ENVIAR_A_ROJOS],
+        [K.FIDEL_RESPUESTA]: cfg[K.FIDEL_RESPUESTA],
+        [K.FIDEL_ENVIAR]: cfg[K.FIDEL_ENVIAR],
+        [K.FIDEL_BOTON_TEXTO]: cfg[K.FIDEL_BOTON_TEXTO],
       });
       setMensaje(message);
     } catch (err) {
@@ -80,6 +87,7 @@ export default function Configuracion() {
   }
 
   const enviarARojos = cfg[K.ENVIAR_A_ROJOS] === "true";
+  const fidelEnviar = cfg[K.FIDEL_ENVIAR] === "true";
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -144,6 +152,50 @@ export default function Configuracion() {
           </label>
         </div>
 
+        {/* FIDELIZACIÓN — respuesta al 3er botón de la plantilla */}
+        <div className="mb-2 border-t border-gray-100 pt-4">
+          <label className="mb-1 block text-sm font-medium text-ink">
+            Fidelización — respuesta al botón “Agendar mi Turno con un Asesor”
+          </label>
+          <p className="mb-2 text-xs text-ink-muted">
+            Cuando el cliente toca ese botón en el recordatorio de service, el sistema le responde este mensaje y lo
+            deja marcado como <strong>“quiere turno con asesor”</strong> en Seguimiento para que lo agenden.
+          </p>
+          <Textarea
+            value={cfg[K.FIDEL_RESPUESTA] ?? ""}
+            onChange={(e) => set(K.FIDEL_RESPUESTA, e.target.value)}
+            rows={3}
+            disabled={!esAdmin || !fidelEnviar}
+          />
+          <Previews texto={cfg[K.FIDEL_RESPUESTA] ?? ""} />
+          <label className="mt-3 flex items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-accent"
+              checked={fidelEnviar}
+              disabled={!esAdmin}
+              onChange={(e) => set(K.FIDEL_ENVIAR, e.target.checked ? "true" : "false")}
+            />
+            Responder automáticamente al apretar el botón
+            <span className="text-xs text-ink-muted">
+              (si lo desactivás, igual queda marcado como “quiere asesor”, pero no se le manda mensaje)
+            </span>
+          </label>
+          <div className="mt-3">
+            <Campo
+              etiqueta="Texto EXACTO del botón en Meta"
+              hint="Tiene que coincidir con el título del botón en la plantilla. Por defecto: Agendar mi Turno con un Asesor."
+            >
+              <Input
+                type="text"
+                value={cfg[K.FIDEL_BOTON_TEXTO] ?? ""}
+                onChange={(e) => set(K.FIDEL_BOTON_TEXTO, e.target.value)}
+                disabled={!esAdmin}
+              />
+            </Campo>
+          </div>
+        </div>
+
         {esAdmin && (
           <div className="mt-5 flex justify-end">
             <button onClick={guardar} disabled={guardando} className={claseBoton("primario")}>
@@ -173,6 +225,8 @@ interface EstadoMeta {
   templateVentaLang: string;
   fidelizacionTemplateName: string;
   fidelizacionTemplateLang: string;
+  respuestaNoRecibidaName: string;
+  respuestaNoRecibidaLang: string;
   completo: boolean;
 }
 
@@ -194,6 +248,8 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
   const [templateVentaLang, setTemplateVentaLang] = useState("");
   const [fidelizacionTemplateName, setFidelizacionTemplateName] = useState("");
   const [fidelizacionTemplateLang, setFidelizacionTemplateLang] = useState("");
+  const [respuestaNoRecibidaName, setRespuestaNoRecibidaName] = useState("");
+  const [respuestaNoRecibidaLang, setRespuestaNoRecibidaLang] = useState("");
 
   const cargar = useCallback(async () => {
     try {
@@ -206,6 +262,8 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
       setTemplateVentaLang(data.templateVentaLang);
       setFidelizacionTemplateName(data.fidelizacionTemplateName);
       setFidelizacionTemplateLang(data.fidelizacionTemplateLang);
+      setRespuestaNoRecibidaName(data.respuestaNoRecibidaName);
+      setRespuestaNoRecibidaLang(data.respuestaNoRecibidaLang);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos cargar la configuración de WhatsApp.");
     }
@@ -227,6 +285,8 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
         templateVentaLang,
         fidelizacionTemplateName,
         fidelizacionTemplateLang,
+        respuestaNoRecibidaName,
+        respuestaNoRecibidaLang,
       };
       if (token.trim()) body.token = token.trim();
       if (verify.trim()) body.webhookVerifyToken = verify.trim();
@@ -305,6 +365,12 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
         </Campo>
         <Campo etiqueta="Idioma (fidelización)">
           <Input type="text" value={fidelizacionTemplateLang} onChange={(e) => setFidelizacionTemplateLang(e.target.value)} placeholder="es" disabled={!esAdmin} />
+        </Campo>
+        <Campo etiqueta="Plantilla “no nos llegó tu mensaje”" hint="Para pedirle al cliente que repita una respuesta que se perdió. Tiene que ser de TEXTO FIJO (sin variables {{1}}), igual que las de contacto.">
+          <Input type="text" value={respuestaNoRecibidaName} onChange={(e) => setRespuestaNoRecibidaName(e.target.value)} placeholder="respuesta_no_recibida" disabled={!esAdmin} />
+        </Campo>
+        <Campo etiqueta="Idioma (no recibida)">
+          <Input type="text" value={respuestaNoRecibidaLang} onChange={(e) => setRespuestaNoRecibidaLang(e.target.value)} placeholder="es_AR" disabled={!esAdmin} />
         </Campo>
       </div>
 

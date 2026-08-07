@@ -33,6 +33,10 @@ import { QUEUE_NAMES } from "./queues";
 
 interface DatosEnvio {
   casoId: string;
+  // "contacto" (default): plantilla de contacto del área, SOLO casos PENDIENTE.
+  // "respuesta_no_recibida": pedir que el cliente repita su mensaje (envío
+  // masivo de recuperación), a clientes ya contactados en CUALQUIER estado.
+  plantilla?: "contacto" | "respuesta_no_recibida";
 }
 
 function formatearFecha(fecha: Date | null): string {
@@ -48,9 +52,13 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
     throw new UnrecoverableError("El caso ya no existe en la base.");
   }
 
-  // Idempotencia: si el estado cambió entre el encolado y ahora
-  // (respondió, otro envío, marcado interno), no se envía nada.
-  if (caso.estadoContacto !== EstadoContacto.PENDIENTE) {
+  const esRecuperacion = job.data.plantilla === "respuesta_no_recibida";
+
+  // Idempotencia de la campaña de CONTACTO: solo se envía a PENDIENTE (si cambió
+  // entre el encolado y ahora —respondió, otro envío, interno— no se manda). La
+  // RECUPERACIÓN ("pedir que repitan") NO exige PENDIENTE: va a clientes ya
+  // contactados en cualquier estado.
+  if (!esRecuperacion && caso.estadoContacto !== EstadoContacto.PENDIENTE) {
     return { omitido: true, motivo: `estado ${caso.estadoContacto}` };
   }
 
@@ -96,16 +104,20 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
   //   [caso.nombrePropietario || "cliente", caso.modelo || "su vehículo", formatearFecha(caso.fechaSalida)]
   const variables: string[] = [];
 
-  // Plantilla según el ÁREA del caso: Posventa usa contacto_posventa, Ventas
-  // usa contacto_venta (cada una con su idioma aprobado en Meta).
+  // Plantilla: la de CONTACTO según el área del caso (Posventa/Ventas), o la de
+  // "no nos llegó tu mensaje" (recuperación). Ambas de texto fijo, sin variables.
+  let plantillaMeta: { name?: string; lang?: string };
+  if (esRecuperacion) {
+    const creds = await obtenerCredencialesMeta();
+    plantillaMeta = { name: creds.respuestaNoRecibidaName, lang: creds.respuestaNoRecibidaLang };
+  } else {
+    plantillaMeta = await plantillaContactoPara(caso.area);
+  }
+
   let waMessageId: string;
   let templateName: string;
   try {
-    ({ waMessageId, templateName } = await sendTemplateMessage(
-      telefono,
-      variables,
-      await plantillaContactoPara(caso.area)
-    ));
+    ({ waMessageId, templateName } = await sendTemplateMessage(telefono, variables, plantillaMeta));
   } catch (err) {
     // Número inválido / template mal / credenciales: no tiene sentido reintentar
     if (err instanceof WhatsappApiError && !err.reintenable) {
@@ -123,16 +135,24 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
         data: {
           casoId: caso.id,
           direction: MessageDirection.SALIENTE,
-          content: `Template "${templateName}" → ${variables.join(" | ")}`,
+          content: esRecuperacion
+            ? `Plantilla "${templateName}" (pedir que repita el mensaje)`
+            : `Template "${templateName}" → ${variables.join(" | ")}`,
           templateName,
           waMessageId,
           status: "enviado",
         },
       }),
-      prisma.caso.update({
-        where: { id: caso.id },
-        data: { estadoContacto: EstadoContacto.ENVIADO, ultimoErrorEnvio: null },
-      }),
+      // La recuperación NO cambia el estado del caso (solo registra el mensaje,
+      // que aparece en Seguimiento). La campaña de contacto sí lo pasa a ENVIADO.
+      ...(esRecuperacion
+        ? []
+        : [
+            prisma.caso.update({
+              where: { id: caso.id },
+              data: { estadoContacto: EstadoContacto.ENVIADO, ultimoErrorEnvio: null },
+            }),
+          ]),
     ]);
   } catch (err) {
     throw new UnrecoverableError(
@@ -594,12 +614,26 @@ async function procesarEnvioFidelizacion(job: Job<DatosFidelizacion>, token?: st
   }
 
   // El mensaje YA SALIÓ: un fallo de base acá NO debe reintentar el job (mandaría
-  // el WhatsApp de nuevo). Se marca ENVIADO; si el update falla, es irrecuperable.
+  // el WhatsApp de nuevo). Se marca ENVIADO y se registra el saliente como
+  // WhatsappMessage (para verlo en Seguimiento). Si el registro falla, es
+  // irrecuperable (no se reintenta el envío).
   try {
-    await prisma.clienteFidelizacion.update({
-      where: { id: cliente.id },
-      data: { estado: EstadoFidelizacion.ENVIADO, waMessageId, enviadoEn: new Date(), error: null },
-    });
+    await prisma.$transaction([
+      prisma.clienteFidelizacion.update({
+        where: { id: cliente.id },
+        data: { estado: EstadoFidelizacion.ENVIADO, waMessageId, enviadoEn: new Date(), error: null },
+      }),
+      prisma.whatsappMessage.create({
+        data: {
+          clienteFidelizacionId: cliente.id,
+          direction: MessageDirection.SALIENTE,
+          content: `Recordatorio de ${cliente.numeroServicio}° service de mantenimiento`,
+          templateName: creds.fidelizacionTemplateName,
+          status: "enviado",
+          waMessageId,
+        },
+      }),
+    ]);
   } catch (err) {
     throw new UnrecoverableError(
       `El recordatorio se envió pero no se pudo registrar: ${err instanceof Error ? err.message : String(err)}`
@@ -624,6 +658,14 @@ export function startWorkers() {
   whatsappWorker.on("failed", async (job, err) => {
     if (!job?.data?.casoId) return;
     if (err instanceof DelayedError) return; // re-agendado por ventana/tope, no es un fallo
+    // La recuperación ("pedir que repitan") NO debe marcar ERROR el estado
+    // principal del caso (no es su envío de contacto): solo se loguea.
+    if (job.data.plantilla === "respuesta_no_recibida") {
+      if (err instanceof UnrecoverableError || job.attemptsMade >= (job.opts.attempts ?? 1)) {
+        console.error(`[whatsapp-recup] recuperación fallida para caso ${job.data.casoId}: ${err.message}`);
+      }
+      return;
+    }
     const sinReintentosPendientes =
       err instanceof UnrecoverableError || job.attemptsMade >= (job.opts.attempts ?? 1);
     if (!sinReintentosPendientes) {

@@ -62,6 +62,8 @@ const metaSchema = z.object({
   templateVentaLang: z.string().trim().optional(),
   fidelizacionTemplateName: z.string().trim().optional(),
   fidelizacionTemplateLang: z.string().trim().optional(),
+  respuestaNoRecibidaName: z.string().trim().optional(),
+  respuestaNoRecibidaLang: z.string().trim().optional(),
 });
 
 export async function patchMeta(req: Request, res: Response) {

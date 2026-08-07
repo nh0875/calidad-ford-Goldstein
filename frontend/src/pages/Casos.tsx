@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquarePlus, Pencil, RotateCcw, Send, SearchX, Trash2, UserPlus } from "lucide-react";
-import { apiDelete, apiGet, apiPostJson } from "../lib/api";
+import { FileDown, MessageSquarePlus, Pencil, RotateCcw, Send, SearchX, Trash2, UserPlus } from "lucide-react";
+import { apiDelete, apiDescargarArchivo, apiGet, apiPostJson } from "../lib/api";
 import { getModoDemo, getUsuario, veTodasLasAreas } from "../lib/auth";
 import { AREAS, etiquetaArea, tonoArea } from "../lib/area";
 import { Card } from "../components/ui/Card";
@@ -124,6 +124,7 @@ export default function Casos() {
   // Modal de confirmación de envío
   const [modal, setModal] = useState<{
     modo: "seleccion" | "filtro";
+    plantilla: "contacto" | "respuesta_no_recibida";
     destinatarios: number;
     mensaje: string;
   } | null>(null);
@@ -280,18 +281,22 @@ export default function Casos() {
 
   // ---------- Envío ----------
 
-  async function abrirPreview(modo: "seleccion" | "filtro") {
+  async function abrirPreview(
+    modo: "seleccion" | "filtro",
+    plantilla: "contacto" | "respuesta_no_recibida" = "contacto"
+  ) {
     setError(null);
     try {
       const params =
         modo === "seleccion"
           ? new URLSearchParams({ casoIds: [...seleccion].join(",") })
           : queryFiltros();
-      params.delete("estadoContacto"); // el backend siempre exige PENDIENTE
+      params.delete("estadoContacto"); // la campaña de contacto siempre exige PENDIENTE
+      if (plantilla !== "contacto") params.set("plantilla", plantilla);
       const data = await apiGet<{ destinatarios: number; message: string }>(
         `/api/campanas/preview?${params.toString()}`
       );
-      setModal({ modo, destinatarios: data.destinatarios, mensaje: data.message });
+      setModal({ modo, plantilla, destinatarios: data.destinatarios, mensaje: data.message });
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos calcular cuántos mensajes se enviarían.");
     }
@@ -318,6 +323,7 @@ export default function Casos() {
         if (filtros.origenAgendamiento) body.origenAgendamiento = filtros.origenAgendamiento;
         if (filtros.area) qs = `?area=${encodeURIComponent(filtros.area)}`;
       }
+      if (modal.plantilla !== "contacto") body.plantilla = modal.plantilla;
       await apiPostJson<{ encolados: number }>(`/api/campanas/enviar${qs}`, body);
       setModal(null);
       setSeleccion(new Set());
@@ -473,12 +479,32 @@ export default function Casos() {
           Enviar a todos los pendientes del filtro actual
         </button>
         <button
+          onClick={() => abrirPreview("filtro", "respuesta_no_recibida")}
+          className={claseBoton("secundario")}
+          title="Manda la plantilla 'no nos llegó tu mensaje' a todos los clientes contactables del filtro actual (para respuestas que se perdieron). Ignora el estado y la selección."
+        >
+          <RotateCcw className="h-4 w-4" aria-hidden="true" />
+          Pedir que repitan el mensaje
+        </button>
+        <button
           onClick={() => setNuevoCaso(true)}
           className={claseBoton("secundario")}
           title="Cargar a mano un cliente que no vino en el Excel"
         >
           <UserPlus className="h-4 w-4" aria-hidden="true" />
           Agregar caso
+        </button>
+        <button
+          onClick={() =>
+            apiDescargarArchivo(`/api/casos/exportar?${queryFiltros().toString()}`, "casos.xlsx").catch((err) =>
+              setError(err instanceof Error ? err.message : "No pudimos exportar los casos.")
+            )
+          }
+          className={claseBoton("secundario")}
+          title="Descargar a Excel todos los casos del filtro actual (si no hay filtros, todos)"
+        >
+          <FileDown className="h-4 w-4" aria-hidden="true" />
+          Exportar a Excel
         </button>
         {respuesta && (
           <span className="ml-auto text-sm text-ink-muted">
@@ -705,7 +731,11 @@ export default function Casos() {
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/50 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl motion-safe:animate-fade-slide-in">
-            <h3 className="font-display text-lg font-semibold text-ink">Confirmar envío de WhatsApp</h3>
+            <h3 className="font-display text-lg font-semibold text-ink">
+              {modal.plantilla === "respuesta_no_recibida"
+                ? "Pedir que repitan el mensaje"
+                : "Confirmar envío de WhatsApp"}
+            </h3>
             <p className="mt-3 text-sm text-ink-muted">{modal.mensaje}</p>
             {modal.destinatarios > 0 && (
               <p className="mt-2 text-sm text-ink-muted">
@@ -722,7 +752,11 @@ export default function Casos() {
                 disabled={confirmando || modal.destinatarios === 0}
                 className={claseBoton("primario")}
               >
-                {confirmando ? "Encolando…" : `Enviar a ${modal.destinatarios} cliente(s)`}
+                {confirmando
+                  ? "Encolando…"
+                  : modal.plantilla === "respuesta_no_recibida"
+                    ? `Pedir a ${modal.destinatarios} cliente(s)`
+                    : `Enviar a ${modal.destinatarios} cliente(s)`}
               </button>
             </div>
           </div>

@@ -23,6 +23,9 @@ const filtrosSchema = z.object({
   // enviaría a pendientes de TODOS los orígenes).
   origenAgendamiento: z.nativeEnum(OrigenAgendamiento).optional(),
   casoIds: z.array(z.string().trim().min(1)).max(5000).optional(),
+  // "contacto" (default) o "respuesta_no_recibida" (envío masivo de "pedir que
+  // repitan el mensaje", a clientes ya contactados en cualquier estado).
+  plantilla: z.enum(["contacto", "respuesta_no_recibida"]).optional(),
 });
 
 // En el GET de preview los casoIds llegan como lista separada por comas
@@ -37,6 +40,7 @@ function filtrosDesdeQuery(query: Request["query"]) {
       typeof query.casoIds === "string" && query.casoIds.length > 0
         ? query.casoIds.split(",")
         : undefined,
+    plantilla: query.plantilla || undefined,
   });
 }
 
@@ -52,12 +56,17 @@ export async function previewCampana(req: Request, res: Response) {
   // cuenta/alcanza casos de su área, aun con casoIds manuales.
   const area = areaEfectiva(req.usuario!, parsearAreaQuery(req.query.area));
   const destinatarios = await contarDestinatarios({ ...parsed.data, area });
+  const esRecup = parsed.data.plantilla === "respuesta_no_recibida";
   res.json({
     destinatarios,
     message:
       destinatarios === 0
-        ? "Ningún caso pendiente coincide con esos filtros: no se enviaría ningún mensaje."
-        : `Se va a enviar el mensaje de WhatsApp a ${destinatarios} cliente(s) con contacto pendiente.`,
+        ? esRecup
+          ? "Ningún cliente contactable coincide con esos filtros: no se enviaría ningún mensaje."
+          : "Ningún caso pendiente coincide con esos filtros: no se enviaría ningún mensaje."
+        : esRecup
+          ? `Se le va a pedir a ${destinatarios} cliente(s) que repitan su mensaje (plantilla "no nos llegó tu mensaje").`
+          : `Se va a enviar el mensaje de WhatsApp a ${destinatarios} cliente(s) con contacto pendiente.`,
   });
 }
 
@@ -84,6 +93,7 @@ export async function enviarCampana(req: Request, res: Response) {
 
   const area = areaEfectiva(req.usuario!, parsearAreaQuery(req.query.area));
   const encolados = await encolarCampana({ ...parsed.data, area });
+  const esRecup = parsed.data.plantilla === "respuesta_no_recibida";
 
   // Aviso informativo sobre ventana/tope (el worker los hace cumplir al enviar)
   const avisos: string[] = [];
@@ -103,6 +113,7 @@ export async function enviarCampana(req: Request, res: Response) {
       entidad: "Campana",
       detalles: {
         casosEncolados: encolados,
+        plantilla: parsed.data.plantilla ?? "contacto",
         filtros: {
           uploadId: parsed.data.uploadId ?? null,
           sucursal: parsed.data.sucursal ?? null,
@@ -120,8 +131,12 @@ export async function enviarCampana(req: Request, res: Response) {
     encolados,
     message:
       encolados === 0
-        ? "No había casos pendientes para esos filtros: no se encoló ningún mensaje."
-        : `Listo: se programó el envío de ${encolados} mensaje(s) de WhatsApp. El progreso se puede seguir en esta pantalla.` +
+        ? esRecup
+          ? "No había clientes contactables para esos filtros: no se encoló ningún mensaje."
+          : "No había casos pendientes para esos filtros: no se encoló ningún mensaje."
+        : (esRecup
+            ? `Listo: se le va a pedir a ${encolados} cliente(s) que repitan su mensaje. El progreso se sigue en esta pantalla.`
+            : `Listo: se programó el envío de ${encolados} mensaje(s) de WhatsApp. El progreso se puede seguir en esta pantalla.`) +
           (avisos.length ? " " + avisos.join(" ") : ""),
   });
 }

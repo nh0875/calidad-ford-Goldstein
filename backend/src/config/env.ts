@@ -19,6 +19,10 @@ export const env = {
     // Plantilla del recordatorio de Fidelización (Parte C). Pendiente de
     // aprobación en Meta: cuando se apruebe, ya sale.
     fidelizacionTemplateName: process.env.META_FIDELIZACION_TEMPLATE_NAME ?? "fidelizacion_posventa",
+    // Plantilla de recuperación: "no nos llegó tu mensaje, ¿lo repetís?" — para
+    // respuestas perdidas/huérfanas. Se elige a mano desde Seguimiento.
+    respuestaNoRecibidaName: process.env.META_RESPUESTA_NO_RECIBIDA_NAME ?? "respuesta_no_recibida",
+    respuestaNoRecibidaLang: process.env.META_RESPUESTA_NO_RECIBIDA_LANG ?? "es_AR",
     graphBaseUrl: process.env.META_GRAPH_BASE_URL ?? "https://graph.facebook.com/v20.0",
   },
   whatsappEnvioDelayMs: Number(process.env.WHATSAPP_ENVIO_DELAY_MS ?? 2500),

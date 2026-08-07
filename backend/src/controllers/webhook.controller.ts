@@ -1,10 +1,21 @@
 import { Request, Response } from "express";
-import { EstadoContacto, MessageDirection } from "@prisma/client";
+import { EstadoContacto, EstadoFidelizacion, MessageDirection, MotivoSupresion } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { normalizarTelefonoAR } from "../services/telefono.service";
-import { marcarOptOutSiCorresponde } from "../services/agradecimiento.service";
+import {
+  esMensajeOptOut,
+  marcarOptOutSiCorresponde,
+  reemplazarPlaceholders,
+} from "../services/agradecimiento.service";
 import { programarAnalisis } from "../services/analisis.service";
-import { guardarEstadoPlantillaFidelizacion, obtenerCredencialesMeta } from "../services/configuracion.service";
+import {
+  CLAVES_CONFIG,
+  guardarEstadoPlantillaFidelizacion,
+  obtenerCredencialesMeta,
+  obtenerValor,
+} from "../services/configuracion.service";
+import { agregarSupresion, estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
+import { sendTextMessage } from "../services/whatsapp.service";
 
 // ---------- GET: verificación inicial del webhook por parte de Meta ----------
 
@@ -49,6 +60,20 @@ function extraerContenido(mensaje: MensajeEntranteMeta): string {
   return `[mensaje de tipo ${mensaje.type}]`;
 }
 
+// Busca un cliente de Fidelización por teléfono (para engancharle su respuesta).
+// Solo los que YA recibieron el recordatorio (estado ENVIADO) pueden estar
+// respondiendo; se excluye a los PENDIENTE (enviadoEn=null, p.ej. de una
+// reimportación), que además con NULLS FIRST quedarían primeros por error.
+function buscarClienteFidelizacion(candidatos: string[]) {
+  return prisma.clienteFidelizacion.findFirst({
+    where: {
+      estado: EstadoFidelizacion.ENVIADO,
+      OR: [{ telefono: { in: candidatos } }, { telefonosNorm: { hasSome: candidatos } }],
+    },
+    orderBy: { enviadoEn: { sort: "desc", nulls: "last" } },
+  });
+}
+
 async function procesarMensajeEntrante(mensaje: MensajeEntranteMeta) {
   // Quitar una reacción (emoji vacío) no es una respuesta: llega como type
   // "reaction" con emoji "". Se ignora para no crear un mensaje fantasma ni
@@ -76,30 +101,51 @@ async function procesarMensajeEntrante(mensaje: MensajeEntranteMeta) {
 
   const contenido = extraerContenido(mensaje);
 
-  // Se prioriza un caso esperando respuesta (ENVIADO); si no hay, cualquier caso
-  // con ese teléfono (puede ser una respuesta tardía ya marcada NO_RESPONDIO).
-  // Se excluyen los casos borrados: una respuesta no debe engancharse a un caso
-  // eliminado (ej. un duplicado que se dio de baja) y perderse de la vista.
-  const caso =
-    (await prisma.caso.findFirst({
-      where: {
-        eliminadoEn: null,
-        estadoContacto: EstadoContacto.ENVIADO,
-        OR: [{ whatsapp: { in: candidatos } }, { celular: { in: candidatos } }],
-      },
-      orderBy: { createdAt: "desc" },
-    })) ??
-    (await prisma.caso.findFirst({
-      where: {
-        eliminadoEn: null,
-        OR: [{ whatsapp: { in: candidatos } }, { celular: { in: candidatos } }],
-      },
-      orderBy: { createdAt: "desc" },
-    }));
+  // ¿Es el 3er botón de la plantilla de Fidelización ("Agendar mi Turno con un
+  // Asesor")? Ese botón SOLO existe en esa plantilla. El título a reconocer es
+  // configurable (por si lo renombran en Meta).
+  const esBoton =
+    mensaje.type === "button" || Boolean(mensaje.button?.text) || Boolean(mensaje.interactive?.button_reply);
+  const tituloBotonAsesor = (await obtenerValor(CLAVES_CONFIG.FIDELIZACION_TEXTO_BOTON_ASESOR)).trim().toLowerCase();
+  const esBotonAsesor =
+    esBoton && tituloBotonAsesor.length > 0 && contenido.trim().toLowerCase() === tituloBotonAsesor;
 
-  if (!caso) {
+  // Resolución del destino (Caso vs Fidelización). Se excluyen los casos
+  // borrados: una respuesta no debe engancharse a un caso eliminado.
+  //  - el botón de asesor SOLO existe en Fidelización → va a fidelización.
+  //  - si no, prioridad al Caso esperando respuesta (ENVIADO); luego un cliente
+  //    de fidelización recién recordado; luego cualquier Caso; si nada, huérfano.
+  const wherePorTelefono = { OR: [{ whatsapp: { in: candidatos } }, { celular: { in: candidatos } }] };
+  const fidel = await buscarClienteFidelizacion(candidatos);
+  const casoEnviado = await prisma.caso.findFirst({
+    where: { eliminadoEn: null, estadoContacto: EstadoContacto.ENVIADO, ...wherePorTelefono },
+    orderBy: { createdAt: "desc" },
+  });
+
+  let caso: Awaited<ReturnType<typeof prisma.caso.findFirst>> = null;
+  let clienteFidel: Awaited<ReturnType<typeof prisma.clienteFidelizacion.findFirst>> = null;
+
+  if (esBotonAsesor && fidel) {
+    // El botón "Agendar con asesor" solo existe en la plantilla de fidelización.
+    clienteFidel = fidel;
+  } else if (casoEnviado) {
+    caso = casoEnviado;
+  } else {
+    // CUALQUIER Caso del teléfono le gana a Fidelización: un texto suelto
+    // continúa el hilo del Caso. Si no, el 2º mensaje de una conversación de
+    // Caso (que ya pasó de ENVIADO a RESPONDIDO) se desviaba a Fidelización.
+    // Solo si NO hay ningún Caso del teléfono, la respuesta es de Fidelización.
+    const anyCaso = await prisma.caso.findFirst({
+      where: { eliminadoEn: null, ...wherePorTelefono },
+      orderBy: { createdAt: "desc" },
+    });
+    if (anyCaso) caso = anyCaso;
+    else if (fidel) clienteFidel = fidel;
+  }
+
+  if (!caso && !clienteFidel) {
     // No se descarta: queda para revisión manual (puede ser otra persona
-    // respondiendo por el cliente desde su propio número)
+    // respondiendo por el cliente desde su propio número).
     await prisma.mensajeHuerfano.create({
       data: {
         telefono: candidatos[0] ?? mensaje.from,
@@ -108,40 +154,118 @@ async function procesarMensajeEntrante(mensaje: MensajeEntranteMeta) {
         payload: mensaje as object,
       },
     });
-    console.warn(`[webhook] mensaje huérfano de ${mensaje.from}: no matchea ningún caso`);
+    console.warn(`[webhook] mensaje huérfano de ${mensaje.from}: no matchea ningún caso ni fidelización`);
     return;
   }
 
+  // Audio: se guarda el id del archivo en Meta para que el worker lo baje y
+  // Gemini lo transcriba (solo se transcribe para Casos; el análisis corre async).
+  const datosMedia = mensaje.audio?.id
+    ? { mediaId: mensaje.audio.id, mediaMimeType: mensaje.audio.mime_type ?? null, mediaTipo: "audio" }
+    : {};
+
+  // ---- Caso (Contacto Posventa/Ventas): comportamiento de siempre ----
+  if (caso) {
+    await prisma.whatsappMessage.create({
+      data: {
+        casoId: caso.id,
+        direction: MessageDirection.ENTRANTE,
+        content: contenido,
+        waMessageId: mensaje.id,
+        status: "recibido",
+        ...datosMedia,
+      },
+    });
+    await prisma.caso.update({
+      where: { id: caso.id },
+      data: { estadoContacto: EstadoContacto.RESPONDIDO },
+    });
+    // Opt-out (BAJA/STOP): se marca el caso; el agradecimiento lo respeta.
+    await marcarOptOutSiCorresponde(caso.id, contenido);
+    // El análisis se programa (debounce) para analizar la tanda completa junta.
+    await programarAnalisis(caso.id);
+    console.log(`[webhook] respuesta de ${mensaje.from} asociada al caso ${caso.numeroOrden} (${caso.id})`);
+    return;
+  }
+
+  // ---- Fidelización: se registra la respuesta, SIN análisis de sentimiento ----
   await prisma.whatsappMessage.create({
     data: {
-      casoId: caso.id,
+      clienteFidelizacionId: clienteFidel!.id,
       direction: MessageDirection.ENTRANTE,
       content: contenido,
       waMessageId: mensaje.id,
       status: "recibido",
-      // Audio: se guarda el id del archivo en Meta para que el worker lo baje y
-      // Gemini lo transcriba (el análisis corre async, separado del webhook).
-      ...(mensaje.audio?.id
-        ? { mediaId: mensaje.audio.id, mediaMimeType: mensaje.audio.mime_type ?? null, mediaTipo: "audio" }
-        : {}),
+      ...datosMedia,
     },
   });
 
-  await prisma.caso.update({
-    where: { id: caso.id },
-    data: { estadoContacto: EstadoContacto.RESPONDIDO },
+  // Opt-out: no hay flag por caso (no es un Caso), así que va a la lista de
+  // supresión global para que una re-importación tampoco lo vuelva a contactar.
+  if (esMensajeOptOut(contenido)) {
+    await agregarSupresion({ telefono: clienteFidel!.telefono, motivo: MotivoSupresion.OPT_OUT_WHATSAPP });
+  }
+
+  // 3er botón: marca "quiere asesor" (para Seguimiento) y manda el mensaje configurable.
+  if (esBotonAsesor) {
+    await responderBotonAsesorFidelizacion(clienteFidel!);
+  }
+
+  console.log(
+    `[webhook] respuesta de ${mensaje.from} asociada a fidelización de ${clienteFidel!.nombre} (${clienteFidel!.id})`
+  );
+}
+
+// El cliente apretó "Agendar mi Turno con un Asesor": queda marcado como
+// pendiente de asesor (visible en Seguimiento) y, si está activada la respuesta
+// automática, se le manda el mensaje configurable por el jefe de servicio.
+async function responderBotonAsesorFidelizacion(cliente: {
+  id: string;
+  nombre: string;
+  modelo: string | null;
+  telefono: string;
+  telefonosNorm: string[];
+}) {
+  // El flag va SIEMPRE, aunque la respuesta automática esté apagada o falle: así
+  // nadie pierde el pedido de turno.
+  await prisma.clienteFidelizacion.update({
+    where: { id: cliente.id },
+    data: { quiereAsesorEn: new Date() },
   });
 
-  // Opt-out (BAJA/STOP): se marca el caso; el agradecimiento lo respeta (no se envía)
-  await marcarOptOutSiCorresponde(caso.id, contenido);
+  if ((await obtenerValor(CLAVES_CONFIG.FIDELIZACION_ENVIAR_RESPUESTA_BOTON)) !== "true") return;
+  if (estaSuprimido(cliente.telefonosNorm, await telefonosSuprimidos())) return;
 
-  // El análisis NO se dispara por mensaje: se programa (y se reprograma con
-  // cada mensaje nuevo) para analizar la tanda completa de una sola vez. Un
-  // cliente que escribe "hola" / "todo bien" / "pero tardaron" genera UN
-  // análisis, no tres. Ver analisis.service.ts.
-  await programarAnalisis(caso.id);
+  const tel = cliente.telefono || cliente.telefonosNorm[0];
+  if (!tel) return;
 
-  console.log(`[webhook] respuesta de ${mensaje.from} asociada al caso ${caso.numeroOrden} (${caso.id})`);
+  const plantilla = await obtenerValor(CLAVES_CONFIG.FIDELIZACION_RESPUESTA_BOTON_ASESOR);
+  const texto = reemplazarPlaceholders(plantilla, {
+    nombrePropietario: cliente.nombre,
+    emailPropietario: null,
+    modelo: cliente.modelo ?? "",
+  });
+
+  try {
+    const { waMessageId } = await sendTextMessage(tel, texto);
+    await prisma.whatsappMessage.create({
+      data: {
+        clienteFidelizacionId: cliente.id,
+        direction: MessageDirection.SALIENTE,
+        content: texto,
+        status: "enviado",
+        waMessageId,
+        esAgradecimiento: true, // es un mensaje automático, no una respuesta a mano
+      },
+    });
+  } catch (err) {
+    // Si la respuesta automática falla, el flag "quiere asesor" ya quedó: alguien
+    // lo ve en Seguimiento y lo llama igual. No rompemos el webhook.
+    console.error(
+      `[webhook] no se pudo enviar la respuesta automática de asesor a ${cliente.nombre}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
 }
 
 interface StatusMeta {

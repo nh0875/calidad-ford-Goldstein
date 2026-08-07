@@ -6,12 +6,12 @@ import {
   CheckCheck,
   Mic,
   MessageSquare,
+  Phone,
   RefreshCw,
   Search,
   Send,
 } from "lucide-react";
 import { apiGet, apiPatchJson, apiPostJson, ApiError } from "../lib/api";
-import { getUsuario, veTodasLasAreas } from "../lib/auth";
 import { etiquetaArea, tonoArea } from "../lib/area";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
@@ -43,6 +43,7 @@ interface Conversacion {
   estadoContacto: string;
   tieneRqrAbierto: boolean;
   optOut: boolean;
+  quiereAsesor: boolean;
   semaforo: Semaforo;
   requiereRevision: boolean;
   totalMensajes: number;
@@ -73,6 +74,7 @@ interface Hilo {
     ultimoErrorEnvio: string | null;
     optOut: boolean;
     suprimido: boolean;
+    quiereAsesor: boolean;
   };
   mensajes: Mensaje[];
   analisis: { id: string; semaforo: Semaforo; requiereRevisionManual: boolean; resumenIA: string } | null;
@@ -81,10 +83,11 @@ interface Hilo {
   puedeReenviarPlantilla: boolean;
 }
 
-const FILTROS: Array<{ valor: "todas" | "revision" | "rojos"; etiqueta: string }> = [
+const FILTROS: Array<{ valor: "todas" | "revision" | "rojos" | "asesor"; etiqueta: string }> = [
   { valor: "todas", etiqueta: "Todas" },
   { valor: "revision", etiqueta: "Para revisar" },
   { valor: "rojos", etiqueta: "Rojos" },
+  { valor: "asesor", etiqueta: "Asesor" },
 ];
 
 const SEMAFOROS: Array<{ valor: "VERDE" | "AMARILLO" | "ROJO"; etiqueta: string; clase: string }> = [
@@ -133,15 +136,17 @@ function contenidoAudioFallido(content: string): boolean {
 
 export default function Seguimiento() {
   const [params, setParams] = useSearchParams();
-  const veTodas = veTodasLasAreas(getUsuario());
 
   const [conversaciones, setConversaciones] = useState<Conversacion[]>([]);
-  const [filtro, setFiltro] = useState<"todas" | "revision" | "rojos">("todas");
+  const [filtro, setFiltro] = useState<"todas" | "revision" | "rojos" | "asesor">("todas");
   const [q, setQ] = useState("");
   // Filtros extra (solo aparecen para quien ve más de una provincia / área)
   const [provincia, setProvincia] = useState("");
   const [area, setArea] = useState("");
   const [opciones, setOpciones] = useState<{ provincias: string[]; areas: string[] }>({ provincias: [], areas: [] });
+  // Mostrar el badge de área cuando hay más de una en juego (incluye Fidelización):
+  // así un usuario de Posventa distingue sus casos de las conversaciones de Fidelización.
+  const mostrarArea = opciones.areas.length > 1;
   const [seleccionadoId, setSeleccionadoId] = useState<string | null>(params.get("caso"));
   const [hilo, setHilo] = useState<Hilo | null>(null);
   const [texto, setTexto] = useState("");
@@ -168,7 +173,7 @@ export default function Seguimiento() {
 
   const cargarHilo = useCallback(async (casoId: string) => {
     try {
-      const r = await apiGet<{ data: Hilo }>(`/api/seguimiento/${casoId}`);
+      const r = await apiGet<{ data: Hilo }>(`/api/seguimiento/${encodeURIComponent(casoId)}`);
       setHilo(r.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos abrir la conversación.");
@@ -211,7 +216,7 @@ export default function Seguimiento() {
     setEnviando(true);
     setError(null);
     try {
-      await apiPostJson(`/api/seguimiento/${seleccionadoId}/responder`, { texto: texto.trim() });
+      await apiPostJson(`/api/seguimiento/${encodeURIComponent(seleccionadoId)}/responder`, { texto: texto.trim() });
       setTexto("");
       await cargarHilo(seleccionadoId);
       cargarLista();
@@ -222,14 +227,18 @@ export default function Seguimiento() {
     }
   }
 
-  async function reenviarPlantilla() {
+  async function reenviarPlantilla(plantilla: "contacto" | "respuesta_no_recibida") {
     if (!seleccionadoId) return;
     setEnviando(true);
     setError(null);
     setAviso(null);
     try {
-      await apiPostJson(`/api/seguimiento/${seleccionadoId}/reenviar-plantilla`, {});
-      setAviso("Plantilla reenviada. Cuando el cliente conteste, se reabre la ventana de 24 hs.");
+      await apiPostJson(`/api/seguimiento/${encodeURIComponent(seleccionadoId)}/reenviar-plantilla`, { plantilla });
+      setAviso(
+        plantilla === "respuesta_no_recibida"
+          ? "Le pedimos al cliente que repita su mensaje. Cuando conteste, se reabre la ventana de 24 hs."
+          : "Plantilla reenviada. Cuando el cliente conteste, se reabre la ventana de 24 hs."
+      );
       await cargarHilo(seleccionadoId);
       cargarLista();
     } catch (err) {
@@ -353,10 +362,13 @@ export default function Seguimiento() {
                       </span>
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                      <span className="text-[11px] text-ink-muted">orden {c.numeroOrden} · {c.sucursal}</span>
+                      <span className="text-[11px] text-ink-muted">
+                        {c.area === "FIDELIZACION" ? c.numeroOrden : `orden ${c.numeroOrden}`} · {c.sucursal}
+                      </span>
                       {c.tieneRqrAbierto && <Badge tono="rojo" className="cursor-default !py-0 !text-[10px]">RQR</Badge>}
+                      {c.quiereAsesor && <Badge tono="amarillo" className="cursor-default !py-0 !text-[10px]">quiere asesor</Badge>}
                       {c.optOut && <Badge tono="gris" className="cursor-default !py-0 !text-[10px]">baja</Badge>}
-                      {veTodas && <Badge tono={tonoArea(c.area)} className="cursor-default !py-0 !text-[10px]">{etiquetaArea(c.area)}</Badge>}
+                      {mostrarArea && <Badge tono={tonoArea(c.area)} className="cursor-default !py-0 !text-[10px]">{etiquetaArea(c.area)}</Badge>}
                     </div>
                   </div>
                 </button>
@@ -387,10 +399,11 @@ export default function Seguimiento() {
                   )}
                   <span className="truncate font-medium text-ink">{hilo.caso.nombre}</span>
                   {hilo.caso.tieneRqrAbierto && <Badge tono="rojo" className="cursor-default">RQR abierto</Badge>}
-                  {veTodas && <Badge tono={tonoArea(hilo.caso.area)} className="cursor-default">{etiquetaArea(hilo.caso.area)}</Badge>}
+                  {hilo.caso.quiereAsesor && <Badge tono="amarillo" className="cursor-default">quiere asesor</Badge>}
+                  {mostrarArea && <Badge tono={tonoArea(hilo.caso.area)} className="cursor-default">{etiquetaArea(hilo.caso.area)}</Badge>}
                 </div>
                 <p className="text-xs text-ink-muted">
-                  orden {hilo.caso.numeroOrden} · {hilo.caso.modelo} · {hilo.caso.sucursal} · asesor {hilo.caso.asesor}
+                  {hilo.caso.area === "FIDELIZACION" ? hilo.caso.numeroOrden : `orden ${hilo.caso.numeroOrden}`} · {hilo.caso.modelo} · {hilo.caso.sucursal} · asesor {hilo.caso.asesor}
                 </p>
               </div>
               {/* Clasificación a mano */}
@@ -412,6 +425,15 @@ export default function Seguimiento() {
                 </div>
               )}
             </div>
+
+            {hilo.caso.quiereAsesor && (
+              <div className="border-b border-amber-200 bg-amber-50 px-4 py-2">
+                <p className="flex items-center gap-2 text-sm font-medium text-amber-900">
+                  <Phone className="h-4 w-4 shrink-0" />
+                  El cliente pidió turno con un asesor. Coordinalo y respondele por acá; al responderle sale de pendientes.
+                </p>
+              </div>
+            )}
 
             {(error || aviso) && (
               <div className="px-4 pt-3">
@@ -497,14 +519,25 @@ export default function Seguimiento() {
                     <span>{hilo.puedeResponder.motivo}</span>
                   </p>
                   {hilo.puedeReenviarPlantilla && (
-                    <button
-                      onClick={reenviarPlantilla}
-                      disabled={enviando}
-                      className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-50"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      Reenviar la plantilla del sistema
-                    </button>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => reenviarPlantilla("contacto")}
+                        disabled={enviando}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-50"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        Reabrir con la plantilla de contacto
+                      </button>
+                      <button
+                        onClick={() => reenviarPlantilla("respuesta_no_recibida")}
+                        disabled={enviando}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-50"
+                        title="Le pide al cliente que repita su mensaje (para respuestas que se perdieron)"
+                      >
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        Pedir que repita el mensaje
+                      </button>
+                    </div>
                   )}
                 </div>
               )}

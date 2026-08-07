@@ -11,6 +11,13 @@ export const CLAVES_CONFIG = {
   AGRADECIMIENTO_VERDE_AMARILLO: "agradecimiento.textoVerdeAmarillo",
   AGRADECIMIENTO_ROJO: "agradecimiento.textoRojo",
   AGRADECIMIENTO_ENVIAR_A_ROJOS: "agradecimiento.enviarARojos",
+  // Fidelización: respuesta automática cuando el cliente aprieta el 3er botón
+  // ("Agendar mi Turno con un Asesor") de la plantilla. El texto lo edita el
+  // jefe de servicio; el toggle lo prende/apaga; el "texto del botón" es el
+  // título EXACTO del botón en Meta (para reconocerlo cuando llega la respuesta).
+  FIDELIZACION_RESPUESTA_BOTON_ASESOR: "fidelizacion.respuestaBotonAsesor",
+  FIDELIZACION_ENVIAR_RESPUESTA_BOTON: "fidelizacion.enviarRespuestaBotonAsesor",
+  FIDELIZACION_TEXTO_BOTON_ASESOR: "fidelizacion.textoBotonAsesor",
 } as const;
 
 // Placeholders soportados en los textos: {nombre} {email} {modelo}
@@ -22,6 +29,11 @@ export const DEFAULTS_CONFIG: Record<string, string> = {
   // "true" = a los ROJOS se les manda la variante empática (sin recordatorio de
   // encuesta). "false" = a los ROJOS no se les manda ningún mensaje automático.
   [CLAVES_CONFIG.AGRADECIMIENTO_ENVIAR_A_ROJOS]: "true",
+  // Fidelización — respuesta al botón "Agendar mi Turno con un Asesor".
+  [CLAVES_CONFIG.FIDELIZACION_RESPUESTA_BOTON_ASESOR]:
+    "¡Gracias, {nombre}! Ya tomamos tu pedido de turno con un asesor. En breve nos comunicamos para coordinar el día y horario que mejor te quede. ¡Saludos!",
+  [CLAVES_CONFIG.FIDELIZACION_ENVIAR_RESPUESTA_BOTON]: "true",
+  [CLAVES_CONFIG.FIDELIZACION_TEXTO_BOTON_ASESOR]: "Agendar mi Turno con un Asesor",
 };
 
 // Solo estas claves son editables desde la API (evita que se inyecten claves arbitrarias)
@@ -72,6 +84,9 @@ export const CLAVES_META = {
   TEMPLATE_VENTA_LANG: "meta.templateVentaLang",
   FIDELIZACION_TEMPLATE_NAME: "meta.fidelizacionTemplateName",
   FIDELIZACION_TEMPLATE_LANG: "meta.fidelizacionTemplateLang",
+  // Plantilla de recuperación ("no nos llegó tu mensaje, ¿lo repetís?").
+  RESPUESTA_NO_RECIBIDA_NAME: "meta.respuestaNoRecibidaName",
+  RESPUESTA_NO_RECIBIDA_LANG: "meta.respuestaNoRecibidaLang",
   // Estado de la plantilla de fidelización según Meta (lo actualiza el webhook
   // message_template_status_update): APPROVED / PENDING / REJECTED / ... o "".
   FIDELIZACION_TEMPLATE_STATUS: "meta.fidelizacionTemplateStatus",
@@ -102,6 +117,8 @@ export interface CredencialesMeta {
   templateVentaLang: string;
   fidelizacionTemplateName: string;
   fidelizacionTemplateLang: string;
+  respuestaNoRecibidaName: string;
+  respuestaNoRecibidaLang: string;
   graphBaseUrl: string;
 }
 
@@ -125,17 +142,20 @@ export async function plantillaContactoPara(area: AreaTrabajo): Promise<{ name: 
 // Credenciales efectivas para USAR (envío, verificación de webhook): primero lo
 // guardado en /configuracion; si algo falta, cae al .env (bootstrap/migración).
 export async function obtenerCredencialesMeta(): Promise<CredencialesMeta> {
-  const [token, phone, verify, tName, tLang, tVentaName, tVentaLang, tFidel, tFidelLang] = await Promise.all([
-    leerMeta(CLAVES_META.TOKEN),
-    leerMeta(CLAVES_META.PHONE_NUMBER_ID),
-    leerMeta(CLAVES_META.VERIFY_TOKEN),
-    leerMeta(CLAVES_META.TEMPLATE_NAME),
-    leerMeta(CLAVES_META.TEMPLATE_LANG),
-    leerMeta(CLAVES_META.TEMPLATE_VENTA_NAME),
-    leerMeta(CLAVES_META.TEMPLATE_VENTA_LANG),
-    leerMeta(CLAVES_META.FIDELIZACION_TEMPLATE_NAME),
-    leerMeta(CLAVES_META.FIDELIZACION_TEMPLATE_LANG),
-  ]);
+  const [token, phone, verify, tName, tLang, tVentaName, tVentaLang, tFidel, tFidelLang, tRnrName, tRnrLang] =
+    await Promise.all([
+      leerMeta(CLAVES_META.TOKEN),
+      leerMeta(CLAVES_META.PHONE_NUMBER_ID),
+      leerMeta(CLAVES_META.VERIFY_TOKEN),
+      leerMeta(CLAVES_META.TEMPLATE_NAME),
+      leerMeta(CLAVES_META.TEMPLATE_LANG),
+      leerMeta(CLAVES_META.TEMPLATE_VENTA_NAME),
+      leerMeta(CLAVES_META.TEMPLATE_VENTA_LANG),
+      leerMeta(CLAVES_META.FIDELIZACION_TEMPLATE_NAME),
+      leerMeta(CLAVES_META.FIDELIZACION_TEMPLATE_LANG),
+      leerMeta(CLAVES_META.RESPUESTA_NO_RECIBIDA_NAME),
+      leerMeta(CLAVES_META.RESPUESTA_NO_RECIBIDA_LANG),
+    ]);
   const templateLang = tLang || env.meta.templateLang;
   return {
     token: token || env.meta.token,
@@ -149,6 +169,8 @@ export async function obtenerCredencialesMeta(): Promise<CredencialesMeta> {
     templateVentaLang: tVentaLang || templateLang,
     fidelizacionTemplateName: tFidel || env.meta.fidelizacionTemplateName,
     fidelizacionTemplateLang: tFidelLang || templateLang,
+    respuestaNoRecibidaName: tRnrName || env.meta.respuestaNoRecibidaName,
+    respuestaNoRecibidaLang: tRnrLang || env.meta.respuestaNoRecibidaLang || templateLang,
     graphBaseUrl: env.meta.graphBaseUrl, // la base no es secreto: va por .env
   };
 }
@@ -163,6 +185,8 @@ export interface GuardarMeta {
   templateVentaLang?: string;
   fidelizacionTemplateName?: string;
   fidelizacionTemplateLang?: string;
+  respuestaNoRecibidaName?: string;
+  respuestaNoRecibidaLang?: string;
 }
 
 export async function guardarCredencialesMeta(d: GuardarMeta): Promise<void> {
@@ -187,6 +211,10 @@ export async function guardarCredencialesMeta(d: GuardarMeta): Promise<void> {
     await set(CLAVES_META.FIDELIZACION_TEMPLATE_NAME, d.fidelizacionTemplateName, false);
   if (d.fidelizacionTemplateLang !== undefined)
     await set(CLAVES_META.FIDELIZACION_TEMPLATE_LANG, d.fidelizacionTemplateLang, false);
+  if (d.respuestaNoRecibidaName !== undefined)
+    await set(CLAVES_META.RESPUESTA_NO_RECIBIDA_NAME, d.respuestaNoRecibidaName, false);
+  if (d.respuestaNoRecibidaLang !== undefined)
+    await set(CLAVES_META.RESPUESTA_NO_RECIBIDA_LANG, d.respuestaNoRecibidaLang, false);
 }
 
 // ---------- Estado de la plantilla de Fidelización (lo setea el webhook) ----------
@@ -226,6 +254,8 @@ export async function estadoMeta() {
     templateVentaLang: c.templateVentaLang,
     fidelizacionTemplateName: c.fidelizacionTemplateName,
     fidelizacionTemplateLang: c.fidelizacionTemplateLang,
+    respuestaNoRecibidaName: c.respuestaNoRecibidaName,
+    respuestaNoRecibidaLang: c.respuestaNoRecibidaLang,
     completo: Boolean(c.token && c.phoneNumberId),
   };
 }

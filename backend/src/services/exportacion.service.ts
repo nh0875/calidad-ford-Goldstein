@@ -12,7 +12,32 @@ import {
   WidthType,
 } from "docx";
 import { Prisma } from "@prisma/client";
+import { prisma } from "../config/prisma";
 import { reporteCausaRaiz, reporteSentimiento, FiltrosCausaRaiz, FiltrosReporte } from "./reporte.service";
+
+// Enums -> texto que lee gerencia (no las MAYUSCULAS_CON_GUION del código)
+const AREA_LABEL: Record<string, string> = { POSVENTA: "Posventa", VENTAS: "Ventas" };
+const ESTADO_CONTACTO_LABEL: Record<string, string> = {
+  PENDIENTE: "Pendiente",
+  ENVIADO: "Enviado",
+  RESPONDIDO: "Respondió",
+  NO_RESPONDIO: "No respondió",
+  INTERNO: "Interno (no cuenta)",
+  ERROR: "Error de envío",
+};
+// El semáforo, dicho como lo pide gerencia: quién es promotor y quién detractor.
+const CLASIFICACION_LABEL: Record<string, string> = {
+  VERDE: "Promotor",
+  AMARILLO: "Neutro",
+  ROJO: "Detractor",
+};
+const ENCUESTA_FORD_LABEL: Record<string, string> = {
+  SIN_DATO: "Sin dato",
+  RESPONDIDA: "Respondida",
+  PENDIENTE_RESPUESTA: "Pendiente de respuesta",
+  NO_ELEGIBLE: "No elegible",
+  EMAIL_INVALIDO: "Email inválido",
+};
 
 function fechaCorta(fecha: Date | null | undefined): string {
   if (!fecha) return "-";
@@ -77,6 +102,102 @@ export async function excelReporteSentimiento(f: FiltrosReporte): Promise<Buffer
     ]);
     hoja.addRows(filas);
   }
+
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+// ---------- Excel: listado completo de casos ----------
+// Vuelca TODOS los casos que matcheen el filtro (sin paginar) con sus variables,
+// para que administración/gerencia trabajen la lista afuera del sistema. El
+// `where` lo arma el controller (incluye la restricción por área del usuario).
+
+export async function excelCasos(where: Prisma.CasoWhereInput): Promise<Buffer> {
+  const casos = await prisma.caso.findMany({
+    where,
+    orderBy: { fechaProgramacion: "desc" },
+    include: {
+      upload: { select: { periodo: true } },
+      analisis: {
+        // La clasificación que cuenta es la de la respuesta al contacto, no un
+        // "gracias" posterior (esSeguimiento): mismo criterio que el listado.
+        where: { esSeguimiento: false },
+        orderBy: { analyzedAt: "desc" },
+        take: 1,
+        select: { semaforo: true, resumenIA: true },
+      },
+    },
+  });
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Sistema de Calidad Ford";
+
+  const columnas = [
+    { header: "Fecha visita", key: "fecha", width: 12 },
+    { header: "Orden", key: "orden", width: 12 },
+    { header: "Área", key: "area", width: 10 },
+    { header: "Origen", key: "origen", width: 14 },
+    { header: "Cliente", key: "cliente", width: 26 },
+    { header: "WhatsApp", key: "whatsapp", width: 16 },
+    { header: "Celular", key: "celular", width: 16 },
+    { header: "Email", key: "email", width: 24 },
+    { header: "Modelo", key: "modelo", width: 16 },
+    { header: "Patente", key: "patente", width: 12 },
+    { header: "Chasis (VIN)", key: "vin", width: 20 },
+    { header: "Asesor", key: "asesor", width: 20 },
+    { header: "Cód. asesor", key: "asesorCodigo", width: 12 },
+    { header: "Sucursal", key: "sucursal", width: 14 },
+    { header: "Período", key: "periodo", width: 10 },
+    { header: "Fecha salida", key: "fechaSalida", width: 12 },
+    { header: "Días en servicio", key: "diasEnServicio", width: 14 },
+    { header: "Estado de contacto", key: "estado", width: 18 },
+    { header: "Clasificación", key: "clasificacion", width: 14 },
+    { header: "Resumen IA", key: "resumen", width: 55 },
+    { header: "Encuesta Ford", key: "encuestaFord", width: 20 },
+    { header: "Fecha encuesta Ford", key: "encuestaFordFecha", width: 16 },
+    { header: "Pidió baja", key: "optOut", width: 10 },
+    { header: "Último error de envío", key: "error", width: 30 },
+    { header: "Comentario del asesor", key: "comentario", width: 40 },
+    { header: "Cargado el", key: "createdAt", width: 12 },
+  ];
+
+  const hoja = hojaConEncabezado(wb, "Casos", columnas);
+  hoja.addRows(
+    casos.map((c) => {
+      const semaforo = c.analisis[0]?.semaforo;
+      return {
+        fecha: fechaCorta(c.fechaProgramacion),
+        orden: c.numeroOrden,
+        area: AREA_LABEL[c.area] ?? c.area,
+        origen: c.origenAgendamiento,
+        cliente: c.nombrePropietario,
+        whatsapp: c.whatsapp || "-",
+        celular: c.celular || "-",
+        email: c.emailPropietario ?? "-",
+        modelo: c.modelo,
+        patente: c.patente || "-",
+        vin: c.chasisVIN ?? "-",
+        asesor: c.asesor,
+        asesorCodigo: c.asesorCodigo ?? "-",
+        sucursal: c.sucursal,
+        periodo: c.upload.periodo,
+        fechaSalida: fechaCorta(c.fechaSalida),
+        diasEnServicio: c.diasEnServicio ?? "-",
+        estado: ESTADO_CONTACTO_LABEL[c.estadoContacto] ?? c.estadoContacto,
+        clasificacion: semaforo ? (CLASIFICACION_LABEL[semaforo] ?? semaforo) : "-",
+        resumen: c.analisis[0]?.resumenIA ?? "-",
+        encuestaFord: ENCUESTA_FORD_LABEL[c.encuestaFordEstado] ?? c.encuestaFordEstado,
+        encuestaFordFecha: fechaCorta(c.encuestaFordFecha),
+        optOut: c.whatsappOptOut ? "Sí" : "",
+        error: c.ultimoErrorEnvio ?? "",
+        comentario: c.comentarioAsesor ?? "",
+        createdAt: fechaCorta(c.createdAt),
+      };
+    })
+  );
+
+  // Encabezado fijo + autofiltro: gerencia ordena y filtra en el propio Excel.
+  hoja.views = [{ state: "frozen", ySplit: 1 }];
+  hoja.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columnas.length } };
 
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

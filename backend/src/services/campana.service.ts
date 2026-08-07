@@ -19,6 +19,10 @@ export interface FiltrosCampana {
   // jamás alcanza casos de POSVENTA, ni siquiera pasando casoIds a mano.
   area?: AreaTrabajo | null;
   casoIds?: string[]; // selección manual desde la tabla (igual se exige PENDIENTE)
+  // "contacto" (default): campaña de contacto, SOLO casos PENDIENTE.
+  // "respuesta_no_recibida": envío masivo de "pedir que repitan el mensaje", a
+  // clientes ya contactados en cualquier estado (para respuestas que se perdieron).
+  plantilla?: "contacto" | "respuesta_no_recibida";
 }
 
 export async function construirWhereCampana(filtros: FiltrosCampana): Promise<Prisma.CasoWhereInput> {
@@ -26,9 +30,18 @@ export async function construirWhereCampana(filtros: FiltrosCampana): Promise<Pr
   // celular normalizado esté suprimido. Esto aplica SIEMPRE, incluso cuando se
   // pasan casoIds a mano (no se puede saltear pasando IDs en la request).
   const suprimidos = await telefonosSuprimidos();
+  const esRecuperacion = filtros.plantilla === "respuesta_no_recibida";
 
   return {
-    estadoContacto: EstadoContacto.PENDIENTE,
+    // CONTACTO: solo PENDIENTE (regla de siempre). RECUPERACIÓN ("pedir que
+    // repitan"): clientes YA contactados en cualquier estado, salvo INTERNO, y
+    // con un teléfono válido (E.164).
+    ...(esRecuperacion
+      ? {
+          estadoContacto: { not: EstadoContacto.INTERNO },
+          OR: [{ whatsapp: { startsWith: "+" } }, { celular: { startsWith: "+" } }],
+        }
+      : { estadoContacto: EstadoContacto.PENDIENTE }),
     eliminadoEn: null, // un caso borrado no recibe campañas de WhatsApp
     whatsappOptOut: false, // el cliente que pidió la baja (BAJA/STOP) nunca recibe campañas
     ...(suprimidos.size > 0
@@ -56,6 +69,10 @@ export async function encolarCampana(filtros: FiltrosCampana): Promise<number> {
   });
 
   const delayMs = env.whatsappEnvioDelayMs;
+  const plantilla = filtros.plantilla ?? "contacto";
+  // jobId con prefijo por plantilla: la recuperación NO debe pisar (deduplicar
+  // contra) un envío de contacto pendiente del mismo caso, y viceversa.
+  const prefijo = plantilla === "respuesta_no_recibida" ? "recup" : "envio";
 
   // El jobId es fijo por caso, y BullMQ conserva los jobs YA TERMINADOS un rato
   // (fallidos, 24 hs). Mientras esa clave siga en Redis, volver a encolar el
@@ -66,7 +83,7 @@ export async function encolarCampana(filtros: FiltrosCampana): Promise<number> {
   await Promise.all(
     casos.map(async (caso) => {
       try {
-        const job = await whatsappQueue.getJob(`envio-${caso.id}`);
+        const job = await whatsappQueue.getJob(`${prefijo}-${caso.id}`);
         if (!job) return;
         const estado = await job.getState();
         if (estado === "failed" || estado === "completed") await job.remove();
@@ -80,11 +97,11 @@ export async function encolarCampana(filtros: FiltrosCampana): Promise<number> {
   await whatsappQueue.addBulk(
     casos.map((caso, i) => ({
       name: "enviar-template",
-      data: { casoId: caso.id },
+      data: { casoId: caso.id, plantilla },
       opts: {
         // jobId por caso: si se dispara la campaña dos veces seguidas,
         // el segundo encolado del mismo caso se ignora
-        jobId: `envio-${caso.id}`,
+        jobId: `${prefijo}-${caso.id}`,
         delay: i * delayMs, // espaciado entre mensajes por rate limit de Meta
         attempts: 3,
         backoff: { type: "exponential", delay: 5000 },
