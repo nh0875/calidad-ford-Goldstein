@@ -22,7 +22,7 @@ set "NGROK_PATH=%LOCALAPPDATA%\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.W
 
 REM (4) Dominio ESTATICO de ngrok (reservado en tu cuenta de ngrok).
 REM     Es el que va en la URL del webhook de Meta.
-set "NGROK_DOMAIN=antitrust-trace-unloader.ngrok-free.dev"
+set "NGROK_DOMAIN=dealer-occupant-brigade.ngrok-free.dev"
 
 REM (5) Puerto local del sistema (nginx). Debe coincidir con HTTP_PORT del .env
 set "PORT=80"

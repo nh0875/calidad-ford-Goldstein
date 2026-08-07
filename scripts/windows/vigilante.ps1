@@ -25,7 +25,7 @@ $DockerExe   = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 # Ruta de ngrok. Si no existe, el script lo busca en el PATH (instalacion por
 # winget/choco). Dejar vacio para usar solo el PATH.
 $NgrokExe    = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe"
-$NgrokDomain = "antitrust-trace-unloader.ngrok-free.dev"
+$NgrokDomain = "dealer-occupant-brigade.ngrok-free.dev"
 $Puerto      = 80
 $LogFile     = Join-Path $ProjectDir "scripts\windows\vigilante.log"
 $LogMaxMB    = 2        # al superarlo se rota a .1 (se conserva una generacion)

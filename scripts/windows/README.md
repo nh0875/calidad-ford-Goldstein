@@ -16,8 +16,8 @@
 | Usuario del sistema | `admin@goldstein.com.ar` |
 | Contraseña | `UqWuQnF5Zwf92bDT#4` |
 | Dirección del sistema (en la PC) | http://localhost |
-| Dirección pública (webhook de Meta) | https://antitrust-trace-unloader.ngrok-free.dev |
-| Token de ngrok | `3GrusSzHu6fedxjLuO6pjn5wzmk_5qcrdEYnULg5GN7VKwodd` |
+| Dirección pública (webhook de Meta) | https://dealer-occupant-brigade.ngrok-free.dev |
+| Token de ngrok | `TU-TOKEN-NUEVO-DE-NGROK` |
 | Verify token del webhook | `calidad-ford-2026-xK9m` |
 
 ## Antes de empezar — requisitos
@@ -106,12 +106,12 @@ ngrok es lo que permite que los WhatsApp de los clientes lleguen a la PC.
 3. Pegá el **token** (una sola vez). Es lo que conecta con la cuenta dueña del
    dominio; **tiene que ser exactamente este**:
    ```powershell
-   ngrok config add-authtoken 3GrusSzHu6fedxjLuO6pjn5wzmk_5qcrdEYnULg5GN7VKwodd
+   ngrok config add-authtoken TU-TOKEN-NUEVO-DE-NGROK
    ```
    Tiene que responder algo como *"Authtoken saved to configuration file"*.
 
 > ⚠️ Si este token no es el de la cuenta dueña del dominio
-> `antitrust-trace-unloader.ngrok-free.dev`, **no van a llegar los WhatsApp**. Usá
+> `dealer-occupant-brigade.ngrok-free.dev`, **no van a llegar los WhatsApp**. Usá
 > el de la tabla de arriba tal cual.
 
 ---
@@ -317,7 +317,7 @@ entran desde **su propio dispositivo** (PC, notebook o celular), cada uno con **
 propio usuario**.
 
 - **Desde cualquier lado (por internet):**
-  `https://antitrust-trace-unloader.ngrok-free.dev`
+  `https://dealer-occupant-brigade.ngrok-free.dev`
   - ⚠️ La primera vez puede aparecer una **pantalla de aviso de ngrok** ("You are
     about to visit…"): hay que tocar **"Visit Site"** para entrar. Es una
     limitación del plan **gratuito** de ngrok (no es una falla del sistema).
@@ -429,7 +429,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail 100
 
 ## El webhook de Meta (ya configurado, solo como referencia)
 
-- URL: `https://antitrust-trace-unloader.ngrok-free.dev/api/webhooks/whatsapp`
+- URL: `https://dealer-occupant-brigade.ngrok-free.dev/api/webhooks/whatsapp`
 - Verify token: `calidad-ford-2026-xK9m`
 - Suscrito a: `messages`, `message_template_status_update`, `phone_number_quality_update`
 

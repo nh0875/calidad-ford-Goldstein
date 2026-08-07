@@ -17,7 +17,7 @@
    (la de Vanina murió, así que debería estar libre; si tenés otra PC de prueba
    con ngrok abierto, cerralo). Si dos lo usan a la vez, **se pisan y no llegan
    los WhatsApp**.
-2. **El dominio de ngrok no cambia** (`antitrust-trace-unloader.ngrok-free.dev`).
+2. **El dominio de ngrok no cambia** (`dealer-occupant-brigade.ngrok-free.dev`).
    Por eso **NO hay que tocar el webhook de Meta**: mientras la PC de Yesica
    levante ese mismo dominio con ese mismo token, Meta sigue llegando igual.
 
@@ -28,8 +28,8 @@
 | Usuario del sistema | `admin@goldstein.com.ar` |
 | Contraseña | *(la de siempre; está en el `.env.prod`)* |
 | Dirección en la PC | http://localhost |
-| Dirección pública (webhook) | https://antitrust-trace-unloader.ngrok-free.dev |
-| Token de ngrok | `3GrusSzHu6fedxjLuO6pjn5wzmk_5qcrdEYnULg5GN7VKwodd` |
+| Dirección pública (webhook) | https://dealer-occupant-brigade.ngrok-free.dev |
+| Token de ngrok | `TU-TOKEN-NUEVO-DE-NGROK` |
 | Verify token del webhook | `calidad-ford-2026-xK9m` |
 
 ---
@@ -104,7 +104,7 @@ valores a la **RAM de la PC de Yesica** (tabla en el README: 8 GB → `memory=3G
 En **PowerShell**:
 ```powershell
 winget install Ngrok.Ngrok
-ngrok config add-authtoken 3GrusSzHu6fedxjLuO6pjn5wzmk_5qcrdEYnULg5GN7VKwodd
+ngrok config add-authtoken TU-TOKEN-NUEVO-DE-NGROK
 ```
 > ⚠️ Es el **mismo token** porque es el mismo perfil de Google. Recordá: **una
 > sola PC puede usarlo a la vez**. Verificá que la PC de Vanina (u otra de prueba)
@@ -166,7 +166,7 @@ volvé a correrlo.
 1. Abrí un navegador en **http://localhost** → tiene que aparecer el login.
 2. Entrá con `admin@goldstein.com.ar` y la contraseña. **Tienen que estar los
    datos** (casos, clientes) que restauraste.
-3. WhatsApp: entrá a **https://antitrust-trace-unloader.ngrok-free.dev** y probá.
+3. WhatsApp: entrá a **https://dealer-occupant-brigade.ngrok-free.dev** y probá.
    Como el dominio y el token son los mismos, el webhook de Meta sigue igual —
    **no hay que reconfigurar nada en Meta**.
 
