@@ -36,29 +36,45 @@
 
 # PARTE A — En tu PC (armar el paquete con los datos)
 
-### A1. El dump con los datos (ya lo tenés)
+### A1. Sacá el backup con los datos de HOY (en la PC de Vanina)
 
-Usá **`pcvanina\respaldo-antes-de-actualizar.dump`** — es el más completo que hay
-(169 casos y mensajes **hasta el 04/08**). El otro, `calidad-produccion.dump`, llega
-solo hasta el 31/07, así que **NO uses ese**. Copialo a la carpeta del proyecto con
-un nombre corto:
+⚠️ **NO uses los dumps de `pcvanina\`** — son fotos viejas (fin de julio / 4 de
+agosto). Para migrar los datos **actuales**, sacá un dump **ahora, en la PC de
+Vanina** (la que está prendida y recibiendo los WhatsApp). El backup es una foto de
+la base en el momento que lo corrés.
 
+**Lo más fácil (botón):** en la carpeta del sistema de Vanina, entrá a
+`scripts\windows\` y hacé **doble clic en `Respaldo-AHORA.bat`**. Al terminar, el
+dump del momento queda en `...\Respaldos\calidad_<fecha>_<hora>.dump`.
+
+**A mano (PowerShell, en la carpeta del proyecto de Vanina):**
 ```powershell
-Copy-Item ".\pcvanina\respaldo-antes-de-actualizar.dump" ".\calidad-migracion.dump"
+$c = (docker ps --filter "name=postgres" --format "{{.Names}}" | Select-Object -First 1)
+docker exec $c sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" -f /tmp/hoy.dump'
+docker cp "${c}:/tmp/hoy.dump" "$env:USERPROFILE\Desktop\calidad-hoy.dump"
+docker exec $c rm -f /tmp/hoy.dump
 ```
+Te deja **`calidad-hoy.dump`** en el Escritorio.
 
-> *(Si algún día querés el dump exacto de ese momento, sacalo de la base que tengas
-> andando con `pg_dump -Fc`. Para esta migración, el de arriba es el más nuevo.)*
+> Ese archivo es la foto EXACTA de los datos de hoy: es el que llevás a la PC de
+> Yesica. Necesita que la PC de Vanina esté prendida con el sistema andando; si el
+> disco no arranca, lo más nuevo que hay es el último respaldo de SharePoint.
 
 ### A2. Armá el ZIP para llevar a la PC de Yesica
 
-Comprimí **toda la carpeta del proyecto** (la que tiene `backend`, `frontend`,
-`scripts`, `docker-compose.prod.yml` y `.env.prod`) **junto con el
-`calidad-migracion.dump`** del paso anterior. Copialo a un pendrive o subilo a la
-nube. Nombralo, por ejemplo, **`Yesica-Sistema-Calidad.zip`**.
+1. **Copiá el `calidad-hoy.dump`** (el del paso A1) **dentro de la carpeta del
+   proyecto** actualizada.
+2. Comprimí **toda esa carpeta** (la que tiene `backend`, `frontend`, `scripts`,
+   `docker-compose.prod.yml` y `.env.prod`) **con el dump adentro**. Copiala a un
+   pendrive o subila a la nube. Nombrala, por ejemplo, **`Yesica-Sistema-Calidad.zip`**.
 
-> ✅ Chequeo: dentro del ZIP tienen que estar sí o sí **`docker-compose.prod.yml`**
-> y **`.env.prod`** (son los que no van a git, pero SÍ van en el paquete).
+> ⚠️ **Usá la versión ACTUALIZADA del código** (la de tu PC / la rama `dev`), NO la
+> carpeta vieja de Vanina — así Yesica arranca con las últimas mejoras (fidelización
+> en Seguimiento, plantillas, envío masivo). Los datos viejos igual entran, porque
+> el reinicio del backend (paso B6.5) pone el esquema al día.
+>
+> ✅ Chequeo: dentro del ZIP tienen que estar sí o sí **`docker-compose.prod.yml`**,
+> **`.env.prod`** y **`calidad-hoy.dump`** (los tres van en el paquete, no por git).
 
 ---
 
@@ -73,7 +89,7 @@ nube. Nombralo, por ejemplo, **`Yesica-Sistema-Calidad.zip`**.
 ### B0. Descomprimir
 Clic derecho al `Yesica-Sistema-Calidad.zip` → **Extraer todo…** → elegí una ruta
 simple, por ejemplo **`C:\Calidad`**. Te queda `C:\Calidad\Vanina` (o el nombre de
-la carpeta) con todo adentro, incluido el `calidad-migracion.dump`.
+la carpeta) con todo adentro, incluido el `calidad-hoy.dump`.
 
 ### B1. Instalar Docker Desktop
 Igual que con Vanina: **[README.md → Paso 1](README.md)** (descargar Docker
@@ -117,7 +133,7 @@ terminen de arrancar los 5 contenedores (`docker ps` los muestra).
 Con los contenedores arriba, importá la base:
 ```powershell
 $c = (docker ps --filter "name=postgres" --format "{{.Names}}" | Select-Object -First 1)
-docker cp ".\calidad-migracion.dump" "${c}:/tmp/mig.dump"
+docker cp ".\calidad-hoy.dump" "${c}:/tmp/mig.dump"
 docker exec $c sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/mig.dump'
 docker exec $c rm -f /tmp/mig.dump
 ```
