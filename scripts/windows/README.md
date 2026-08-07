@@ -204,6 +204,83 @@ levanta el sistema, y lo pone a arrancar solo y a repararse cada 5 minutos.
 
 ---
 
+## Paso 7 — Respaldo automático a la nube (M365 / SharePoint)
+
+> **Para qué:** el sistema ya hace una copia de la base todas las noches, pero esa
+> copia vive en **el mismo disco** que el sistema. Si el disco de esta PC se rompe,
+> se pierde todo junto. Este paso deja que la copia se **suba sola todos los días a
+> una carpeta de la empresa en SharePoint** (M365, que ya pagan). Si la PC muere, la
+> copia ya está en la nube. Se hace **una sola vez**.
+
+### A) Una sola vez: sincronizar la carpeta de SharePoint en esta PC
+
+1. Confirmá que **OneDrive esté iniciado con la cuenta de M365 de la empresa** en la
+   sesión de Windows de Vanina (el ícono de la nube, abajo a la derecha, en azul/blanco).
+   Si no, abrí "OneDrive" del menú Inicio e iniciá sesión con la cuenta de la empresa.
+2. En el navegador, entrá al **sitio de SharePoint / Teams del equipo** donde van a
+   vivir los respaldos. En **"Documentos"**, creá una carpeta llamada, por ejemplo,
+   **`Respaldos Calidad`**.
+3. Con esa carpeta abierta, tocá el botón **"Sincronizar"** de la barra de arriba.
+   Se abre un aviso del navegador para abrir OneDrive: aceptá. OneDrive empieza a
+   sincronizarla.
+4. Ahora esa carpeta **aparece en el Explorador de archivos** (panel izquierdo, bajo
+   el nombre de la empresa), con una ruta parecida a:
+   `C:\Users\vanina\Goldstein Automotores S.A.C.I\Calidad - Respaldos Calidad`
+5. **Copiá esa ruta completa**: abrí la carpeta en el Explorador, hacé **clic derecho
+   con Shift** sobre ella → **"Copiar como ruta de acceso"** (te la copia con comillas).
+
+### B) Una sola vez: instalar el respaldo diario
+
+En **PowerShell como administrador**, en la carpeta del proyecto, pegá esto
+**reemplazando la ruta por la que copiaste** (dejá las comillas):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\Instalar-Respaldo-Diario.ps1 -CarpetaNube "C:\Users\vanina\Goldstein Automotores S.A.C.I\Calidad - Respaldos Calidad"
+```
+
+Eso:
+- programa el respaldo **todos los días a las 13:30** (se puede cambiar con `-Hora "20:00"`),
+- **hace un respaldo de prueba en el momento** para confirmar que todo el circuito anda,
+- conserva las **últimas 14 copias** (rota las viejas).
+
+### C) Verificar que quedó
+
+1. Esperá **1-2 minutos** después de la prueba.
+2. En el **navegador**, entrá al SharePoint → `Respaldos Calidad`. Tiene que aparecer
+   un archivo **`calidad_AAAA-MM-DD_hhmm.dump`**. Si está: **quedó andando** ✅.
+3. El detalle de cada corrida queda en `C:\Calidad\Vanina\Respaldos\respaldo.log` y el
+   estado de la última en `Respaldos\ultimo-respaldo.json` (`"ok": true`).
+
+> ### 🔒 Importante — quién puede ver esa carpeta
+> El respaldo tiene **datos reales de clientes** (nombres, teléfonos, patentes). En
+> SharePoint, dale acceso a esa biblioteca **solo a quien lo necesite** (Sistemas +
+> gerencia). Además, junto a los dumps se guarda una subcarpeta
+> **`_RESTAURAR-NO-BORRAR`** con una copia del `.env.prod` (la clave que descifra el
+> token de WhatsApp): esa subcarpeta es la más sensible, restringila especialmente.
+> *(Si preferís no subir la clave a la nube y guardarla aparte, agregá `-SinClave` en
+> el comando del respaldo: los datos igual se respaldan, pero al restaurar vas a tener
+> que reponer el token de Meta a mano.)*
+
+### D) Si esta PC se rompe: restaurar en una PC nueva
+
+1. Instalá el sistema en la PC nueva (Pasos 0 a 6). La base arranca **vacía**.
+2. Descargá de SharePoint el **último `calidad_*.dump`** y el archivo
+   `_RESTAURAR-NO-BORRAR\env.prod.copia`.
+3. Poné ese `env.prod.copia` como **`.env.prod`** en la carpeta del proyecto (así la
+   clave de cifrado coincide y el token de WhatsApp sigue sirviendo).
+4. Restaurá los datos (PowerShell en la carpeta del proyecto):
+   ```powershell
+   $c = (docker ps --filter "name=postgres" --format "{{.Names}}" | Select-Object -First 1)
+   docker cp .\calidad_XXXX.dump "${c}:/tmp/cal.dump"
+   docker exec $c sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/cal.dump'
+   ```
+5. Entrá a `http://localhost` y verificá que estén los casos. Listo.
+
+> El respaldo también se puede correr a mano cuando quieras con **`Respaldo-AHORA.bat`**
+> (doble clic): usa la misma configuración, sin escribir nada.
+
+---
+
 ## Uso diario (esto lo hace Vanina — no instala nada)
 
 1. Prende la PC e **inicia sesión en Windows** con su contraseña, como siempre.

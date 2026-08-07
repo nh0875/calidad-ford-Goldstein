@@ -43,6 +43,10 @@ frontend/.vite/
 uploads-temp/
 calidad-uploads/
 
+# Compose LOCAL (build-based): conveniencia para pruebas en la PC. NO va al repo
+# (la regla de INDEN es sin `build:` en los compose; el del repo usa GHCR).
+docker-compose.local.yml
+
 # ===== Logs y sistema =====
 *.log
 *.log.*
