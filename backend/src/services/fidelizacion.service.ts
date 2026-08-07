@@ -111,11 +111,18 @@ export function parsearFidelizacion(
   const colWhatsapp = columnaDe("whatsapp");
   const colCelular = columnaDe("celular");
 
-  if (!colComentario) {
+  // El service puede venir en "Comentario del Asesor" (ej. "1° Servicio de
+  // Mantenimiento") Y/O en la columna "Servicio" (ej. "1°ServiciodeMantenimiento").
+  // Los dos exports de Ford lo traen; algunos turnos lo tienen SOLO en una de las
+  // dos columnas, así que se detecta de AMBAS (se toma el número de la que lo tenga).
+  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  const colServicio = hoja.columnas.find((c) => norm(c) === "servicio") ?? null;
+
+  if (!colComentario && !colServicio) {
     return {
       error:
-        'No se encontró la columna "Comentario del Asesor" en el Excel. ' +
-        "Es la columna donde el asesor anota el service (ej. \"1° Servicio de Mantenimiento\").",
+        'No se encontró la columna "Comentario del Asesor" ni "Servicio" en el Excel. ' +
+        'Es donde figura el service (ej. "1° Servicio de Mantenimiento").',
     };
   }
   if (!colWhatsapp && !colCelular) {
@@ -136,8 +143,10 @@ export function parsearFidelizacion(
   };
 
   for (const fila of hoja.filas) {
-    const comentario = textoCelda(fila.datos[colComentario]);
-    const numero = detectarNumeroServicio(comentario);
+    const comentario = colComentario ? textoCelda(fila.datos[colComentario]) : "";
+    const servicioTxt = colServicio ? textoCelda(fila.datos[colServicio]) : "";
+    // Número del service tomado de cualquiera de las dos columnas.
+    const numero = detectarNumeroServicio(comentario) ?? detectarNumeroServicio(servicioTxt);
 
     if (numero === null) {
       resumen.sinServicio++;
@@ -169,7 +178,7 @@ export function parsearFidelizacion(
       patente: (colPatente && textoCelda(fila.datos[colPatente])) || null,
       asesor: (colAsesor && textoCelda(fila.datos[colAsesor])) || null,
       numeroServicio: numero,
-      comentarioAsesor: comentario,
+      comentarioAsesor: comentario || servicioTxt,
     });
   }
 
