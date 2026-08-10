@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 #  VIGILANTE del Sistema de Calidad — pensado para el Programador de tareas
 #  (cada 5 minutos, privilegios maximos, ventana oculta).
 #
@@ -253,7 +253,12 @@ try {
     # ---------- 4) ngrok ----------
     $proc = Get-Process ngrok -ErrorAction SilentlyContinue
     $tunel = $false
-    if ($proc) { $tunel = Tunel-Ok }
+    if ($proc) {
+        # La API local de ngrok (4040) puede tardar en responder: se reintenta
+        # antes de dar por caído el túnel, para NO matar un ngrok que YA está bien
+        # (evita un ciclo de matar/relanzar tras un reinicio).
+        for ($k = 0; $k -lt 3 -and -not $tunel; $k++) { $tunel = Tunel-Ok; if (-not $tunel) { Start-Sleep -Seconds 3 } }
+    }
 
     if (-not $proc -or -not $tunel) {
         if ($proc -and -not $tunel) {
@@ -268,9 +273,12 @@ try {
             Start-Process -FilePath $exe `
                 -ArgumentList @("http", "--domain=$NgrokDomain", "$Puerto") `
                 -WindowStyle Hidden -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 12
-            if (Tunel-Ok) { Log-Accion "Tunel de ngrok activo en https://$NgrokDomain" }
-            else { Log-Error "ngrok se lanzo pero el tunel no responde. Revisar el token/dominio de ngrok." }
+            # Darle tiempo a establecer el túnel: tras un reinicio la red y ngrok
+            # tardan más, así que se reintenta hasta ~40s antes de dar por fallido.
+            $ok = $false
+            for ($k = 0; $k -lt 8 -and -not $ok; $k++) { Start-Sleep -Seconds 5; $ok = Tunel-Ok }
+            if ($ok) { Log-Accion "Tunel de ngrok activo en https://$NgrokDomain" }
+            else { Log-Error "ngrok se lanzo pero el tunel no responde tras 40s. Revisar el token/dominio (¿otra PC usando el mismo token?)." }
         } else {
             Log-Error "No encuentro ngrok (ni en la ruta configurada ni en el PATH)."
         }
