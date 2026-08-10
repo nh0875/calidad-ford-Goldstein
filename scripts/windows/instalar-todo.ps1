@@ -1,156 +1,148 @@
 ﻿<#
   instalar-todo.ps1 — Instalador TODO-EN-UNO del Sistema de Calidad.
 
-  Hace, en orden:
-    1) ngrok: lo instala (winget con los flags que evitan el error de "origen", o
-       descarga directa si winget falla) y configura el token.
-    2) Docker: verifica que esté corriendo (lo abre y espera si hace falta).
-    3) .env.prod: confirma que esté.
-    4) Construye y levanta el sistema (docker compose up -d --build).
-    5) Restaura los datos si hay un .dump en la carpeta (con confirmación si la
-       base ya tenía datos, para no pisar nada sin querer) y reinicia el backend.
-    6) Deja todo automático (vigilante + anti-suspensión + arranque) llamando a
-       configurar-pc.ps1.
+  Corre en DOS FASES (una sola ejecución):
+   • FASE NORMAL (sin elevar): carga el token de ngrok, espera a Docker, hace el
+     build + arranque y restaura los datos. Va en modo NORMAL A PROPÓSITO: Docker
+     Desktop solo deja que la sesión normal del usuario llegue a su motor; un
+     proceso ELEVADO (admin) NO llega a Docker.
+   • FASE ADMIN (se auto-eleva sola al final): deja la PC sin suspensión, pone
+     Docker en el arranque y registra el VIGILANTE en modo normal, para que cada
+     vez que la usuaria inicie sesión el sistema levante y se repare SOLO.
 
-  Se ejecuta desde INSTALAR-SISTEMA.bat (que pide permisos de administrador).
-  Es IDEMPOTENTE: se puede volver a correr sin romper nada.
+  Se corre con doble clic en INSTALAR-SISTEMA.bat (que NO eleva; la elevación la
+  pide este script solo para la fase admin). La cuenta de Windows tiene que ser
+  administradora. Es IDEMPOTENTE: se puede volver a correr sin romper nada.
 
   ErrorActionPreference = Continue A PROPÓSITO: los comandos nativos (docker,
-  winget, ngrok) escriben en stderr y en Windows PowerShell 5.1 con "Stop" eso
-  puede cortar el script; se chequea el resultado con $LASTEXITCODE a mano.
+  ngrok) escriben en stderr y en PowerShell 5.1 con "Stop" eso corta el script;
+  se chequea el resultado con $LASTEXITCODE a mano.
 #>
 [CmdletBinding()]
-param(
-  [string]$NgrokToken,   # token de ngrok; si no se pasa y no hay uno cargado, se pide
-  [switch]$SinRestore    # no restaurar datos aunque haya un .dump
-)
+param([switch]$FaseAdmin, [string]$Proyecto)
+
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
-
 function Titulo($t) { Write-Host "`n===== $t =====" -ForegroundColor Cyan }
 function Ok($t)     { Write-Host "  [OK]  $t" -ForegroundColor Green }
 function Info($t)   { Write-Host "  $t" -ForegroundColor Gray }
 function Aviso($t)  { Write-Host "  [!]   $t" -ForegroundColor Yellow }
 function Fatal($t)  { Write-Host "  [ERROR] $t" -ForegroundColor Red; Read-Host "`nEnter para salir"; exit 1 }
 
-# ---- ¿Administrador? ----
-$id = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-if (-not $id.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  Fatal "Hay que correr esto COMO ADMINISTRADOR. Cerrá y usá INSTALAR-SISTEMA.bat (doble clic)."
-}
-
-# ---- Carpeta del proyecto (dos niveles arriba de scripts\windows) ----
-$Proyecto    = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+if (-not $Proyecto) { $Proyecto = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
 $ComposeFile = Join-Path $Proyecto "docker-compose.prod.yml"
 $EnvFile     = Join-Path $Proyecto ".env.prod"
-Set-Location $Proyecto
+$Vigilante   = Join-Path $PSScriptRoot "vigilante.ps1"
+
+# =====================================================================
+#  FASE ADMIN (elevada): energía + Docker al arranque + tarea del vigilante
+# =====================================================================
+if ($FaseAdmin) {
+  Titulo "Arranque automático (modo administrador)"
+
+  # 1) La PC nunca se suspende (si duerme, se congela Docker/ngrok y no llegan WhatsApp).
+  powercfg /change standby-timeout-ac 0   | Out-Null
+  powercfg /change standby-timeout-dc 0   | Out-Null
+  powercfg /change hibernate-timeout-ac 0 | Out-Null
+  powercfg /change hibernate-timeout-dc 0 | Out-Null
+  Ok "La PC ya no se suspende."
+
+  # 2) Docker Desktop arranca al iniciar sesión.
+  $dockerExe = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+  if (Test-Path $dockerExe) {
+    Set-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "Docker Desktop" ('"' + $dockerExe + '" -Autostart') -ErrorAction SilentlyContinue
+    Ok "Docker Desktop arranca al iniciar sesión."
+  }
+
+  # 3) VIGILANTE en modo NORMAL (RunLevel Limited): al iniciar sesión + cada 5 min.
+  #    Limited (no Highest) para que, corriendo en la sesión de la usuaria, SÍ
+  #    llegue a Docker y pueda levantar/reparar los contenedores y ngrok.
+  if (Test-Path $Vigilante) {
+    $accion = New-ScheduledTaskAction -Execute "powershell.exe" `
+      -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $Vigilante + '"')
+    $trig = New-ScheduledTaskTrigger -AtLogOn
+    $trig.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
+      -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
+    $opts = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+      -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+    try {
+      Register-ScheduledTask -TaskName "Sistema de Calidad - Vigilante" -Action $accion -Trigger $trig `
+        -Settings $opts -RunLevel Limited -User "$env:USERDOMAIN\$env:USERNAME" -Force -ErrorAction Stop | Out-Null
+      Ok "Vigilante registrado (arranca y repara solo, en modo normal)."
+      Start-ScheduledTask -TaskName "Sistema de Calidad - Vigilante" -ErrorAction SilentlyContinue
+    } catch {
+      Aviso "No pude registrar el vigilante: $($_.Exception.Message)"
+    }
+  } else {
+    Aviso "No encontré vigilante.ps1: no se registró el arranque automático."
+  }
+  Start-Sleep 2
+  exit 0
+}
+
+# =====================================================================
+#  FASE NORMAL (sin elevar): ngrok + Docker + build + restore
+# =====================================================================
 Write-Host "Instalador del Sistema de Calidad" -ForegroundColor White
 Info "Proyecto: $Proyecto"
 
-# =========================================================================
-Titulo "1/6  ngrok (instalar + token)"
+$esAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($esAdmin) {
+  Aviso "Lo estás corriendo COMO ADMIN. Si Docker no responde, cerrá esta ventana y abrí el instalador con DOBLE CLIC (sin admin)."
+}
 
-function Buscar-Ngrok {
-  $c = Get-Command ngrok -ErrorAction SilentlyContinue
-  if ($c) { return $c.Source }
+# ---- 1) Token de ngrok ----
+Titulo "1/5  Token de ngrok"
+$ngrok = (Get-Command ngrok -ErrorAction SilentlyContinue).Source
+if (-not $ngrok) {
   $wg = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe"
-  if (Test-Path $wg) { return $wg }
-  return $null
-}
-
-$ngrok = Buscar-Ngrok
-if (-not $ngrok) {
-  Info "Instalando ngrok con winget..."
-  winget install --id Ngrok.Ngrok -e --source winget --accept-source-agreements --accept-package-agreements
-  $ngrok = Buscar-Ngrok
+  if (Test-Path $wg) { $ngrok = $wg }
 }
 if (-not $ngrok) {
-  Aviso "winget no pudo. Descargando ngrok directo de ngrok.com..."
-  try {
-    $zip  = Join-Path $env:TEMP "ngrok.zip"
-    $dest = "C:\ngrok"
-    Invoke-WebRequest "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile $zip -UseBasicParsing
-    New-Item -ItemType Directory -Force $dest | Out-Null
-    Expand-Archive -Path $zip -DestinationPath $dest -Force
-    Remove-Item $zip -Force -ErrorAction SilentlyContinue
-    $rutaPc = [Environment]::GetEnvironmentVariable("Path", "Machine")
-    if ($rutaPc -notlike "*$dest*") { [Environment]::SetEnvironmentVariable("Path", "$rutaPc;$dest", "Machine") }
-    $env:Path = "$env:Path;$dest"
-    $ngrok = Join-Path $dest "ngrok.exe"
-  } catch {
-    Fatal "No se pudo instalar ngrok automáticamente: $($_.Exception.Message). Instalalo a mano desde https://ngrok.com/download y volvé a correr."
-  }
-}
-if (-not (Test-Path $ngrok)) { Fatal "ngrok no quedó instalado." }
-Ok "ngrok: $ngrok"
-
-# Token: 1) parámetro -NgrokToken  2) archivo ngrok-token.txt (al lado de este
-# script, NO va a git)  3) el que ya tenga ngrok configurado  4) preguntarlo.
-if (-not $NgrokToken) {
+  Aviso "ngrok no está instalado. Instalalo con:"
+  Info  "  winget install --id Ngrok.Ngrok -e --source winget --accept-source-agreements --accept-package-agreements"
+} else {
   $tokenFile = Join-Path $PSScriptRoot "ngrok-token.txt"
   if (Test-Path $tokenFile) {
-    $NgrokToken = ((Get-Content $tokenFile -Raw -ErrorAction SilentlyContinue) -replace '\s', '')
-    if ($NgrokToken) { Info "Token de ngrok tomado de ngrok-token.txt." }
-  }
-}
-if (-not $NgrokToken) {
-  $tieneToken = $false
-  foreach ($cfg in @("$env:LOCALAPPDATA\ngrok\ngrok.yml", "$env:USERPROFILE\.config\ngrok\ngrok.yml", "$env:USERPROFILE\.ngrok2\ngrok.yml")) {
-    if ((Test-Path $cfg) -and (Select-String -Path $cfg -Pattern "authtoken" -Quiet -ErrorAction SilentlyContinue)) { $tieneToken = $true }
-  }
-  if ($tieneToken) {
-    Info "ngrok ya tiene un token configurado (se deja el actual)."
+    $tok = ((Get-Content $tokenFile -Raw -ErrorAction SilentlyContinue) -replace '\s', '')
+    if ($tok) { & $ngrok config add-authtoken $tok | Out-Null; Ok "Token de ngrok cargado desde ngrok-token.txt." }
+    else { Info "ngrok-token.txt está vacío (se usa el token que ya tenga ngrok, si hay)." }
   } else {
-    $NgrokToken = Read-Host "  Pegá tu TOKEN de ngrok (del dashboard) y Enter"
+    Info "No hay ngrok-token.txt (se usa el token que ya tenga ngrok configurado, si hay)."
   }
 }
-if ($NgrokToken) {
-  & $ngrok config add-authtoken ($NgrokToken.Trim())
-  if ($LASTEXITCODE -eq 0) { Ok "Token de ngrok configurado." } else { Aviso "ngrok rechazó el token (revisá que sea el correcto)." }
-}
 
-# =========================================================================
-Titulo "2/6  Docker"
-
-function Docker-Vivo {
-  cmd /c "docker info >nul 2>&1"
-  return ($LASTEXITCODE -eq 0)
-}
-
+# ---- 2) Docker ----
+Titulo "2/5  Docker"
+function Docker-Vivo { cmd /c "docker info >nul 2>&1"; return ($LASTEXITCODE -eq 0) }
 if (-not (Docker-Vivo)) {
-  Aviso "Docker no responde. Intento abrir Docker Desktop y esperar (hasta 4 min)..."
+  Aviso "Docker no responde todavía. Abro Docker Desktop y espero (hasta 4 min)..."
   $exe = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
   if (Test-Path $exe) { Start-Process $exe }
-  for ($i = 0; $i -lt 40; $i++) {
-    Start-Sleep 6
-    if (Docker-Vivo) { break }
-  }
+  for ($i = 0; $i -lt 40; $i++) { Start-Sleep 6; if (Docker-Vivo) { break } }
 }
 if (-not (Docker-Vivo)) {
-  Fatal "Docker no arrancó. Abrí Docker Desktop a mano, esperá la ballena verde ('Engine running') y volvé a correr el instalador."
+  Fatal "Docker no responde. Abrí Docker Desktop, esperá a que diga 'Engine running', y corré el instalador de NUEVO (con doble clic, SIN admin)."
 }
 Ok "Docker está corriendo."
 
-# =========================================================================
-Titulo "3/6  Configuración (.env.prod)"
-if (-not (Test-Path $EnvFile)) {
-  Fatal "Falta el archivo .env.prod en la carpeta del proyecto. Copialo del paquete y volvé a correr."
-}
+# ---- 3) .env.prod ----
+Titulo "3/5  Configuración (.env.prod)"
+if (-not (Test-Path $EnvFile)) { Fatal "Falta el archivo .env.prod en la carpeta del proyecto." }
 Ok ".env.prod encontrado."
 
-# =========================================================================
-Titulo "4/6  Construir y levantar el sistema (la 1ra vez tarda VARIOS MINUTOS)"
+# ---- 4) Construir y levantar ----
+Titulo "4/5  Construir y levantar el sistema (la 1ra vez tarda VARIOS MINUTOS)"
 docker compose -f $ComposeFile --env-file $EnvFile up -d --build
 if ($LASTEXITCODE -ne 0) { Fatal "Falló el build/arranque de los contenedores. Revisá el error de arriba." }
 Ok "Contenedores levantados."
 
-# =========================================================================
-Titulo "5/6  Restaurar datos"
+# ---- 5) Restaurar datos ----
+Titulo "5/5  Restaurar datos"
 
-# Cuenta filas de tablas con datos REALES (no la tabla de usuarios, que en una
-# instalación fresca ya trae el admin sembrado). El SQL va por STDIN a propósito:
-# pasar el -c "SELECT ... \"Caso\" ..." como ARGUMENTO se parte en PowerShell 5.1
-# y el conteo nunca corre. Por stdin no hay quoting que se rompa.
+# Cuenta filas de tablas con datos REALES (no Usuario, que en una instalación fresca
+# ya trae el admin sembrado). El SQL va por STDIN a propósito: pasarlo como
+# argumento (-c "...\"Caso\"...") se parte en PowerShell 5.1 y el conteo nunca corre.
 function Contar-Datos($contenedor) {
   $sql = 'SELECT COALESCE((SELECT count(*) FROM "Caso"),0) + COALESCE((SELECT count(*) FROM "WhatsappMessage"),0) + COALESCE((SELECT count(*) FROM "ClienteFidelizacion"),0);'
   $out = ($sql | docker exec -i $contenedor sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA 2>/dev/null')
@@ -160,8 +152,7 @@ function Contar-Datos($contenedor) {
 $dump = Get-ChildItem -Path $Proyecto -Filter "*.dump" -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
-if ($SinRestore)    { Info "Restauración omitida (-SinRestore)." }
-elseif (-not $dump) { Info "No hay ningún archivo .dump en la carpeta: la base queda como está (sin datos previos)." }
+if (-not $dump) { Info "No hay ningún .dump en la carpeta: la base queda como está (sin datos previos)." }
 else {
   # Esperar a que el BACKEND esté sano: recién ahí existe el esquema (lo crea
   # 'prisma migrate deploy' al arrancar) y el conteo da un número confiable.
@@ -175,11 +166,10 @@ else {
   if (-not $pg) {
     Aviso "No encontré el contenedor de Postgres; salteo el restore. Podés hacerlo a mano después."
   } else {
-    # ¿la base YA tiene datos? FAIL-CLOSED: solo se saltea la confirmación si el
-    # conteo da EXACTAMENTE "0". Vacío, error o un número >0 → se PREGUNTA, para
-    # nunca pisar datos productivos sin aviso (ej. re-corrida con otro .dump).
+    # FAIL-CLOSED: solo se saltea la confirmación si el conteo da EXACTAMENTE "0".
+    # Vacío, error o un número >0 → se PREGUNTA, para nunca pisar datos sin aviso.
     $conteo = Contar-Datos $pg
-    $hacer  = $true
+    $hacer = $true
     if ($conteo -ne "0") {
       $detalle = if ($conteo -match '^\d+$') { "La base YA tiene datos ($conteo registros)." }
                  else { "No pude verificar si la base tiene datos (por las dudas, confirmá)." }
@@ -187,50 +177,46 @@ else {
       $resp = Read-Host "  ¿Restaurar '$($dump.Name)' y PISAR lo que haya en la base? Escribí SI (en MAYÚSCULAS) para confirmar"
       if ($resp -cne "SI") { $hacer = $false; Info "Restauración CANCELADA: se dejan los datos actuales." }
     }
-
     if ($hacer) {
       Info "Restaurando desde: $($dump.Name) ..."
       docker cp $dump.FullName "${pg}:/tmp/mig.dump"
       if ($LASTEXITCODE -ne 0) { Fatal "No se pudo copiar el dump al contenedor (docker cp falló)." }
-      # pg_restore con --clean --if-exists devuelve !=0 hasta por warnings
-      # inofensivos, así que NO nos guiamos por el código: verificamos DESPUÉS
-      # que efectivamente entraron datos.
       docker exec $pg sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/mig.dump' 2>&1 | Out-Null
       docker exec $pg rm -f /tmp/mig.dump 2>&1 | Out-Null
-
-      # VERIFICACIÓN POSITIVA: si ahora hay datos, salió bien.
+      # Verificación POSITIVA: si ahora hay datos, salió bien.
       $post = Contar-Datos $pg
       if ($post -match '^\d+$' -and [int]$post -gt 0) {
-        Ok "Datos restaurados: $post registros en la base (los warnings 'already exists' son normales)."
-        # Marca el dump como usado: una re-corrida del instalador NO lo re-restaura.
+        Ok "Datos restaurados: $post registros (los warnings 'already exists' son normales)."
         try { Rename-Item $dump.FullName ($dump.Name + ".restaurado") -Force -ErrorAction SilentlyContinue } catch {}
-        # Reiniciar el backend: pone el esquema al día tras restaurar un dump viejo.
-        $beReinicio = (docker ps -a --filter "name=backend" --format "{{.Names}}" | Select-Object -First 1)
-        if ($beReinicio) { docker restart $beReinicio | Out-Null; Info "Backend reiniciado (deja el esquema al día)." }
+        $beR = (docker ps -a --filter "name=backend" --format "{{.Names}}" | Select-Object -First 1)
+        if ($beR) { docker restart $beR | Out-Null; Info "Backend reiniciado (deja el esquema al día)." }
       } else {
-        Aviso "El restore NO dejó datos en la base (conteo: '$post'). Revisá que el .dump sea válido o restauralo a mano."
+        Aviso "El restore NO dejó datos en la base (conteo: '$post'). Revisá el .dump o restauralo a mano."
       }
     }
   }
 }
 
-# =========================================================================
-Titulo "6/6  Dejar todo automático (vigilante + anti-suspensión + arranque solo)"
-$cfg = Join-Path $PSScriptRoot "configurar-pc.ps1"
-if (Test-Path $cfg) {
-  & powershell -NoProfile -ExecutionPolicy Bypass -File $cfg
-} else {
-  Aviso "No encontré configurar-pc.ps1; el vigilante no quedó registrado (el sistema igual está levantado)."
+# ---- Fase admin: se auto-eleva (pide permisos una vez) ----
+Titulo "Último paso: arranque automático (va a pedir permisos de administrador)"
+try {
+  Start-Process powershell -Verb RunAs -Wait -ArgumentList @(
+    "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-FaseAdmin", "-Proyecto", "`"$Proyecto`""
+  )
+  Ok "Arranque automático configurado (energía + vigilante en modo normal)."
+} catch {
+  Aviso "No se pudo elevar para la fase admin ($($_.Exception.Message))."
+  Info  "Corré esto a mano en una PowerShell COMO ADMIN: .\scripts\windows\configurar-pc.ps1"
 }
 
-# =========================================================================
 Write-Host "`n=========================================================" -ForegroundColor Cyan
-Write-Host "  INSTALACIÓN TERMINADA — 2 pasos manuales que quedan:" -ForegroundColor White
+Write-Host "  LISTO. 2 pasos manuales que quedan:" -ForegroundColor White
 Write-Host ""
-Write-Host "  1) Abrí http://localhost  ->  tiene que aparecer el login." -ForegroundColor White
-Write-Host ""
-Write-Host "  2) Actualizá el WEBHOOK en Meta (porque cambió el dominio de ngrok):" -ForegroundColor White
+Write-Host "  1) Abrí http://localhost  ->  login + tienen que estar los datos." -ForegroundColor White
+Write-Host "  2) Webhook en Meta (dominio nuevo):" -ForegroundColor White
 Write-Host "       URL:          https://dealer-occupant-brigade.ngrok-free.dev/api/webhooks/whatsapp" -ForegroundColor Gray
 Write-Host "       Verify token: calidad-ford-2026-xK9m" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  Para probar que anda solo: reiniciá, iniciá sesión y esperá 2-3 min." -ForegroundColor White
 Write-Host "=========================================================" -ForegroundColor Cyan
 Read-Host "`nEnter para cerrar"
