@@ -108,8 +108,17 @@ if ($FaseAdmin) {
   # 4) ngrok como TAREA PROPIA. Un ngrok lanzado como HIJO del vigilante lo mata
   #    Windows al terminar la tarea; su propia tarea (login + repite cada 5 min con
   #    IgnoreNew) lo mantiene vivo y lo recupera solo.
+  #    Se lanza OCULTO vía un VBS (wscript, ventana 0): la usuaria no ve ninguna
+  #    terminal y no puede cerrarla sin querer. El VBS espera a ngrok, así la tarea
+  #    sigue "corriendo" mientras ngrok vive.
   if ($NgrokExe -and (Test-Path $NgrokExe)) {
-    $accionN = New-ScheduledTaskAction -Execute $NgrokExe -Argument "http --domain=dealer-occupant-brigade.ngrok-free.dev 80"
+    $vbsPath = Join-Path $PSScriptRoot "ngrok-oculto.vbs"
+    $vbs = @"
+Set sh = CreateObject("WScript.Shell")
+sh.Run """$NgrokExe"" http --domain=dealer-occupant-brigade.ngrok-free.dev 80", 0, True
+"@
+    Set-Content -Path $vbsPath -Value $vbs -Encoding ASCII
+    $accionN = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vbsPath + '"')
     $trigN = New-ScheduledTaskTrigger -AtLogOn
     $trigN.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
       -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
