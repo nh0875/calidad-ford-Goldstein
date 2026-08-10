@@ -10,16 +10,14 @@
      Docker en el arranque y registra el VIGILANTE en modo normal, para que cada
      vez que la usuaria inicie sesión el sistema levante y se repare SOLO.
 
-  Se corre con doble clic en INSTALAR-SISTEMA.bat (que NO eleva; la elevación la
-  pide este script solo para la fase admin). La cuenta de Windows tiene que ser
-  administradora. Es IDEMPOTENTE: se puede volver a correr sin romper nada.
+  Se corre con doble clic en INSTALAR-SISTEMA.bat (que NO eleva). La cuenta de
+  Windows tiene que ser administradora. Es IDEMPOTENTE.
 
-  ErrorActionPreference = Continue A PROPÓSITO: los comandos nativos (docker,
-  ngrok) escriben en stderr y en PowerShell 5.1 con "Stop" eso corta el script;
-  se chequea el resultado con $LASTEXITCODE a mano.
+  ErrorActionPreference = Continue A PROPÓSITO (los comandos nativos escriben en
+  stderr y con "Stop" cortan el script); se chequea el resultado con $LASTEXITCODE.
 #>
 [CmdletBinding()]
-param([switch]$FaseAdmin, [string]$Proyecto)
+param([switch]$FaseAdmin, [string]$Proyecto, [string]$Usuario)
 
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
@@ -34,24 +32,39 @@ $ComposeFile = Join-Path $Proyecto "docker-compose.prod.yml"
 $EnvFile     = Join-Path $Proyecto ".env.prod"
 $Vigilante   = Join-Path $PSScriptRoot "vigilante.ps1"
 
+# Contenedor de un servicio, resuelto por el PROPIO compose (no por filtro de
+# nombre, que es substring y podría pegarle a otro stack).
+function Contenedor($svc) {
+  return (docker compose -f $ComposeFile --env-file $EnvFile ps -q $svc 2>$null | Select-Object -First 1)
+}
+
 # =====================================================================
 #  FASE ADMIN (elevada): energía + Docker al arranque + tarea del vigilante
 # =====================================================================
 if ($FaseAdmin) {
   Titulo "Arranque automático (modo administrador)"
+  $errores = 0
+  # Usuario destino de la tarea/autostart: el ORIGINAL (por si se elevó con otra
+  # cuenta admin). Si no vino, el actual.
+  $usuarioDestino = if ($Usuario) { $Usuario } else { "$env:USERDOMAIN\$env:USERNAME" }
+  $mismoUsuario = ($usuarioDestino -ieq "$env:USERDOMAIN\$env:USERNAME")
 
-  # 1) La PC nunca se suspende (si duerme, se congela Docker/ngrok y no llegan WhatsApp).
+  # 1) La PC nunca se suspende.
   powercfg /change standby-timeout-ac 0   | Out-Null
   powercfg /change standby-timeout-dc 0   | Out-Null
   powercfg /change hibernate-timeout-ac 0 | Out-Null
   powercfg /change hibernate-timeout-dc 0 | Out-Null
   Ok "La PC ya no se suspende."
 
-  # 2) Docker Desktop arranca al iniciar sesión.
+  # 2) Docker Desktop arranca al iniciar sesión (en el HKCU del usuario destino).
   $dockerExe = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
   if (Test-Path $dockerExe) {
-    Set-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "Docker Desktop" ('"' + $dockerExe + '" -Autostart') -ErrorAction SilentlyContinue
-    Ok "Docker Desktop arranca al iniciar sesión."
+    if ($mismoUsuario) {
+      Set-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "Docker Desktop" ('"' + $dockerExe + '" -Autostart') -ErrorAction SilentlyContinue
+      Ok "Docker Desktop arranca al iniciar sesión."
+    } else {
+      Aviso "Elevaste con OTRA cuenta admin: el autostart de Docker hay que ponerlo en la sesión de $usuarioDestino a mano (Docker Desktop -> Settings -> General -> Start when you sign in)."
+    }
   }
 
   # 3) VIGILANTE en modo NORMAL (RunLevel Limited): al iniciar sesión + cada 5 min.
@@ -67,15 +80,19 @@ if ($FaseAdmin) {
       -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
     try {
       Register-ScheduledTask -TaskName "Sistema de Calidad - Vigilante" -Action $accion -Trigger $trig `
-        -Settings $opts -RunLevel Limited -User "$env:USERDOMAIN\$env:USERNAME" -Force -ErrorAction Stop | Out-Null
+        -Settings $opts -RunLevel Limited -User $usuarioDestino -Force -ErrorAction Stop | Out-Null
       Ok "Vigilante registrado (arranca y repara solo, en modo normal)."
-      Start-ScheduledTask -TaskName "Sistema de Calidad - Vigilante" -ErrorAction SilentlyContinue
+      if ($mismoUsuario) { Start-ScheduledTask -TaskName "Sistema de Calidad - Vigilante" -ErrorAction SilentlyContinue }
     } catch {
       Aviso "No pude registrar el vigilante: $($_.Exception.Message)"
+      $errores++
     }
   } else {
     Aviso "No encontré vigilante.ps1: no se registró el arranque automático."
+    $errores++
   }
+
+  if ($errores -gt 0) { Read-Host "`nHubo un problema en el arranque automático. Enter para cerrar"; exit 1 }
   Start-Sleep 2
   exit 0
 }
@@ -85,11 +102,7 @@ if ($FaseAdmin) {
 # =====================================================================
 Write-Host "Instalador del Sistema de Calidad" -ForegroundColor White
 Info "Proyecto: $Proyecto"
-
 $esAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if ($esAdmin) {
-  Aviso "Lo estás corriendo COMO ADMIN. Si Docker no responde, cerrá esta ventana y abrí el instalador con DOBLE CLIC (sin admin)."
-}
 
 # ---- 1) Token de ngrok ----
 Titulo "1/5  Token de ngrok"
@@ -116,13 +129,18 @@ if (-not $ngrok) {
 Titulo "2/5  Docker"
 function Docker-Vivo { cmd /c "docker info >nul 2>&1"; return ($LASTEXITCODE -eq 0) }
 if (-not (Docker-Vivo)) {
+  # Si estamos ELEVADOS, Docker nunca va a responder (el pipe es de la sesión
+  # normal): cortamos de una con el mensaje correcto en vez de esperar 4 min.
+  if ($esAdmin) {
+    Fatal "Estás como ADMINISTRADOR y por eso Docker no responde. Cerrá esta ventana y abrí el instalador con DOBLE CLIC (sin 'ejecutar como administrador')."
+  }
   Aviso "Docker no responde todavía. Abro Docker Desktop y espero (hasta 4 min)..."
   $exe = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
   if (Test-Path $exe) { Start-Process $exe }
   for ($i = 0; $i -lt 40; $i++) { Start-Sleep 6; if (Docker-Vivo) { break } }
 }
 if (-not (Docker-Vivo)) {
-  Fatal "Docker no responde. Abrí Docker Desktop, esperá a que diga 'Engine running', y corré el instalador de NUEVO (con doble clic, SIN admin)."
+  Fatal "Docker no responde. Abrí Docker Desktop, esperá a que diga 'Engine running', y corré el instalador de NUEVO (doble clic, SIN admin)."
 }
 Ok "Docker está corriendo."
 
@@ -140,8 +158,8 @@ Ok "Contenedores levantados."
 # ---- 5) Restaurar datos ----
 Titulo "5/5  Restaurar datos"
 
-# Cuenta filas de tablas con datos REALES (no Usuario, que en una instalación fresca
-# ya trae el admin sembrado). El SQL va por STDIN a propósito: pasarlo como
+# Cuenta filas de tablas con datos REALES (no Usuario, que en una instalación
+# fresca ya trae el admin sembrado). El SQL va por STDIN a propósito: pasarlo como
 # argumento (-c "...\"Caso\"...") se parte en PowerShell 5.1 y el conteo nunca corre.
 function Contar-Datos($contenedor) {
   $sql = 'SELECT COALESCE((SELECT count(*) FROM "Caso"),0) + COALESCE((SELECT count(*) FROM "WhatsappMessage"),0) + COALESCE((SELECT count(*) FROM "ClienteFidelizacion"),0);'
@@ -156,22 +174,22 @@ if (-not $dump) { Info "No hay ningún .dump en la carpeta: la base queda como e
 else {
   # Esperar a que el BACKEND esté sano: recién ahí existe el esquema (lo crea
   # 'prisma migrate deploy' al arrancar) y el conteo da un número confiable.
-  $be = $null
   for ($i = 0; $i -lt 36; $i++) {
-    $be = (docker ps --filter "name=backend" --format "{{.Names}}" | Select-Object -First 1)
+    $be = Contenedor "backend"
     if ($be -and ((docker inspect -f "{{.State.Health.Status}}" $be 2>$null) -eq "healthy")) { break }
     Start-Sleep 5
   }
-  $pg = (docker ps --filter "name=postgres" --format "{{.Names}}" | Select-Object -First 1)
+  $pg = Contenedor "postgres"
   if (-not $pg) {
     Aviso "No encontré el contenedor de Postgres; salteo el restore. Podés hacerlo a mano después."
   } else {
-    # FAIL-CLOSED: solo se saltea la confirmación si el conteo da EXACTAMENTE "0".
-    # Vacío, error o un número >0 → se PREGUNTA, para nunca pisar datos sin aviso.
-    $conteo = Contar-Datos $pg
+    # ¿la base YA tiene datos? (línea base, para no pisar sin aviso Y para verificar
+    # después que el restore realmente cambió algo). FAIL-CLOSED: solo se saltea la
+    # confirmación si el conteo da EXACTAMENTE "0".
+    $conteoBase = Contar-Datos $pg
     $hacer = $true
-    if ($conteo -ne "0") {
-      $detalle = if ($conteo -match '^\d+$') { "La base YA tiene datos ($conteo registros)." }
+    if ($conteoBase -ne "0") {
+      $detalle = if ($conteoBase -match '^\d+$') { "La base YA tiene datos ($conteoBase registros)." }
                  else { "No pude verificar si la base tiene datos (por las dudas, confirmá)." }
       Aviso $detalle
       $resp = Read-Host "  ¿Restaurar '$($dump.Name)' y PISAR lo que haya en la base? Escribí SI (en MAYÚSCULAS) para confirmar"
@@ -183,34 +201,49 @@ else {
       if ($LASTEXITCODE -ne 0) { Fatal "No se pudo copiar el dump al contenedor (docker cp falló)." }
       docker exec $pg sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/mig.dump' 2>&1 | Out-Null
       docker exec $pg rm -f /tmp/mig.dump 2>&1 | Out-Null
-      # Verificación POSITIVA: si ahora hay datos, salió bien.
+
+      # Verificación POSITIVA con LÍNEA BASE: éxito = hay datos Y cambió respecto de
+      # antes (en base fresca, base=0 y basta con que ahora haya datos). Si un
+      # pg_restore falla sobre una base ya poblada, el conteo NO cambia -> no se
+      # declara éxito ni se archiva el dump.
       $post = Contar-Datos $pg
-      if ($post -match '^\d+$' -and [int]$post -gt 0) {
+      $exito = ($post -match '^\d+$') -and ([int]$post -gt 0) -and (($conteoBase -eq "0") -or ($post -ne $conteoBase))
+      if ($exito) {
         Ok "Datos restaurados: $post registros (los warnings 'already exists' son normales)."
         try { Rename-Item $dump.FullName ($dump.Name + ".restaurado") -Force -ErrorAction SilentlyContinue } catch {}
-        $beR = (docker ps -a --filter "name=backend" --format "{{.Names}}" | Select-Object -First 1)
+        $beR = Contenedor "backend"
         if ($beR) { docker restart $beR | Out-Null; Info "Backend reiniciado (deja el esquema al día)." }
       } else {
-        Aviso "El restore NO dejó datos en la base (conteo: '$post'). Revisá el .dump o restauralo a mano."
+        Aviso "No pude confirmar que el restore entró (antes: '$conteoBase', ahora: '$post'). Revisá el sistema o restaurá a mano; NO se archivó el dump."
       }
     }
   }
 }
 
-# ---- Fase admin: se auto-eleva (pide permisos una vez) ----
+# ---- Fase admin: se auto-eleva (pide permisos UNA vez) ----
 Titulo "Último paso: arranque automático (va a pedir permisos de administrador)"
+$adminOk = $false
 try {
-  Start-Process powershell -Verb RunAs -Wait -ArgumentList @(
-    "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-FaseAdmin", "-Proyecto", "`"$Proyecto`""
+  $proc = Start-Process powershell -Verb RunAs -PassThru -Wait -ErrorAction Stop -ArgumentList @(
+    "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"",
+    "-FaseAdmin", "-Proyecto", "`"$Proyecto`"", "-Usuario", "`"$env:USERDOMAIN\$env:USERNAME`""
   )
-  Ok "Arranque automático configurado (energía + vigilante en modo normal)."
+  $adminOk = ($proc -and $proc.ExitCode -eq 0)
 } catch {
-  Aviso "No se pudo elevar para la fase admin ($($_.Exception.Message))."
-  Info  "Corré esto a mano en una PowerShell COMO ADMIN: .\scripts\windows\configurar-pc.ps1"
+  $adminOk = $false   # UAC cancelado (1223) u otro error de elevación
+}
+
+if ($adminOk) {
+  Ok "Arranque automático configurado (energía + vigilante en modo normal)."
+} else {
+  Aviso "NO quedó configurado el arranque automático (¿cancelaste el pedido de permisos de administrador?)."
+  Info  "El sistema YA está andando, pero para que arranque SOLO tras un reinicio, volvé a correr el"
+  Info  "instalador y aceptá el permiso, o corré esto en una PowerShell COMO ADMINISTRADOR:"
+  Info  "   powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -FaseAdmin -Proyecto `"$Proyecto`""
 }
 
 Write-Host "`n=========================================================" -ForegroundColor Cyan
-Write-Host "  LISTO. 2 pasos manuales que quedan:" -ForegroundColor White
+Write-Host "  Pasos manuales que quedan:" -ForegroundColor White
 Write-Host ""
 Write-Host "  1) Abrí http://localhost  ->  login + tienen que estar los datos." -ForegroundColor White
 Write-Host "  2) Webhook en Meta (dominio nuevo):" -ForegroundColor White
