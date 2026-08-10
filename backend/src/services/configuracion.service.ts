@@ -26,8 +26,9 @@ export const DEFAULTS_CONFIG: Record<string, string> = {
     "¡Gracias por tu respuesta, {nombre}! Te recordamos que en los próximos días te va a llegar la encuesta oficial de Ford Argentina a tu casilla {email}. Tu opinión nos ayuda muchísimo.",
   [CLAVES_CONFIG.AGRADECIMIENTO_ROJO]:
     "Gracias por contarnos tu experiencia, {nombre}. Lamentamos que no haya sido la esperada. Un responsable del área se va a comunicar con vos a la brevedad para darle una solución.",
-  // "true" = a los ROJOS se les manda la variante empática (sin recordatorio de
-  // encuesta). "false" = a los ROJOS no se les manda ningún mensaje automático.
+  // El texto ROJO (empático, sin recordatorio de encuesta) se manda a los AMARILLOS
+  // (neutros) SIEMPRE y a los ROJOS (detractores) solo si este toggle está en "true".
+  // "false" = a los ROJOS no se les manda ningún mensaje automático (a los amarillos sí).
   [CLAVES_CONFIG.AGRADECIMIENTO_ENVIAR_A_ROJOS]: "true",
   // Fidelización — respuesta al botón "Agendar mi Turno con un Asesor".
   [CLAVES_CONFIG.FIDELIZACION_RESPUESTA_BOTON_ASESOR]:

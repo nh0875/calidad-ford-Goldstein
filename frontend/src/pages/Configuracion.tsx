@@ -111,10 +111,10 @@ export default function Configuracion() {
           cliente.
         </p>
 
-        {/* VERDE / AMARILLO */}
+        {/* VERDE (promotor) → recordatorio de encuesta */}
         <div className="mb-5">
           <label className="mb-1 block text-sm font-medium text-ink">
-            Cliente conforme o con objeción menor (semáforo verde / amarillo)
+            Cliente conforme (semáforo verde) — recordatorio de la encuesta de Ford
           </label>
           <Textarea
             value={cfg[K.VERDE_AMARILLO]}
@@ -125,16 +125,16 @@ export default function Configuracion() {
           <Previews texto={cfg[K.VERDE_AMARILLO]} />
         </div>
 
-        {/* ROJO */}
+        {/* AMARILLO + ROJO → mensaje empático (sin encuesta) */}
         <div className="mb-2 border-t border-gray-100 pt-4">
           <label className="mb-1 block text-sm font-medium text-ink">
-            Cliente disconforme (semáforo rojo) — variante empática, sin recordatorio de encuesta
+            Cliente neutro o disconforme (semáforo amarillo o rojo) — mensaje empático, sin recordatorio de encuesta
           </label>
           <Textarea
             value={cfg[K.ROJO]}
             onChange={(e) => set(K.ROJO, e.target.value)}
             rows={3}
-            disabled={!esAdmin || !enviarARojos}
+            disabled={!esAdmin}
           />
           <Previews texto={cfg[K.ROJO]} />
           <label className="mt-3 flex items-center gap-2 text-sm text-ink">
@@ -145,9 +145,9 @@ export default function Configuracion() {
               disabled={!esAdmin}
               onChange={(e) => set(K.ENVIAR_A_ROJOS, e.target.checked ? "true" : "false")}
             />
-            Enviar el mensaje empático a los clientes disconformes
+            Enviar este mensaje también a los detractores (semáforo rojo)
             <span className="text-xs text-ink-muted">
-              (si lo desactivás, a los rojos no se les manda ningún mensaje automático)
+              (a los amarillos se les manda siempre; si lo desactivás, a los rojos no se les manda nada automático)
             </span>
           </label>
         </div>

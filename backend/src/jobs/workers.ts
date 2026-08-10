@@ -478,7 +478,8 @@ async function procesarAgradecimiento(job: Job<DatosAgradecimiento>) {
     return { omitido: "teléfono suprimido" };
   }
 
-  // Semáforo del último análisis (null = no textual / sin clasificar → variante VERDE/AMARILLO)
+  // Semáforo del último análisis. AMARILLO y ROJO llevan el mensaje empático (sin
+  // encuesta); VERDE y "sin clasificar" (null) llevan el recordatorio de la encuesta.
   const analisis = await prisma.sentimentAnalysis.findFirst({
     where: { casoId },
     orderBy: { analyzedAt: "desc" },
@@ -489,12 +490,20 @@ async function procesarAgradecimiento(job: Job<DatosAgradecimiento>) {
 
   let plantilla: string;
   if (semaforo === Semaforo.ROJO) {
-    // A los rojos: variante empática SIN recordatorio de encuesta, o ningún mensaje (toggle)
+    // A los ROJOS (detractores): variante empática SIN recordatorio de encuesta, o
+    // ningún mensaje si el toggle "enviar a rojos" está en false (para manejarlos a mano).
     if (config[CLAVES_CONFIG.AGRADECIMIENTO_ENVIAR_A_ROJOS] !== "true") {
       return { omitido: "rojo, config indica no enviar mensaje automático" };
     }
     plantilla = config[CLAVES_CONFIG.AGRADECIMIENTO_ROJO];
+  } else if (semaforo === Semaforo.AMARILLO) {
+    // A los AMARILLOS (neutros): el MISMO mensaje empático que a los rojos, SIN el
+    // recordatorio de la encuesta de Ford. Se manda SIEMPRE (el toggle de arriba
+    // gobierna solo a los rojos): un cliente neutro no debe recibir el empujón a la
+    // encuesta, porque puntuaría flojo.
+    plantilla = config[CLAVES_CONFIG.AGRADECIMIENTO_ROJO];
   } else {
+    // VERDE (promotor) o sin clasificar: recordatorio de la encuesta oficial de Ford.
     plantilla = config[CLAVES_CONFIG.AGRADECIMIENTO_VERDE_AMARILLO];
   }
 
