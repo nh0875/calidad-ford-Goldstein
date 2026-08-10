@@ -21,11 +21,22 @@
 $ProjectDir  = if ($PSScriptRoot) { Split-Path (Split-Path $PSScriptRoot -Parent) -Parent } else { "C:\Users\hilli\Downloads\Goldstein\Vanina" }
 $EnvFile     = ".env.prod"
 $ComposeFile = "docker-compose.prod.yml"
-$DockerExe   = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+# Docker Desktop: las versiones nuevas se instalan POR USUARIO en
+# %LOCALAPPDATA%\Programs\DockerDesktop; las viejas en Program Files. Se prueba
+# cada candidata y se usa la que exista (asi no importa donde este instalado).
+$DockerExe = @(
+    "$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe",
+    "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
+    "${env:ProgramFiles(x86)}\Docker\Docker\Docker Desktop.exe"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $DockerExe) { $DockerExe = "$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe" }
 # Ruta de ngrok. Si no existe, el script lo busca en el PATH (instalacion por
 # winget/choco). Dejar vacio para usar solo el PATH.
 $NgrokExe    = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe"
 $NgrokDomain = "dealer-occupant-brigade.ngrok-free.dev"
+# Tarea dedicada que mantiene ngrok vivo. Un ngrok lanzado como HIJO de esta tarea
+# lo mata Windows al terminar la tarea; su propia tarea lo mantiene de primera clase.
+$NgrokTask   = "Sistema de Calidad - ngrok"
 $Puerto      = 80
 $LogFile     = Join-Path $ProjectDir "scripts\windows\vigilante.log"
 $LogMaxMB    = 2        # al superarlo se rota a .1 (se conserva una generacion)
@@ -261,6 +272,10 @@ try {
     }
 
     if (-not $proc -or -not $tunel) {
+        # Se prefiere la TAREA dedicada de ngrok: un proceso lanzado como hijo de
+        # esta tarea programada lo mata Windows al terminar la tarea. La tarea propia
+        # lo mantiene como proceso de primera clase (y se auto-recupera sola).
+        $tareaNgrok = Get-ScheduledTask -TaskName $NgrokTask -ErrorAction SilentlyContinue
         if ($proc -and -not $tunel) {
             Log-Accion "ngrok corria pero sin el tunel de ${NgrokDomain}: reiniciandolo."
             Stop-Process -Name ngrok -Force -ErrorAction SilentlyContinue
@@ -268,20 +283,24 @@ try {
         } elseif (-not $proc) {
             Log-Accion "ngrok no estaba corriendo: relanzandolo."
         }
-        $exe = Resolver-Ngrok
-        if ($exe) {
-            Start-Process -FilePath $exe `
-                -ArgumentList @("http", "--domain=$NgrokDomain", "$Puerto") `
-                -WindowStyle Hidden -ErrorAction SilentlyContinue
-            # Darle tiempo a establecer el túnel: tras un reinicio la red y ngrok
-            # tardan más, así que se reintenta hasta ~40s antes de dar por fallido.
-            $ok = $false
-            for ($k = 0; $k -lt 8 -and -not $ok; $k++) { Start-Sleep -Seconds 5; $ok = Tunel-Ok }
-            if ($ok) { Log-Accion "Tunel de ngrok activo en https://$NgrokDomain" }
-            else { Log-Error "ngrok se lanzo pero el tunel no responde tras 40s. Revisar el token/dominio (¿otra PC usando el mismo token?)." }
+        if ($tareaNgrok) {
+            Start-ScheduledTask -TaskName $NgrokTask -ErrorAction SilentlyContinue
         } else {
-            Log-Error "No encuentro ngrok (ni en la ruta configurada ni en el PATH)."
+            $exe = Resolver-Ngrok
+            if ($exe) {
+                Start-Process -FilePath $exe `
+                    -ArgumentList @("http", "--domain=$NgrokDomain", "$Puerto") `
+                    -WindowStyle Hidden -ErrorAction SilentlyContinue
+            } else {
+                Log-Error "No encuentro ngrok (ni en la ruta configurada ni en el PATH)."
+            }
         }
+        # Darle tiempo a establecer el túnel: tras un reinicio la red y ngrok tardan
+        # más, así que se reintenta hasta ~40s antes de dar por fallido.
+        $ok = $false
+        for ($k = 0; $k -lt 8 -and -not $ok; $k++) { Start-Sleep -Seconds 5; $ok = Tunel-Ok }
+        if ($ok) { Log-Accion "Tunel de ngrok activo en https://$NgrokDomain" }
+        else { Log-Error "ngrok se lanzo pero el tunel no responde tras 40s. Revisar el token/dominio (¿otra PC usando el mismo token?)." }
     }
 
     # ---------- 5) Latido: una linea por dia si todo esta OK ----------

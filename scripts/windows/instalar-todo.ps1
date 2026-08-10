@@ -17,7 +17,7 @@
   stderr y con "Stop" cortan el script); se chequea el resultado con $LASTEXITCODE.
 #>
 [CmdletBinding()]
-param([switch]$FaseAdmin, [string]$Proyecto, [string]$Usuario)
+param([switch]$FaseAdmin, [string]$Proyecto, [string]$Usuario, [string]$NgrokExe)
 
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
@@ -36,6 +36,19 @@ $Vigilante   = Join-Path $PSScriptRoot "vigilante.ps1"
 # nombre, que es substring y podría pegarle a otro stack).
 function Contenedor($svc) {
   return (docker compose -f $ComposeFile --env-file $EnvFile ps -q $svc 2>$null | Select-Object -First 1)
+}
+
+# Docker Desktop.exe: las versiones nuevas se instalan POR USUARIO en
+# %LOCALAPPDATA%\Programs\DockerDesktop; las viejas en Program Files. Se usa la
+# primera candidata que exista (asi no importa donde este instalado).
+function Resolver-DockerExe {
+  $c = @(
+    "$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe",
+    "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
+    "${env:ProgramFiles(x86)}\Docker\Docker\Docker Desktop.exe"
+  ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if ($c) { return $c }
+  return "$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe"
 }
 
 # =====================================================================
@@ -57,7 +70,7 @@ if ($FaseAdmin) {
   Ok "La PC ya no se suspende."
 
   # 2) Docker Desktop arranca al iniciar sesión (en el HKCU del usuario destino).
-  $dockerExe = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+  $dockerExe = Resolver-DockerExe
   if (Test-Path $dockerExe) {
     if ($mismoUsuario) {
       Set-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "Docker Desktop" ('"' + $dockerExe + '" -Autostart') -ErrorAction SilentlyContinue
@@ -90,6 +103,30 @@ if ($FaseAdmin) {
   } else {
     Aviso "No encontré vigilante.ps1: no se registró el arranque automático."
     $errores++
+  }
+
+  # 4) ngrok como TAREA PROPIA. Un ngrok lanzado como HIJO del vigilante lo mata
+  #    Windows al terminar la tarea; su propia tarea (login + repite cada 5 min con
+  #    IgnoreNew) lo mantiene vivo y lo recupera solo.
+  if ($NgrokExe -and (Test-Path $NgrokExe)) {
+    $accionN = New-ScheduledTaskAction -Execute $NgrokExe -Argument "http --domain=dealer-occupant-brigade.ngrok-free.dev 80"
+    $trigN = New-ScheduledTaskTrigger -AtLogOn
+    $trigN.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
+      -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
+    $optsN = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+      -StartWhenAvailable -MultipleInstances IgnoreNew
+    $optsN.ExecutionTimeLimit = "PT0S"   # sin limite de tiempo: ngrok corre indefinidamente
+    try {
+      Register-ScheduledTask -TaskName "Sistema de Calidad - ngrok" -Action $accionN -Trigger $trigN `
+        -Settings $optsN -RunLevel Limited -User $usuarioDestino -Force -ErrorAction Stop | Out-Null
+      Ok "ngrok registrado como tarea propia (se mantiene vivo solo)."
+      if ($mismoUsuario) { Start-ScheduledTask -TaskName "Sistema de Calidad - ngrok" -ErrorAction SilentlyContinue }
+    } catch {
+      Aviso "No pude registrar la tarea de ngrok: $($_.Exception.Message)"
+      $errores++
+    }
+  } else {
+    Aviso "No recibí la ruta de ngrok: no se registró su tarea (el vigilante lo intentará igual)."
   }
 
   if ($errores -gt 0) { Read-Host "`nHubo un problema en el arranque automático. Enter para cerrar"; exit 1 }
@@ -135,7 +172,7 @@ if (-not (Docker-Vivo)) {
     Fatal "Estás como ADMINISTRADOR y por eso Docker no responde. Cerrá esta ventana y abrí el instalador con DOBLE CLIC (sin 'ejecutar como administrador')."
   }
   Aviso "Docker no responde todavía. Abro Docker Desktop y espero (hasta 4 min)..."
-  $exe = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+  $exe = Resolver-DockerExe
   if (Test-Path $exe) { Start-Process $exe }
   for ($i = 0; $i -lt 40; $i++) { Start-Sleep 6; if (Docker-Vivo) { break } }
 }
@@ -226,7 +263,8 @@ $adminOk = $false
 try {
   $proc = Start-Process powershell -Verb RunAs -PassThru -Wait -ErrorAction Stop -ArgumentList @(
     "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"",
-    "-FaseAdmin", "-Proyecto", "`"$Proyecto`"", "-Usuario", "`"$env:USERDOMAIN\$env:USERNAME`""
+    "-FaseAdmin", "-Proyecto", "`"$Proyecto`"", "-Usuario", "`"$env:USERDOMAIN\$env:USERNAME`"",
+    "-NgrokExe", "`"$ngrok`""
   )
   $adminOk = ($proc -and $proc.ExitCode -eq 0)
 } catch {
