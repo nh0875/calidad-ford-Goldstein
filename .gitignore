@@ -13,6 +13,7 @@ scripts/windows/ngrok-token.txt
 # Archivos generados por el instalador en cada PC (ruta de ngrok de esa maquina):
 # se crean al instalar, no se versionan.
 scripts/windows/ngrok-oculto.vbs
+scripts/windows/vigilante-oculto.vbs
 ngrok-path.txt
 
 # ===== Datos de clientes (NUNCA a git) =====

@@ -84,8 +84,17 @@ if ($FaseAdmin) {
   #    Limited (no Highest) para que, corriendo en la sesión de la usuaria, SÍ
   #    llegue a Docker y pueda levantar/reparar los contenedores y ngrok.
   if (Test-Path $Vigilante) {
-    $accion = New-ScheduledTaskAction -Execute "powershell.exe" `
-      -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $Vigilante + '"')
+    # Se lanza OCULTO vía VBS (wscript, ventana 0): asi la tarea NO hace parpadear
+    # una ventana de consola cada 5 min. Con "powershell -WindowStyle Hidden" directo,
+    # Windows alcanza a mostrar la consola un instante antes de esconderla. El VBS la
+    # crea ya invisible. True = espera al powershell (la tarea sigue "corriendo").
+    $vbsVig = Join-Path $PSScriptRoot "vigilante-oculto.vbs"
+    $vbsVigTxt = @"
+Set sh = CreateObject("WScript.Shell")
+sh.Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""$Vigilante""", 0, True
+"@
+    Set-Content -Path $vbsVig -Value $vbsVigTxt -Encoding ASCII
+    $accion = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vbsVig + '"')
     $trig = New-ScheduledTaskTrigger -AtLogOn
     $trig.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
       -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
