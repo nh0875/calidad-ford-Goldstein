@@ -190,16 +190,20 @@ if (-not $SoloVerificar) {
       $opts = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 
-      # Corre como la usuaria actual (Docker necesita su sesión), con máximos privilegios.
+      # Corre como la usuaria actual y en SU sesión. RunLevel LIMITED (nivel NORMAL)
+      # A PROPÓSITO: Docker Desktop expone el pipe de su motor a la sesión NORMAL
+      # del usuario; un proceso ELEVADO (Highest) NO llega a Docker (pasa en varias
+      # PCs). Por eso el vigilante corre en modo normal, igual que cuando la usuaria
+      # abre una consola común: así sí puede levantar/reparar Docker y los contenedores.
       $usuarioActual = "$env:USERDOMAIN\$env:USERNAME"
       Register-ScheduledTask -TaskName $NombreTarea -Action $accion -Trigger $tLogon `
-        -Settings $opts -RunLevel Highest -User $usuarioActual -Force -ErrorAction Stop | Out-Null
-      Ok "Vigilante registrado (al iniciar sesión + cada 5 minutos, con privilegios máximos)."
+        -Settings $opts -RunLevel Limited -User $usuarioActual -Force -ErrorAction Stop | Out-Null
+      Ok "Vigilante registrado (al iniciar sesión + cada 5 minutos, en modo NORMAL para llegar a Docker)."
     } catch {
       Warn ("No pude registrar con Register-ScheduledTask (" + $_.Exception.Message + "). Reintento con schtasks...")
       $tr = "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"" + $Vigilante + "`""
-      schtasks /Create /TN $NombreTarea /TR $tr /SC MINUTE /MO 5 /RL HIGHEST /F | Out-Null
-      if ($LASTEXITCODE -eq 0) { Ok "Vigilante registrado con schtasks (cada 5 minutos)." }
+      schtasks /Create /TN $NombreTarea /TR $tr /SC MINUTE /MO 5 /RL LIMITED /F | Out-Null
+      if ($LASTEXITCODE -eq 0) { Ok "Vigilante registrado con schtasks (cada 5 minutos, modo normal)." }
       else { Bad "No se pudo registrar el vigilante."; $global:Problemas += "No se pudo registrar la tarea del vigilante." }
     }
   }
@@ -239,9 +243,11 @@ if (-not $SoloVerificar -and (Test-Path $Vigilante)) {
   Titulo "7. Arranque inicial (levantando Docker, contenedores y ngrok)"
   Info "Esto puede tardar 1-2 minutos la primera vez..."
   try {
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Vigilante | Out-Null
-    Ok "El vigilante corrió una vez. Revisá el detalle en scripts\windows\vigilante.log"
-  } catch { Warn ("La corrida inicial devolvió un error: " + $_.Exception.Message) }
+    # Se dispara la TAREA registrada (que corre en modo NORMAL), NO un powershell
+    # inline: el proceso actual es admin y no llegaría a Docker; la tarea sí.
+    Start-ScheduledTask -TaskName $NombreTarea -ErrorAction Stop
+    Ok "El vigilante se disparó una vez (modo normal). Detalle en scripts\windows\vigilante.log"
+  } catch { Warn ("No pude disparar el vigilante: " + $_.Exception.Message + " (arranca solo igual al iniciar sesión).") }
 }
 
 # ---------- 8) Verificación en vivo ----------
