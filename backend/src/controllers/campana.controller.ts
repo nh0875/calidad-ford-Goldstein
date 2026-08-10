@@ -17,6 +17,14 @@ const filtrosSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}$/, "El período tiene que tener el formato AAAA-MM, por ejemplo 2026-01.")
     .optional(),
+  fechaDesde: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha 'desde' tiene que tener el formato AAAA-MM-DD.")
+    .optional(),
+  fechaHasta: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha 'hasta' tiene que tener el formato AAAA-MM-DD.")
+    .optional(),
   asesor: z.string().trim().min(1).optional(),
   // Debe estar acá para que "enviar a todos los pendientes del filtro actual"
   // respete el filtro de Origen de la pantalla /casos (si no, se ignoraría y se
@@ -34,6 +42,8 @@ function filtrosDesdeQuery(query: Request["query"]) {
     uploadId: query.uploadId || undefined,
     sucursal: query.sucursal || undefined,
     periodo: query.periodo || undefined,
+    fechaDesde: query.fechaDesde || undefined,
+    fechaHasta: query.fechaHasta || undefined,
     asesor: query.asesor || undefined,
     origenAgendamiento: query.origenAgendamiento || undefined,
     casoIds:
@@ -118,6 +128,8 @@ export async function enviarCampana(req: Request, res: Response) {
           uploadId: parsed.data.uploadId ?? null,
           sucursal: parsed.data.sucursal ?? null,
           periodo: parsed.data.periodo ?? null,
+          fechaDesde: parsed.data.fechaDesde ?? null,
+          fechaHasta: parsed.data.fechaHasta ?? null,
           asesor: parsed.data.asesor ?? null,
           origenAgendamiento: parsed.data.origenAgendamiento ?? null,
           area: area ?? null,

@@ -13,6 +13,11 @@ export interface FiltrosCampana {
   sucursal?: string;
   periodo?: string;
   asesor?: string;
+  // Rango por fecha de programación (mismo campo y semántica que el filtro del
+  // listado /casos): AAAA-MM-DD. Sirve para reenviar "pedir que repitan" a los
+  // clientes de las fechas en las que se perdieron respuestas.
+  fechaDesde?: string;
+  fechaHasta?: string;
   origenAgendamiento?: OrigenAgendamiento;
   // Área efectiva del usuario que dispara la campaña (la fija el controller a
   // partir de la sesión; el cliente NO la puede setear). Un usuario de VENTAS
@@ -52,6 +57,14 @@ export async function construirWhereCampana(filtros: FiltrosCampana): Promise<Pr
     ...(filtros.sucursal ? { sucursal: { equals: filtros.sucursal, mode: "insensitive" } } : {}),
     ...(filtros.periodo ? { upload: { periodo: filtros.periodo } } : {}),
     ...(filtros.asesor ? { asesor: { contains: filtros.asesor, mode: "insensitive" } } : {}),
+    ...(filtros.fechaDesde || filtros.fechaHasta
+      ? {
+          fechaProgramacion: {
+            ...(filtros.fechaDesde ? { gte: new Date(`${filtros.fechaDesde}T00:00:00`) } : {}),
+            ...(filtros.fechaHasta ? { lte: new Date(`${filtros.fechaHasta}T23:59:59.999`) } : {}),
+          },
+        }
+      : {}),
     ...(filtros.origenAgendamiento ? { origenAgendamiento: filtros.origenAgendamiento } : {}),
     ...(filtros.casoIds && filtros.casoIds.length > 0 ? { id: { in: filtros.casoIds } } : {}),
   };

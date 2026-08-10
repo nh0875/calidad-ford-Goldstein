@@ -7,7 +7,7 @@ import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge, PuntoSemaforo } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
-import { Campo, Select } from "../components/ui/Field";
+import { Campo, Input, Select } from "../components/ui/Field";
 import { SkeletonTableRows } from "../components/ui/Skeleton";
 import { EmptyState } from "../components/ui/EmptyState";
 import { ConfirmarEliminacion } from "../components/ui/ConfirmarEliminacion";
@@ -54,6 +54,8 @@ interface Filtros {
   sucursal: string;
   asesor: string;
   periodo: string;
+  fechaDesde: string;
+  fechaHasta: string;
   origenAgendamiento: string;
   estadoContacto: string;
   area: string;
@@ -63,6 +65,8 @@ const FILTROS_INICIALES: Filtros = {
   sucursal: "",
   asesor: "",
   periodo: "",
+  fechaDesde: "",
+  fechaHasta: "",
   origenAgendamiento: "",
   estadoContacto: "",
   area: "",
@@ -212,6 +216,8 @@ export default function Casos() {
       if (filtros.sucursal.trim()) params.set("sucursal", filtros.sucursal.trim());
       if (filtros.asesor.trim()) params.set("asesor", filtros.asesor.trim());
       if (filtros.periodo.trim()) params.set("periodo", filtros.periodo.trim());
+      if (filtros.fechaDesde.trim()) params.set("fechaDesde", filtros.fechaDesde.trim());
+      if (filtros.fechaHasta.trim()) params.set("fechaHasta", filtros.fechaHasta.trim());
       if (filtros.origenAgendamiento) params.set("origenAgendamiento", filtros.origenAgendamiento);
       if (filtros.estadoContacto) params.set("estadoContacto", filtros.estadoContacto);
       if (filtros.area) params.set("area", filtros.area);
@@ -320,6 +326,8 @@ export default function Casos() {
         if (filtros.sucursal.trim()) body.sucursal = filtros.sucursal.trim();
         if (filtros.asesor.trim()) body.asesor = filtros.asesor.trim();
         if (filtros.periodo.trim()) body.periodo = filtros.periodo.trim();
+        if (filtros.fechaDesde.trim()) body.fechaDesde = filtros.fechaDesde.trim();
+        if (filtros.fechaHasta.trim()) body.fechaHasta = filtros.fechaHasta.trim();
         if (filtros.origenAgendamiento) body.origenAgendamiento = filtros.origenAgendamiento;
         if (filtros.area) qs = `?area=${encodeURIComponent(filtros.area)}`;
       }
@@ -409,6 +417,22 @@ export default function Casos() {
               </option>
             ))}
           </Select>
+        </Campo>
+        <Campo etiqueta="Fecha desde">
+          <Input
+            type="date"
+            value={filtros.fechaDesde}
+            max={filtros.fechaHasta || undefined}
+            onChange={(e) => cambiarFiltro("fechaDesde", e.target.value)}
+          />
+        </Campo>
+        <Campo etiqueta="Fecha hasta">
+          <Input
+            type="date"
+            value={filtros.fechaHasta}
+            min={filtros.fechaDesde || undefined}
+            onChange={(e) => cambiarFiltro("fechaHasta", e.target.value)}
+          />
         </Campo>
         <Campo etiqueta="Origen">
           <Select value={filtros.origenAgendamiento} onChange={(e) => cambiarFiltro("origenAgendamiento", e.target.value)}>
