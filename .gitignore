@@ -8,6 +8,9 @@
 !.env.example
 !.env.prod.example
 
+# Token de ngrok para el instalador (secreto): va en el paquete, NO al repo.
+scripts/windows/ngrok-token.txt
+
 # ===== Datos de clientes (NUNCA a git) =====
 # Todos los Excel con datos reales (Contacto Posventa, encuesta Ford, RQR, etc.)
 *.xlsx
