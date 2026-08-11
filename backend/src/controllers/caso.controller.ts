@@ -32,6 +32,9 @@ interface CasoBusqueda {
 
 // Filtros del listado (los comparten el listado paginado y la exportación).
 const casosFiltrosSchema = z.object({
+  // Búsqueda rápida por número de orden. Como los casos sin orden se guardan con
+  // el literal "S/N", escribir "S/N" en el buscador los encuentra a todos.
+  busqueda: z.string().trim().min(1).optional(),
   sucursal: z.string().trim().min(1).optional(),
   asesor: z.string().trim().min(1).optional(),
   estadoContacto: z.nativeEnum(EstadoContacto).optional(),
@@ -62,6 +65,7 @@ function whereCasosDesdeFiltros(req: Request, q: z.infer<typeof casosFiltrosSche
   return {
     eliminadoEn: null, // los casos borrados lógicamente no aparecen
     ...whereArea(req.usuario!, parsearAreaQuery(req.query.area)),
+    ...(q.busqueda ? { numeroOrden: { contains: q.busqueda, mode: "insensitive" } } : {}),
     ...(q.sucursal ? { sucursal: { equals: q.sucursal, mode: "insensitive" } } : {}),
     ...(q.asesor ? { asesor: { contains: q.asesor, mode: "insensitive" } } : {}),
     ...(q.estadoContacto ? { estadoContacto: q.estadoContacto } : {}),

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileDown, MessageSquarePlus, Pencil, RotateCcw, Send, SearchX, Trash2, UserPlus } from "lucide-react";
+import { FileDown, MessageSquarePlus, Pencil, RotateCcw, Search, Send, SearchX, Trash2, UserPlus } from "lucide-react";
 import { apiDelete, apiDescargarArchivo, apiGet, apiPostJson } from "../lib/api";
 import { getModoDemo, getUsuario, veTodasLasAreas } from "../lib/auth";
 import { AREAS, etiquetaArea, tonoArea } from "../lib/area";
@@ -51,6 +51,7 @@ interface Progreso {
 }
 
 interface Filtros {
+  busqueda: string;
   sucursal: string;
   asesor: string;
   periodo: string;
@@ -62,6 +63,7 @@ interface Filtros {
 }
 
 const FILTROS_INICIALES: Filtros = {
+  busqueda: "",
   sucursal: "",
   asesor: "",
   periodo: "",
@@ -124,6 +126,21 @@ export default function Casos() {
   const hayFiltros = Object.values(filtros).some((v) => v.trim() !== "");
 
   const [seleccion, setSeleccion] = useState<Set<string>>(new Set());
+
+  // Buscador por N° de orden con debounce: el input responde al instante y el
+  // filtro que dispara la carga se actualiza 350ms después de dejar de tipear
+  // (así no se llama a la API en cada tecla).
+  const [busquedaInput, setBusquedaInput] = useState("");
+  useEffect(() => {
+    const v = busquedaInput.trim();
+    if (v === filtros.busqueda) return;
+    const t = setTimeout(() => {
+      setFiltros((prev) => ({ ...prev, busqueda: v }));
+      setPage(1);
+      setSeleccion(new Set());
+    }, 350);
+    return () => clearTimeout(t);
+  }, [busquedaInput, filtros.busqueda]);
 
   // Modal de confirmación de envío
   const [modal, setModal] = useState<{
@@ -213,6 +230,7 @@ export default function Casos() {
   const queryFiltros = useCallback(
     (extra: Record<string, string> = {}) => {
       const params = new URLSearchParams();
+      if (filtros.busqueda.trim()) params.set("busqueda", filtros.busqueda.trim());
       if (filtros.sucursal.trim()) params.set("sucursal", filtros.sucursal.trim());
       if (filtros.asesor.trim()) params.set("asesor", filtros.asesor.trim());
       if (filtros.periodo.trim()) params.set("periodo", filtros.periodo.trim());
@@ -254,6 +272,7 @@ export default function Casos() {
 
   function limpiarFiltros() {
     setFiltros(FILTROS_INICIALES);
+    setBusquedaInput("");
     setPage(1);
     setSeleccion(new Set());
   }
@@ -323,6 +342,7 @@ export default function Casos() {
       } else {
         // IMPORTANTE: enviar EXACTAMENTE los mismos filtros que el preview, para
         // que el envío coincida con el número mostrado (incluye origen y área).
+        if (filtros.busqueda.trim()) body.busqueda = filtros.busqueda.trim();
         if (filtros.sucursal.trim()) body.sucursal = filtros.sucursal.trim();
         if (filtros.asesor.trim()) body.asesor = filtros.asesor.trim();
         if (filtros.periodo.trim()) body.periodo = filtros.periodo.trim();
@@ -374,6 +394,32 @@ export default function Casos() {
 
   return (
     <div className="space-y-4">
+      {/* Buscador rápido por N° de orden (o "S/N" para los casos sin número) */}
+      <div className="relative">
+        <Search
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+          aria-hidden="true"
+        />
+        <input
+          type="text"
+          value={busquedaInput}
+          onChange={(e) => setBusquedaInput(e.target.value)}
+          placeholder='Buscar por N° de orden…  (escribí "S/N" para ver los casos sin número)'
+          aria-label="Buscar por número de orden"
+          className="w-full rounded-md border border-gray-300 bg-white py-2 pl-9 pr-9 text-sm text-ink placeholder:text-gray-400 focus:border-accent focus:outline-none"
+        />
+        {busquedaInput && (
+          <button
+            type="button"
+            onClick={() => setBusquedaInput("")}
+            aria-label="Limpiar búsqueda"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-gray-400 hover:text-ink"
+          >
+            <SearchX className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
+      </div>
+
       {/* Filtros */}
       <Card className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         {puedeFiltrarArea && (

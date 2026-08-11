@@ -10,6 +10,8 @@ import { telefonosSuprimidos } from "./supresion.service";
 
 export interface FiltrosCampana {
   uploadId?: string;
+  // Búsqueda por número de orden (o "S/N" para los casos sin número).
+  busqueda?: string;
   sucursal?: string;
   periodo?: string;
   asesor?: string;
@@ -53,6 +55,7 @@ export async function construirWhereCampana(filtros: FiltrosCampana): Promise<Pr
       ? { NOT: { telefonosNorm: { hasSome: [...suprimidos] } } } // teléfono en la lista de supresión
       : {}),
     ...(filtros.area ? { area: filtros.area } : {}), // restricción por área (aplica aun con casoIds)
+    ...(filtros.busqueda ? { numeroOrden: { contains: filtros.busqueda, mode: "insensitive" } } : {}),
     ...(filtros.uploadId ? { uploadId: filtros.uploadId } : {}),
     ...(filtros.sucursal ? { sucursal: { equals: filtros.sucursal, mode: "insensitive" } } : {}),
     ...(filtros.periodo ? { upload: { periodo: filtros.periodo } } : {}),

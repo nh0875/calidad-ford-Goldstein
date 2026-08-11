@@ -12,6 +12,7 @@ import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.servic
 
 const filtrosSchema = z.object({
   uploadId: z.string().trim().min(1).optional(),
+  busqueda: z.string().trim().min(1).optional(),
   sucursal: z.string().trim().min(1).optional(),
   periodo: z
     .string()
@@ -40,6 +41,7 @@ const filtrosSchema = z.object({
 function filtrosDesdeQuery(query: Request["query"]) {
   return filtrosSchema.safeParse({
     uploadId: query.uploadId || undefined,
+    busqueda: query.busqueda || undefined,
     sucursal: query.sucursal || undefined,
     periodo: query.periodo || undefined,
     fechaDesde: query.fechaDesde || undefined,
@@ -126,6 +128,7 @@ export async function enviarCampana(req: Request, res: Response) {
         plantilla: parsed.data.plantilla ?? "contacto",
         filtros: {
           uploadId: parsed.data.uploadId ?? null,
+          busqueda: parsed.data.busqueda ?? null,
           sucursal: parsed.data.sucursal ?? null,
           periodo: parsed.data.periodo ?? null,
           fechaDesde: parsed.data.fechaDesde ?? null,
