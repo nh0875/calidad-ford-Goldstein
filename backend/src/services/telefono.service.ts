@@ -36,3 +36,28 @@ export function normalizarTelefonoAR(valor: unknown): string | null {
 
   return `+549${digitos}`;
 }
+
+/**
+ * Igual que `normalizarTelefonoAR`, pero tolera celdas que traen MÁS de un dato
+ * en el mismo campo. La planilla de ventas de la agencia llega así:
+ *   "2615600368 - DANIEL"        (número + a nombre de quién)
+ *   "262215675300/62320"         (dos números separados por barra)
+ *   "262215526707 - 02622-489201" (celular y fijo)
+ *
+ * Primero prueba la celda ENTERA —que es lo que resuelve la gran mayoría, porque
+ * el normalizador ya descarta las letras— y recién si eso no da un móvil válido
+ * va probando cada tramo por separado, devolviendo el primero que normalice.
+ * Así "0261 153862753" (un solo número con espacio adentro) se sigue resolviendo
+ * entero y no se rompe en dos pedazos inservibles.
+ */
+export function normalizarTelefonoARFlexible(valor: unknown): string | null {
+  const directo = normalizarTelefonoAR(valor);
+  if (directo) return directo;
+  if (valor === null || valor === undefined) return null;
+
+  for (const tramo of String(valor).split(/[/;,]|\s+-\s+|\s+/)) {
+    const normalizado = normalizarTelefonoAR(tramo);
+    if (normalizado) return normalizado;
+  }
+  return null;
+}

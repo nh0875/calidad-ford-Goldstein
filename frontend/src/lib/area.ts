@@ -11,6 +11,9 @@ export const AREA_LABEL: Record<string, string> = {
   // Fidelización no es un área del Caso, pero en Seguimiento aparece como una
   // categoría más (recordatorio de service), así que necesita su etiqueta/tono.
   FIDELIZACION: "Fidelización",
+  // Valor SOLO de filtro en Seguimiento: agrupa Ventas + Posventa, es decir
+  // todo el Contacto Posterior, para separarlo de Fidelización de un clic.
+  CONTACTO: "Contacto Posterior",
 };
 
 export function etiquetaArea(area: string | null | undefined): string {

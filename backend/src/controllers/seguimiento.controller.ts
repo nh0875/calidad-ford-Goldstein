@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { areaPermitida, parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
 import { mismaProvincia } from "../services/refuerzo.service";
+import { etiquetaFidelizacion } from "../services/fidelizacion.service";
 import { estadoVentana, telefonoContactable, ultimoEntranteAt } from "../services/seguimiento.service";
 import { sendTemplateMessage, sendTextMessage, WhatsappApiError } from "../services/whatsapp.service";
 import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
@@ -77,11 +78,27 @@ function parseConvId(raw: unknown): { tipo: ConvTipo; id: string } | null {
   return null;
 }
 
-/** Filtro de área de la pantalla: VENTAS | POSVENTA | FIDELIZACION | null. */
-function parseAreaSeguimiento(valor: unknown): "VENTAS" | "POSVENTA" | "FIDELIZACION" | null {
+// Valores del desplegable de la pantalla. Además de las áreas propiamente
+// dichas hay dos categorías por ORIGEN de la conversación, que es lo que la
+// gente de Calidad quiere separar de un vistazo:
+//   CONTACTO    = todo el Contacto Posterior (Ventas + Posventa) junto.
+//   FIDELIZACION = los recordatorios para que el cliente vuelva al taller.
+type FiltroSeguimiento = "CONTACTO" | "VENTAS" | "POSVENTA" | "FIDELIZACION";
+const FILTROS_SEGUIMIENTO: FiltroSeguimiento[] = ["CONTACTO", "VENTAS", "POSVENTA", "FIDELIZACION"];
+
+function parseAreaSeguimiento(valor: unknown): FiltroSeguimiento | null {
   const v = String(valor ?? "").toUpperCase();
-  if (v === "VENTAS" || v === "POSVENTA" || v === "FIDELIZACION") return v;
-  return null;
+  return (FILTROS_SEGUIMIENTO as string[]).includes(v) ? (v as FiltroSeguimiento) : null;
+}
+
+/** ¿Esta conversación entra en el filtro elegido? */
+function coincideFiltro(
+  conv: { tipo: ConvTipo; area: string },
+  filtro: FiltroSeguimiento | null
+): boolean {
+  if (!filtro) return true;
+  if (filtro === "CONTACTO") return conv.tipo === "caso";
+  return conv.area === filtro;
 }
 
 /** 403 si el caso no es del área+provincia del usuario. */
@@ -201,7 +218,11 @@ export async function listarConversaciones(req: Request, res: Response) {
   ].sort();
   const areasSet = new Set<string>(casosVis.map((c) => c.area));
   if (fidelsVis.length > 0) areasSet.add("FIDELIZACION");
-  const areas = [...areasSet].sort();
+  // "Contacto Posterior" (todos los casos juntos) solo tiene sentido ofrecerlo si
+  // además hay conversaciones de Fidelización de las que separarlo.
+  if (casosVis.length > 0 && fidelsVis.length > 0) areasSet.add("CONTACTO");
+  // Orden fijo (de lo general a lo particular), no alfabético.
+  const areas = FILTROS_SEGUIMIENTO.filter((f) => areasSet.has(f));
 
   // Forma unificada de una conversación (para la lista tipo WhatsApp).
   const itemsCaso = casosVis.map((c) => {
@@ -234,7 +255,7 @@ export async function listarConversaciones(req: Request, res: Response) {
     return {
       tipo: "fidelizacion" as ConvTipo,
       id: `fid:${f.id}`,
-      numeroOrden: `${f.numeroServicio}° service`,
+      numeroOrden: etiquetaFidelizacion(f),
       nombre: f.nombre,
       modelo: f.modelo ?? "",
       asesor: f.asesor ?? "",
@@ -256,7 +277,7 @@ export async function listarConversaciones(req: Request, res: Response) {
   const termino = q?.toLowerCase();
   const lista = [...itemsCaso, ...itemsFidel]
     // Filtros pedidos (área + provincia): solo ACOTAN lo que ya puede ver.
-    .filter((c) => !areaFiltro || c.area === areaFiltro)
+    .filter((c) => coincideFiltro(c, areaFiltro))
     .filter((c) => !sucursalPedida || mismaProvincia(sucursalPedida, c.sucursal))
     .filter((c) =>
       filtro === "revision"
@@ -444,7 +465,7 @@ async function verConversacionFidelizacion(req: Request, res: Response, id: stri
       caso: {
         id: `fid:${cliente.id}`,
         tipo: "fidelizacion",
-        numeroOrden: `${cliente.numeroServicio}° service`,
+        numeroOrden: etiquetaFidelizacion(cliente),
         nombre: cliente.nombre,
         modelo: cliente.modelo ?? "",
         asesor: cliente.asesor ?? "",

@@ -20,6 +20,7 @@ import {
   sentimientoSoloEmoji,
 } from "../services/analisis.service";
 import { crearAviso } from "../services/aviso.service";
+import { etiquetaFidelizacion } from "../services/fidelizacion.service";
 import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
 import {
   CLAVES_CONFIG,
@@ -636,7 +637,9 @@ async function procesarEnvioFidelizacion(job: Job<DatosFidelizacion>, token?: st
         data: {
           clienteFidelizacionId: cliente.id,
           direction: MessageDirection.SALIENTE,
-          content: `Recordatorio de ${cliente.numeroServicio}° service de mantenimiento`,
+          content: cliente.numeroServicio
+            ? `Recordatorio de ${cliente.numeroServicio}° service de mantenimiento`
+            : "Recordatorio de fidelización (cliente 0km)",
           templateName: creds.fidelizacionTemplateName,
           status: "enviado",
           waMessageId,
@@ -650,7 +653,7 @@ async function procesarEnvioFidelizacion(job: Job<DatosFidelizacion>, token?: st
   }
 
   console.log(
-    `[fidelizacion-envio] recordatorio de ${cliente.numeroServicio}° service enviado a ${cliente.nombre} (${telefono})`
+    `[fidelizacion-envio] recordatorio (${etiquetaFidelizacion(cliente)}) enviado a ${cliente.nombre} (${telefono})`
   );
   return { enviado: true, waMessageId };
 }

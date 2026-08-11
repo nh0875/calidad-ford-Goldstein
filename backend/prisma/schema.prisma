@@ -16,6 +16,17 @@ enum TipoUpload {
   FIDELIZACION
 }
 
+// De qué planilla salió el destinatario de fidelización. Son dos circuitos con
+// reglas distintas que conviven en la misma pantalla:
+//  - TURNOS: export Ford de agendamientos. Trae el service en "Comentario del
+//    Asesor"/"Servicio" y SOLO entran los del 1° al 5° (6° o más queda afuera).
+//  - VENTAS: planilla de ventas de la agencia. NO trae ningún dato de service,
+//    así que no hay regla de rango: entran todos los Ford 0km de la planilla.
+enum OrigenFidelizacion {
+  TURNOS
+  VENTAS
+}
+
 // Estado del recordatorio de fidelización por cliente (Parte C: recordatorio de
 // service pendiente). No se clasifica la respuesta: es solo un recordatorio.
 enum EstadoFidelizacion {
@@ -162,23 +173,29 @@ model ExcelUpload {
   @@index([eliminadoEn])
 }
 
-// Cliente detectado en el Excel de Fidelización con un service de mantenimiento
-// PENDIENTE (1° a 5°). Recibe UN recordatorio por WhatsApp (plantilla
-// "fidelizacion_posventa"). NO se clasifica la respuesta ni se crea un Caso:
-// es un flujo aparte, solo recordatorio. Cada fila es un destinatario.
+// Destinatario de un recordatorio de Fidelización. Recibe UN mensaje por
+// WhatsApp (plantilla "fidelizacion_posventa"). NO se clasifica la respuesta ni
+// se crea un Caso: es un flujo aparte, solo recordatorio. Cada fila es un
+// destinatario. Sale de una de las dos planillas (ver OrigenFidelizacion).
 model ClienteFidelizacion {
   id       String      @id @default(cuid())
   uploadId String
   upload   ExcelUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
 
+  origen           OrigenFidelizacion @default(TURNOS)
   nombre           String
   telefono         String // el mejor teléfono contactable (E.164 si normalizó; si no, el crudo)
   telefonosNorm    String[] // teléfonos normalizados (para chequear la lista de supresión)
   modelo           String?
   patente          String?
-  asesor           String?
-  numeroServicio   Int // el service pendiente detectado (1 a 5)
-  comentarioAsesor String  @db.Text // el texto original de donde se detectó
+  asesor           String? // asesor de servicio (TURNOS) o vendedor (VENTAS)
+  // El service pendiente detectado (1 a 5). NULL en los de origen VENTAS: esa
+  // planilla no dice qué service le toca al cliente.
+  numeroServicio   Int?
+  comentarioAsesor String? @db.Text // el texto original de donde se detectó (solo TURNOS)
+  // Fecha de entrega del vehículo (solo VENTAS): es el único dato temporal que
+  // trae esa planilla y sirve para ordenar y para entender a quién se contactó.
+  fechaEntrega     DateTime?
   sucursal         String?
 
   estado      EstadoFidelizacion @default(PENDIENTE)

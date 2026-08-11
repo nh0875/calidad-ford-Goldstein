@@ -1,8 +1,21 @@
-// Fidelización (Parte C): a partir del Excel de agendamientos (mismo formato Ford
-// que Contacto Posventa) se detecta, leyendo la columna "Comentario del Asesor",
-// qué clientes tienen un service de mantenimiento PENDIENTE (1° a 5°) para
-// mandarles UN recordatorio por WhatsApp. NO clasifica respuestas ni crea Casos.
-import { EstadoFidelizacion } from "@prisma/client";
+// Fidelización (Parte C): mandarle a un cliente UN recordatorio por WhatsApp
+// para que vuelva al taller. NO clasifica respuestas ni crea Casos.
+//
+// Entran DOS planillas distintas, con reglas distintas, a la misma pantalla:
+//
+//  1. TURNOS — el export de agendamientos de Ford (mismo formato que Contacto
+//     Posventa). Trae el service en "Comentario del Asesor" y/o "Servicio", y
+//     SOLO se contacta a los que tienen pendiente del 1° al 5°: del 6° en
+//     adelante el plan de mantenimiento ya no aplica.
+//
+//  2. VENTAS — la planilla de ventas de la agencia. NO trae ningún dato de
+//     service (no hay con qué deducir cuál le toca), así que ahí no hay regla de
+//     rango: se contacta a todos los Ford 0km de la planilla. La regla del 1° al
+//     5° es exclusiva del formato TURNOS.
+//
+// El formato se detecta solo por las columnas del archivo; el usuario sube el
+// Excel y listo.
+import { EstadoFidelizacion, OrigenFidelizacion } from "@prisma/client";
 import * as XLSX from "xlsx";
 import { env } from "../config/env";
 import { prisma } from "../config/prisma";
@@ -10,15 +23,75 @@ import { fidelizacionQueue } from "../jobs/queues";
 import {
   CampoCaso,
   derivarPeriodoDeFilas,
+  parsearFecha,
   parsearHoja,
   sugerirMapeo,
 } from "./excel.service";
-import { normalizarTelefonoAR } from "./telefono.service";
+import { normalizarTelefonoAR, normalizarTelefonoARFlexible } from "./telefono.service";
 
 // Services que se consideran "pendientes" para el recordatorio de fidelización.
 // El programa de mantenimiento cubre del 1° al 5°; de ahí en más no se recuerda.
+// OJO: esta regla aplica SOLO al formato TURNOS (es el único que trae el dato).
 export const SERVICIO_MIN = 1;
 export const SERVICIO_MAX = 5;
+
+/** El formato del archivo determina el origen del destinatario: son lo mismo. */
+export type FormatoFidelizacion = OrigenFidelizacion;
+
+// ---------- Detección del formato del archivo ----------
+
+/** Encabezado comparable: sin acentos, sin puntos, en minúsculas. */
+function claveEncabezado(valor: unknown): string {
+  return String(valor ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Firma de la planilla de VENTAS: si están estas tres columnas, es esa y no otra
+// (el export de turnos de Ford no tiene ninguna de las tres).
+const COLUMNAS_FIRMA_VENTAS = ["cliente", "telef", "venta_1"];
+// Hasta dónde buscar la fila de títulos (algunas planillas traen filas de adorno).
+const MAX_FILAS_BUSQUEDA_ENCABEZADO_VENTAS = 20;
+
+/**
+ * Ubica la fila de títulos de la planilla de VENTAS. Devuelve -1 si el archivo
+ * no es de ese formato.
+ *
+ * Va aparte del `detectarFilaEncabezado` de excel.service porque aquel exige una
+ * columna con "programación" o "asesor" —ancla del export de Ford— y la planilla
+ * de ventas no tiene ninguna de las dos: pasarla por ahí falla antes de leer nada.
+ */
+function buscarEncabezadoVentas(filas: unknown[][]): number {
+  const limite = Math.min(filas.length, MAX_FILAS_BUSQUEDA_ENCABEZADO_VENTAS);
+  for (let i = 0; i < limite; i++) {
+    const celdas = (filas[i] ?? []).map(claveEncabezado);
+    if (COLUMNAS_FIRMA_VENTAS.every((requerida) => celdas.includes(requerida))) return i;
+  }
+  return -1;
+}
+
+/**
+ * Qué planilla es la que subieron. Se mira primero VENTAS porque tiene una firma
+ * de columnas inconfundible; cualquier otra cosa se intenta leer como el export
+ * de turnos de Ford (que ya valida sus propias columnas y avisa si no lo es).
+ */
+export function detectarFormatoFidelizacion(
+  workbook: XLSX.WorkBook,
+  nombreHoja: string
+): FormatoFidelizacion {
+  const hoja = workbook.Sheets[nombreHoja];
+  if (!hoja) return OrigenFidelizacion.TURNOS;
+  const filas: unknown[][] = XLSX.utils.sheet_to_json(hoja, {
+    header: 1,
+    defval: null,
+    blankrows: true,
+  });
+  return buscarEncabezadoVentas(filas) >= 0 ? OrigenFidelizacion.VENTAS : OrigenFidelizacion.TURNOS;
+}
 
 /**
  * Lee un "Comentario del Asesor" y devuelve el número de service de
@@ -56,25 +129,48 @@ export function esServicioFidelizable(n: number | null): boolean {
   return n !== null && n >= SERVICIO_MIN && n <= SERVICIO_MAX;
 }
 
+/**
+ * Cómo se nombra al destinatario en el chat de Seguimiento y en los logs. Los de
+ * turnos se identifican por el service que tienen pendiente ("3° service"); los
+ * de la planilla de ventas no tienen service, así que se los nombra por lo que
+ * son: clientes que compraron un 0km.
+ */
+export function etiquetaFidelizacion(cliente: { numeroServicio: number | null }): string {
+  return cliente.numeroServicio ? `${cliente.numeroServicio}° service` : "Cliente 0km";
+}
+
 export interface FilaFidelizacion {
   numeroFilaExcel: number;
+  origen: OrigenFidelizacion;
   nombre: string;
   whatsappNorm: string | null;
   celularNorm: string | null;
   telefonoCrudo: string | null; // el mejor teléfono tal cual vino (por si no normalizó)
   modelo: string | null;
   patente: string | null;
-  asesor: string | null;
-  numeroServicio: number; // 1..5
-  comentarioAsesor: string;
+  asesor: string | null; // asesor de servicio (TURNOS) o vendedor (VENTAS)
+  numeroServicio: number | null; // 1..5 en TURNOS; null en VENTAS (no viene el dato)
+  comentarioAsesor: string | null;
+  provincia: string | null; // solo VENTAS (la planilla la trae por fila)
+  fechaEntrega: Date | null; // solo VENTAS
+  // Motivo por el que esta fila NO recibe el mensaje aunque sea candidata (sin
+  // teléfono usable, teléfono repetido dentro de la misma carga). null = se envía.
+  motivoOmision: string | null;
 }
 
 export interface ResumenFidelizacion {
+  formato: FormatoFidelizacion;
   totalFilas: number;
+  candidatos: number; // filas que quedaron como destinatarios (se listan)
+  destinatarios: number; // de esas, las que realmente reciben el mensaje
+  sinTelefono: number; // candidatos sin teléfono contactable
+  // --- solo TURNOS ---
   conServicio1a5: number; // candidatos (con service en rango)
-  servicioFueraDeRango: number; // 6° en adelante (se listan pero NO se envían)
+  servicioFueraDeRango: number; // 6° en adelante (NO se envían)
   sinServicio: number; // el comentario no es un service de mantenimiento
-  sinTelefono: number; // candidatos que no tienen teléfono contactable
+  // --- solo VENTAS ---
+  noElegibles: number; // usados, venta directa y otras marcas (NO se envían)
+  duplicados: number; // el mismo teléfono ya apareció en la carga
 }
 
 export interface ResultadoParseoFidelizacion {
@@ -83,6 +179,22 @@ export interface ResultadoParseoFidelizacion {
   mapping: Record<string, CampoCaso>;
   periodoSugerido: string | null;
   resumen: ResumenFidelizacion;
+}
+
+/** Resumen vacío, para que cada parser complete solo lo que le corresponde. */
+function resumenVacio(formato: FormatoFidelizacion, totalFilas: number): ResumenFidelizacion {
+  return {
+    formato,
+    totalFilas,
+    candidatos: 0,
+    destinatarios: 0,
+    sinTelefono: 0,
+    conServicio1a5: 0,
+    servicioFueraDeRango: 0,
+    sinServicio: 0,
+    noElegibles: 0,
+    duplicados: 0,
+  };
 }
 
 function textoCelda(valor: unknown): string {
@@ -134,13 +246,7 @@ export function parsearFidelizacion(
   const colAsesor = columnaDe("asesor");
 
   const candidatos: FilaFidelizacion[] = [];
-  const resumen: ResumenFidelizacion = {
-    totalFilas: hoja.filas.length,
-    conServicio1a5: 0,
-    servicioFueraDeRango: 0,
-    sinServicio: 0,
-    sinTelefono: 0,
-  };
+  const resumen = resumenVacio(OrigenFidelizacion.TURNOS, hoja.filas.length);
 
   for (const fila of hoja.filas) {
     const comentario = colComentario ? textoCelda(fila.datos[colComentario]) : "";
@@ -166,10 +272,12 @@ export function parsearFidelizacion(
       (colCelular && textoCelda(fila.datos[colCelular])) ||
       null;
 
-    if (!whatsappNorm && !celularNorm) resumen.sinTelefono++;
+    const sinTelefono = !whatsappNorm && !celularNorm;
+    if (sinTelefono) resumen.sinTelefono++;
 
     candidatos.push({
       numeroFilaExcel: fila.numeroFilaExcel,
+      origen: OrigenFidelizacion.TURNOS,
       nombre: (colNombre && textoCelda(fila.datos[colNombre])) || "(sin nombre)",
       whatsappNorm,
       celularNorm,
@@ -179,8 +287,14 @@ export function parsearFidelizacion(
       asesor: (colAsesor && textoCelda(fila.datos[colAsesor])) || null,
       numeroServicio: numero,
       comentarioAsesor: comentario || servicioTxt,
+      provincia: null,
+      fechaEntrega: null,
+      motivoOmision: sinTelefono ? MOTIVO_SIN_TELEFONO : null,
     });
   }
+
+  resumen.candidatos = candidatos.length;
+  resumen.destinatarios = candidatos.filter((c) => c.motivoOmision === null).length;
 
   return {
     candidatos,
@@ -189,6 +303,164 @@ export function parsearFidelizacion(
     periodoSugerido: derivarPeriodoDeFilas(hoja.filas, mapping),
     resumen,
   };
+}
+
+// ---------- Formato VENTAS (planilla de ventas de la agencia) ----------
+
+// Los únicos que reciben el recordatorio: Ford 0km. Los usados no entran (la
+// fecha de entrega no dice nada de la antigüedad real del vehículo) ni tampoco
+// las ventas directas (las maneja otro circuito) ni las otras marcas.
+const TIPOS_VENTA_ELEGIBLES = new Set(["nuevos", "nuevo aa ford"]);
+
+export const MOTIVO_SIN_TELEFONO = "Sin teléfono válido para WhatsApp.";
+export const MOTIVO_TELEFONO_DUPLICADO =
+  "Teléfono repetido en esta carga (el cliente ya recibe el mensaje en otra fila).";
+
+// Columnas de la planilla de ventas, por su clave normalizada.
+const COL_VENTAS = {
+  cliente: "cliente",
+  telefono: "telef",
+  tipoVenta: "venta_1",
+  modelo: "modelo",
+  dominio: "dominio",
+  vendedor: "vendedor",
+  provincia: "provincia",
+  fechaEntrega: "fec entrega",
+  marca: "marca",
+} as const;
+
+/**
+ * Parsea la planilla de VENTAS y arma la lista de destinatarios: los Ford 0km.
+ *
+ * Acá NO hay regla de service (la planilla no trae el dato), así que entran
+ * todos los elegibles. Sí se descarta lo que no se puede contactar: filas sin
+ * teléfono usable, y las repetidas —un mismo cliente que compró dos vehículos
+ * aparece dos veces y no tiene que recibir el mensaje duplicado—.
+ */
+export function parsearFidelizacionVentas(
+  workbook: XLSX.WorkBook,
+  nombreHoja: string
+): ResultadoParseoFidelizacion | { error: string } {
+  const hoja = workbook.Sheets[nombreHoja];
+  if (!hoja) return { error: `La hoja "${nombreHoja}" no existe en el archivo.` };
+
+  const filas: unknown[][] = XLSX.utils.sheet_to_json(hoja, {
+    header: 1,
+    defval: null,
+    blankrows: true,
+  });
+
+  const filaEncabezado = buscarEncabezadoVentas(filas);
+  if (filaEncabezado === -1) {
+    return {
+      error:
+        'No se reconoció la planilla de ventas: faltan las columnas "Cliente", "Teléf." y/o "VENTA_1".',
+    };
+  }
+
+  // Nombre visible de cada columna, indexado por su clave normalizada.
+  const encabezado = (filas[filaEncabezado] ?? []).map((c) => String(c ?? "").trim());
+  const indicePorClave = new Map<string, number>();
+  encabezado.forEach((nombre, i) => {
+    const clave = claveEncabezado(nombre);
+    if (clave && !indicePorClave.has(clave)) indicePorClave.set(clave, i);
+  });
+
+  const leer = (fila: unknown[], clave: string): string => {
+    const i = indicePorClave.get(clave);
+    if (i === undefined) return "";
+    return textoCelda(fila[i]);
+  };
+
+  const filasDatos = filas.slice(filaEncabezado + 1);
+  const candidatos: FilaFidelizacion[] = [];
+  const resumen = resumenVacio(OrigenFidelizacion.VENTAS, 0);
+
+  // Para no mandarle dos veces el mismo mensaje al mismo número dentro de la carga.
+  const telefonosVistos = new Set<string>();
+
+  filasDatos.forEach((fila, i) => {
+    const numeroFilaExcel = filaEncabezado + 2 + i; // 1-based, como lo ve el usuario
+    const nombre = leer(fila, COL_VENTAS.cliente);
+    const tipoVenta = leer(fila, COL_VENTAS.tipoVenta);
+    // Fila de relleno / totales al pie: sin cliente ni tipo de venta no es un dato.
+    if (!nombre && !tipoVenta) return;
+
+    resumen.totalFilas++;
+
+    if (!TIPOS_VENTA_ELEGIBLES.has(claveEncabezado(tipoVenta))) {
+      resumen.noElegibles++;
+      return;
+    }
+
+    const telefonoCrudo = leer(fila, COL_VENTAS.telefono);
+    // La celda mezcla número y nombre ("2615600368 - DANIEL") y a veces dos
+    // números: el normalizador flexible se queda con el primero que sirva.
+    const telefonoNorm = normalizarTelefonoARFlexible(telefonoCrudo);
+
+    let motivoOmision: string | null = null;
+    if (!telefonoNorm) {
+      resumen.sinTelefono++;
+      motivoOmision = MOTIVO_SIN_TELEFONO;
+    } else if (telefonosVistos.has(telefonoNorm)) {
+      resumen.duplicados++;
+      motivoOmision = MOTIVO_TELEFONO_DUPLICADO;
+    } else {
+      telefonosVistos.add(telefonoNorm);
+    }
+
+    candidatos.push({
+      numeroFilaExcel,
+      origen: OrigenFidelizacion.VENTAS,
+      nombre: nombre || "(sin nombre)",
+      whatsappNorm: telefonoNorm,
+      celularNorm: null,
+      telefonoCrudo: telefonoCrudo || null,
+      modelo: leer(fila, COL_VENTAS.modelo) || null,
+      patente: leer(fila, COL_VENTAS.dominio) || null,
+      asesor: leer(fila, COL_VENTAS.vendedor) || null,
+      numeroServicio: null, // la planilla de ventas no dice qué service le toca
+      comentarioAsesor: null,
+      provincia: leer(fila, COL_VENTAS.provincia) || null,
+      fechaEntrega: parsearFecha(fila[indicePorClave.get(COL_VENTAS.fechaEntrega) ?? -1]),
+      motivoOmision,
+    });
+  });
+
+  resumen.candidatos = candidatos.length;
+  resumen.destinatarios = candidatos.filter((c) => c.motivoOmision === null).length;
+
+  return {
+    candidatos,
+    columnas: encabezado.filter(Boolean),
+    mapping: {},
+    // El período de la carga sale de la entrega más reciente (aaaa-mm).
+    periodoSugerido: periodoDeEntregas(candidatos),
+    resumen,
+  };
+}
+
+/** Período (aaaa-mm) de la carga de ventas: el mes de la entrega más reciente. */
+function periodoDeEntregas(candidatos: FilaFidelizacion[]): string | null {
+  const fechas = candidatos
+    .map((c) => c.fechaEntrega)
+    .filter((f): f is Date => f instanceof Date && !isNaN(f.getTime()));
+  if (fechas.length === 0) return null;
+  const masReciente = fechas.reduce((a, b) => (a > b ? a : b));
+  return `${masReciente.getFullYear()}-${String(masReciente.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Punto de entrada único: detecta el formato del archivo y lo manda al parser
+ * que corresponde. Es lo que usa el controller al recibir la subida.
+ */
+export function parsearPlanillaFidelizacion(
+  workbook: XLSX.WorkBook,
+  nombreHoja: string
+): ResultadoParseoFidelizacion | { error: string } {
+  return detectarFormatoFidelizacion(workbook, nombreHoja) === OrigenFidelizacion.VENTAS
+    ? parsearFidelizacionVentas(workbook, nombreHoja)
+    : parsearFidelizacion(workbook, nombreHoja);
 }
 
 // ---------- Envío de recordatorios (cola) ----------

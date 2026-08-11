@@ -303,7 +303,7 @@ export default function Seguimiento() {
                   onChange={(e) => setArea(e.target.value)}
                   className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-ink focus:border-accent focus:outline-none"
                 >
-                  <option value="">Toda área</option>
+                  <option value="">Contacto y Fidelización</option>
                   {opciones.areas.map((a) => (
                     <option key={a} value={a}>{etiquetaArea(a)}</option>
                   ))}

@@ -1,7 +1,11 @@
-// Fidelización (Parte C): se sube el Excel de agendamientos (mismo formato Ford),
-// el sistema lee "Comentario del Asesor" y detecta los clientes con un service de
-// mantenimiento 1° a 5° PENDIENTE. A esos se les manda UN recordatorio por
-// WhatsApp (plantilla "fidelizacion_posventa"). NO se clasifica la respuesta.
+// Fidelización (Parte C): se sube un Excel y a los clientes que salen de ahí se
+// les manda UN recordatorio por WhatsApp (plantilla "fidelizacion_posventa").
+// NO se clasifica la respuesta. Entran dos planillas y el sistema reconoce sola
+// cuál es:
+//  - Turnos de Ford: lee "Comentario del Asesor"/"Servicio" y toma solo a los
+//    que tienen pendiente el service 1° a 5° (6° o más queda afuera).
+//  - Ventas de la agencia: no trae dato de service, así que toma a todos los
+//    Ford 0km de la planilla.
 import { useEffect, useRef, useState } from "react";
 import { FileUp, Gift, Send, Trash2, Users } from "lucide-react";
 import { apiDelete, apiGet, apiPostForm, apiPostJson } from "../lib/api";
@@ -12,22 +16,37 @@ import { Badge } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
 
+// De qué planilla salió la carga (lo detecta el backend por las columnas).
+type Origen = "TURNOS" | "VENTAS";
+
+const LABEL_ORIGEN: Record<Origen, string> = {
+  TURNOS: "Turnos de taller",
+  VENTAS: "Ventas 0km",
+};
+
 interface ResumenCarga {
+  formato: Origen;
   totalFilas: number;
+  candidatos: number;
+  destinatarios: number;
+  sinTelefono: number;
   conServicio1a5: number;
   servicioFueraDeRango: number;
   sinServicio: number;
-  sinTelefono: number;
+  noElegibles: number;
+  duplicados: number;
 }
 interface RespuestaSubida {
   message: string;
   uploadId: string;
+  formato: Origen;
   resumen: ResumenCarga;
   pendientes: number;
 }
 interface CargaFidel {
   id: string;
   filename: string;
+  origen: Origen;
   sucursal: string;
   periodo: string;
   uploadedBy: string;
@@ -40,19 +59,30 @@ interface CargaFidel {
 }
 interface ClienteFidel {
   id: string;
+  origen: Origen;
   nombre: string;
   telefono: string;
   modelo: string | null;
   patente: string | null;
   asesor: string | null;
-  numeroServicio: number;
+  numeroServicio: number | null; // null en las cargas de Ventas (no traen service)
+  fechaEntrega: string | null; // solo Ventas
+  sucursal: string | null;
   estado: "PENDIENTE" | "ENVIADO" | "ERROR" | "OMITIDO";
   error: string | null;
   enviadoEn: string | null;
-  comentarioAsesor: string;
+  comentarioAsesor: string | null;
 }
 interface DetalleCarga {
-  upload: { id: string; filename: string; sucursal: string; periodo: string; uploadedAt: string; totalRows: number };
+  upload: {
+    id: string;
+    filename: string;
+    origen: Origen;
+    sucursal: string;
+    periodo: string;
+    uploadedAt: string;
+    totalRows: number;
+  };
   clientes: ClienteFidel[];
 }
 interface Progreso {
@@ -126,7 +156,7 @@ export default function Fidelizacion() {
     setError(null);
     setMensaje(null);
     const archivo = inputArchivo.current?.files?.[0];
-    if (!archivo) return setError("Elegí el Excel de agendamientos (.xls o .xlsx).");
+    if (!archivo) return setError("Elegí el Excel (.xls o .xlsx): turnos de taller o planilla de ventas.");
     setSubiendo(true);
     try {
       const form = new FormData();
@@ -198,10 +228,12 @@ export default function Fidelizacion() {
   return (
     <div className="space-y-4">
       <Alert tono="info">
-        <span className="font-medium">Recordatorio de service pendiente.</span> El sistema lee la columna{" "}
-        <span className="font-medium">"Comentario del Asesor"</span> y detecta los clientes con el{" "}
-        <span className="font-medium">1° a 5° service de mantenimiento</span> pendiente para mandarles un recordatorio
-        por WhatsApp. No clasifica la respuesta: es solo un aviso.
+        <span className="font-medium">Recordatorio para que el cliente vuelva al taller.</span> Se sube el Excel y el
+        sistema reconoce solo de cuál de las dos planillas se trata:{" "}
+        <span className="font-medium">turnos de taller</span> (lee "Comentario del Asesor" / "Servicio" y toma únicamente
+        a los que tienen pendiente el <span className="font-medium">1° a 5° service</span>) o{" "}
+        <span className="font-medium">ventas</span> (no trae dato de service, así que toma a todos los{" "}
+        <span className="font-medium">Ford 0km</span> de la planilla). No clasifica la respuesta: es solo un aviso.
       </Alert>
 
       {/* Estado de la plantilla en Meta: el sistema se entera solo por el webhook */}
@@ -232,8 +264,8 @@ export default function Fidelizacion() {
       <Card padding="p-6" className="max-w-2xl">
         <form onSubmit={subir} className="space-y-4">
           <p className="text-sm text-ink-muted">
-            Subí el Excel de agendamientos (el mismo formato que Contacto Posventa, .xls o .xlsx). El sistema detecta
-            solo a los clientes con service 1° a 5° pendiente.
+            Subí el Excel (.xls o .xlsx): la lista de turnos de taller o la planilla de ventas. No hace falta que elijas
+            cuál es, el sistema lo reconoce por las columnas y aplica la regla que corresponde a cada una.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
@@ -278,7 +310,7 @@ export default function Fidelizacion() {
             <EmptyState
               icono={Gift}
               titulo="Todavía no hay cargas"
-              descripcion="Subí el primer Excel de agendamientos para detectar los services pendientes."
+              descripcion="Subí el primer Excel (turnos de taller o planilla de ventas) para armar la lista de destinatarios."
             />
           </div>
         ) : (
@@ -287,6 +319,7 @@ export default function Fidelizacion() {
               <thead>
                 <tr className="border-b bg-gray-50 text-left text-xs uppercase text-ink-muted">
                   <th className="px-4 py-2">Archivo</th>
+                  <th className="px-4 py-2">Planilla</th>
                   <th className="px-4 py-2">Sucursal</th>
                   <th className="px-4 py-2">Fecha</th>
                   <th className="px-4 py-2 text-center">Pendientes</th>
@@ -301,6 +334,11 @@ export default function Fidelizacion() {
                   <tr key={c.id} className="border-b border-gray-100 hover:bg-canvas">
                     <td className="px-4 py-2 text-ink" title={c.filename}>
                       {c.filename.length > 34 ? c.filename.slice(0, 34) + "…" : c.filename}
+                    </td>
+                    <td className="px-4 py-2">
+                      <Badge tono={c.origen === "VENTAS" ? "morado" : "azul"} className="cursor-default">
+                        {LABEL_ORIGEN[c.origen]}
+                      </Badge>
                     </td>
                     <td className="px-4 py-2 text-ink-muted">{c.sucursal}</td>
                     <td className="px-4 py-2 text-ink-muted">{fechaCorta(c.uploadedAt)}</td>
@@ -369,9 +407,13 @@ function DetalleClientes({
   onCerrar: () => void;
 }) {
   const { upload, clientes } = detalle;
+  const esVentas = upload.origen === "VENTAS";
   // "Por enviar" = pendientes + los que quedaron en error (se reintentan).
   const porEnviar = clientes.filter((c) => c.estado === "PENDIENTE" || c.estado === "ERROR").length;
+  // Desglose por service: solo tiene sentido en las cargas de turnos, que son
+  // las únicas que traen el dato.
   const porServicio = clientes.reduce<Record<number, number>>((acc, c) => {
+    if (c.numeroServicio === null) return acc;
     acc[c.numeroServicio] = (acc[c.numeroServicio] ?? 0) + 1;
     return acc;
   }, {});
@@ -383,11 +425,16 @@ function DetalleClientes({
           <span className="font-semibold text-ink">{upload.filename}</span>{" "}
           <span className="text-ink-muted">· {clientes.length} cliente(s) detectados · {upload.sucursal}</span>
           <div className="mt-1 flex flex-wrap gap-1.5">
-            {[1, 2, 3, 4, 5].map((n) =>
-              porServicio[n] ? (
-                <Badge key={n} tono="morado">{n}° service: {porServicio[n]}</Badge>
-              ) : null
-            )}
+            <Badge tono={esVentas ? "morado" : "azul"} className="cursor-default">
+              {LABEL_ORIGEN[upload.origen]}
+            </Badge>
+            {esVentas
+              ? null
+              : [1, 2, 3, 4, 5].map((n) =>
+                  porServicio[n] ? (
+                    <Badge key={n} tono="morado">{n}° service: {porServicio[n]}</Badge>
+                  ) : null
+                )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -408,7 +455,8 @@ function DetalleClientes({
         <table className="min-w-full text-sm">
           <thead className="sticky top-0 bg-gray-50">
             <tr className="border-b text-left text-xs uppercase text-ink-muted">
-              <th className="px-4 py-2 text-center">Service</th>
+              {/* Las cargas de ventas no traen service; ahí lo útil es la entrega. */}
+              <th className="px-4 py-2 text-center">{esVentas ? "Entrega" : "Service"}</th>
               <th className="px-4 py-2">Cliente</th>
               <th className="px-4 py-2">Teléfono</th>
               <th className="px-4 py-2">Modelo</th>
@@ -419,14 +467,22 @@ function DetalleClientes({
           <tbody>
             {clientes.map((c) => (
               <tr key={c.id} className="border-b border-gray-100">
-                <td className="px-4 py-2 text-center font-semibold text-ink">{c.numeroServicio}°</td>
+                <td className="px-4 py-2 text-center font-semibold text-ink">
+                  {esVentas
+                    ? c.fechaEntrega
+                      ? fechaCorta(c.fechaEntrega)
+                      : "—"
+                    : c.numeroServicio !== null
+                      ? `${c.numeroServicio}°`
+                      : "—"}
+                </td>
                 <td className="px-4 py-2 text-ink">{c.nombre}</td>
                 <td className="px-4 py-2 text-ink-muted">{c.telefono || "—"}</td>
                 <td className="px-4 py-2 text-ink-muted">{c.modelo || "—"}</td>
                 <td className="px-4 py-2">
                   <Badge tono={TONO_ESTADO[c.estado]}>{LABEL_ESTADO[c.estado]}</Badge>
                 </td>
-                <td className="px-4 py-2 text-xs text-ink-muted" title={c.comentarioAsesor}>
+                <td className="px-4 py-2 text-xs text-ink-muted" title={c.comentarioAsesor ?? undefined}>
                   {c.error ? <span className="text-red-700">{c.error}</span> : c.enviadoEn ? fechaCorta(c.enviadoEn) : "—"}
                 </td>
               </tr>

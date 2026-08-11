@@ -1,12 +1,12 @@
 import { Request, Response } from "express";
-import { EstadoFidelizacion, Prisma, TipoUpload, UploadStatus } from "@prisma/client";
+import { EstadoFidelizacion, OrigenFidelizacion, Prisma, TipoUpload, UploadStatus } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { env } from "../config/env";
 import { abrirWorkbook } from "../services/excel.service";
 import {
   encolarEnviosFidelizacion,
-  parsearFidelizacion,
+  parsearPlanillaFidelizacion,
   progresoColaFidelizacion,
 } from "../services/fidelizacion.service";
 import {
@@ -56,10 +56,13 @@ export async function subirFidelizacion(req: Request, res: Response) {
     return res.status(400).json({ message: "El archivo Excel no tiene ninguna hoja." });
   }
 
-  const parseo = parsearFidelizacion(workbook, workbook.SheetNames[0]);
+  // El formato (turnos de Ford o planilla de ventas) se detecta solo por las
+  // columnas: la usuaria sube el Excel que tenga y no elige nada.
+  const parseo = parsearPlanillaFidelizacion(workbook, workbook.SheetNames[0]);
   if ("error" in parseo) {
     return res.status(400).json({ message: parseo.error });
   }
+  const esVentas = parseo.resumen.formato === OrigenFidelizacion.VENTAS;
 
   const periodo = parseo.periodoSugerido ?? new Date().toISOString().slice(0, 7);
 
@@ -81,9 +84,9 @@ export async function subirFidelizacion(req: Request, res: Response) {
   const registros = parseo.candidatos.map((c) => {
     const telefonosNorm = [...new Set([c.whatsappNorm, c.celularNorm].filter((t): t is string => !!t))];
     const telefono = telefonosNorm[0] ?? c.telefonoCrudo ?? "";
-    const sinTelefono = telefonosNorm.length === 0;
     return {
       uploadId: upload.id,
+      origen: c.origen,
       nombre: c.nombre,
       telefono,
       telefonosNorm,
@@ -92,9 +95,13 @@ export async function subirFidelizacion(req: Request, res: Response) {
       asesor: c.asesor,
       numeroServicio: c.numeroServicio,
       comentarioAsesor: c.comentarioAsesor,
-      sucursal,
-      estado: sinTelefono ? EstadoFidelizacion.OMITIDO : EstadoFidelizacion.PENDIENTE,
-      error: sinTelefono ? "Sin teléfono válido (WhatsApp/celular)." : null,
+      fechaEntrega: c.fechaEntrega,
+      // La planilla de ventas trae la provincia por fila, y es la que gobierna
+      // quién ve la conversación en Seguimiento; si no vino, queda la de la carga.
+      sucursal: c.provincia ?? sucursal,
+      // Las filas con motivo (sin teléfono, teléfono repetido) NO se envían.
+      estado: c.motivoOmision ? EstadoFidelizacion.OMITIDO : EstadoFidelizacion.PENDIENTE,
+      error: c.motivoOmision,
     };
   });
 
@@ -110,24 +117,41 @@ export async function subirFidelizacion(req: Request, res: Response) {
     entidadId: upload.id,
     detalles: {
       tipo: "FIDELIZACION",
+      formato: parseo.resumen.formato,
       sucursal,
       totalFilas: parseo.resumen.totalFilas,
       candidatos: registros.length,
       pendientes,
-      fueraDeRango: parseo.resumen.servicioFueraDeRango,
-      sinService: parseo.resumen.sinServicio,
+      ...(esVentas
+        ? {
+            noElegibles: parseo.resumen.noElegibles,
+            duplicados: parseo.resumen.duplicados,
+          }
+        : {
+            fueraDeRango: parseo.resumen.servicioFueraDeRango,
+            sinService: parseo.resumen.sinServicio,
+          }),
       sinTelefono: parseo.resumen.sinTelefono,
     },
   });
 
-  res.status(201).json({
-    message:
-      `Carga lista: se detectaron ${registros.length} cliente(s) con service 1° a 5° pendiente ` +
+  const r = parseo.resumen;
+  const message = esVentas
+    ? `Planilla de ventas: de ${r.totalFilas} fila(s) se tomaron ${registros.length} Ford 0km ` +
+      `(${pendientes} listos para el recordatorio). ` +
+      `${r.noElegibles} no eran Ford 0km (usados, venta directa u otra marca), ` +
+      `${r.duplicados} tenían un teléfono repetido y ${r.sinTelefono} no tenían teléfono usable: ` +
+      `esos NO reciben el mensaje.`
+    : `Carga lista: se detectaron ${registros.length} cliente(s) con service 1° a 5° pendiente ` +
       `(${pendientes} con teléfono, listos para el recordatorio). ` +
-      `${parseo.resumen.servicioFueraDeRango} tenían un service 6° o superior y ` +
-      `${parseo.resumen.sinServicio} no eran un service de mantenimiento: esos NO reciben recordatorio.`,
+      `${r.servicioFueraDeRango} tenían un service 6° o superior y ` +
+      `${r.sinServicio} no eran un service de mantenimiento: esos NO reciben recordatorio.`;
+
+  res.status(201).json({
+    message,
     uploadId: upload.id,
-    resumen: parseo.resumen,
+    formato: r.formato,
+    resumen: r,
     pendientes,
   });
 }
@@ -141,12 +165,22 @@ export async function listarFidelizacion(_req: Request, res: Response) {
     take: 100,
   });
 
-  // Conteos por estado para cada carga (una sola consulta agrupada).
-  const conteos = await prisma.clienteFidelizacion.groupBy({
-    by: ["uploadId", "estado"],
-    where: { uploadId: { in: uploads.map((u) => u.id) } },
-    _count: { _all: true },
-  });
+  const ids = uploads.map((u) => u.id);
+
+  // Conteos por estado para cada carga (una sola consulta agrupada) y de qué
+  // planilla salió cada carga (turnos de Ford o ventas), para mostrarlo en la lista.
+  const [conteos, origenes] = await Promise.all([
+    prisma.clienteFidelizacion.groupBy({
+      by: ["uploadId", "estado"],
+      where: { uploadId: { in: ids } },
+      _count: { _all: true },
+    }),
+    prisma.clienteFidelizacion.groupBy({
+      by: ["uploadId", "origen"],
+      where: { uploadId: { in: ids } },
+      _count: { _all: true },
+    }),
+  ]);
 
   const porUpload = new Map<string, Record<string, number>>();
   for (const c of conteos) {
@@ -155,12 +189,23 @@ export async function listarFidelizacion(_req: Request, res: Response) {
     porUpload.set(c.uploadId, m);
   }
 
+  // Una carga sale de un solo archivo, así que tiene un solo origen; igual se
+  // toma el mayoritario por si alguna carga vieja quedara mezclada.
+  const origenPorUpload = new Map<string, { origen: OrigenFidelizacion; filas: number }>();
+  for (const o of origenes) {
+    const actual = origenPorUpload.get(o.uploadId);
+    if (!actual || o._count._all > actual.filas) {
+      origenPorUpload.set(o.uploadId, { origen: o.origen, filas: o._count._all });
+    }
+  }
+
   res.json({
     data: uploads.map((u) => {
       const e = porUpload.get(u.id) ?? {};
       return {
         id: u.id,
         filename: u.filename,
+        origen: origenPorUpload.get(u.id)?.origen ?? OrigenFidelizacion.TURNOS,
         sucursal: u.sucursal,
         periodo: u.periodo,
         uploadedBy: u.uploadedBy,
@@ -185,6 +230,8 @@ export async function detalleFidelizacion(req: Request, res: Response) {
 
   const clientes = await prisma.clienteFidelizacion.findMany({
     where: { uploadId: upload.id },
+    // En VENTAS no hay service: esas filas ordenan por nombre (numeroServicio es
+    // null y Postgres los manda al final, así que el orden queda estable igual).
     orderBy: [{ numeroServicio: "asc" }, { nombre: "asc" }],
   });
 
@@ -192,6 +239,7 @@ export async function detalleFidelizacion(req: Request, res: Response) {
     upload: {
       id: upload.id,
       filename: upload.filename,
+      origen: clientes[0]?.origen ?? OrigenFidelizacion.TURNOS,
       sucursal: upload.sucursal,
       periodo: upload.periodo,
       uploadedAt: upload.uploadedAt,
@@ -199,12 +247,15 @@ export async function detalleFidelizacion(req: Request, res: Response) {
     },
     clientes: clientes.map((c) => ({
       id: c.id,
+      origen: c.origen,
       nombre: c.nombre,
       telefono: c.telefono,
       modelo: c.modelo,
       patente: c.patente,
       asesor: c.asesor,
       numeroServicio: c.numeroServicio,
+      fechaEntrega: c.fechaEntrega,
+      sucursal: c.sucursal,
       estado: c.estado,
       error: c.error,
       enviadoEn: c.enviadoEn,
