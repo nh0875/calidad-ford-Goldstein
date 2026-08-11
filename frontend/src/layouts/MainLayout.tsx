@@ -4,6 +4,7 @@ import {
   ClipboardList,
   GitBranch,
   Gift,
+  HeartHandshake,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -29,7 +30,12 @@ import { claseBoton } from "../components/ui/Button";
 import PageTransition from "../components/ui/PageTransition";
 import CartelAvisos from "../components/CartelAvisos";
 
-const navItems: Array<{ to: string; label: string; icono: LucideIcon }> = [
+// `exacto` = el link solo se marca activo con esa ruta EXACTA. Hace falta cuando
+// una sub-ruta tiene su propio ítem en el menú (/fidelizacion y
+// /fidelizacion/clientes), porque si no se marcarían las dos a la vez. Los que no
+// lo tienen se marcan también en sus sub-rutas (ej. /rqr con /rqr/nuevo), que es
+// lo que se quiere ahí.
+const navItems: Array<{ to: string; label: string; icono: LucideIcon; exacto?: boolean }> = [
   { to: "/dashboard", label: "Dashboard", icono: LayoutDashboard },
   { to: "/upload", label: "Carga de Excel", icono: UploadCloud },
   { to: "/casos", label: "Casos", icono: ClipboardList },
@@ -38,7 +44,8 @@ const navItems: Array<{ to: string; label: string; icono: LucideIcon }> = [
   { to: "/rqr", label: "RQR", icono: MessageSquareWarning },
   { to: "/seguimiento", label: "Seguimiento", icono: MessagesSquare },
   { to: "/refuerzos", label: "Refuerzo Ford", icono: ClipboardCheck },
-  { to: "/fidelizacion", label: "Fidelización", icono: Gift },
+  { to: "/fidelizacion", label: "Fidelización", icono: Gift, exacto: true },
+  { to: "/fidelizacion/clientes", label: "Clientes de fidelización", icono: HeartHandshake },
 ];
 
 const pageTitles: Record<string, string> = {
@@ -55,7 +62,8 @@ const pageTitles: Record<string, string> = {
   "/auditoria": "Auditoría del sistema",
   "/configuracion": "Configuración",
   "/refuerzos": "Refuerzo de encuesta Ford",
-  "/fidelizacion": "Fidelización — recordatorio de service pendiente",
+  "/fidelizacion": "Fidelización — carga de planillas",
+  "/fidelizacion/clientes": "Clientes de fidelización",
   "/cambiar-password": "Cambiar mi contraseña",
 };
 
@@ -127,6 +135,7 @@ export default function MainLayout() {
             <NavLink
               key={item.to}
               to={item.to}
+              end={item.exacto}
               className={({ isActive }) =>
                 `group flex items-center gap-3 rounded-md border-l-[3px] py-2 pl-3 pr-3 text-sm transition-colors ${
                   isActive

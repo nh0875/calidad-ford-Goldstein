@@ -11,8 +11,27 @@ import {
   progresoFidelizacion,
   subirFidelizacion,
 } from "../controllers/fidelizacion.controller";
+import {
+  crearClienteFidelizacion,
+  editarClienteFidelizacion,
+  eliminarClienteFidelizacion,
+  enviarClienteFidelizacion,
+  excluirClienteFidelizacion,
+  listarClientesFidelizacion,
+} from "../controllers/fidelizacion-cliente.controller";
 
 const router = Router();
+
+// --- Destinatarios (pantalla "Clientes de fidelización") ---
+// VAN ANTES de las rutas /:id, si no "clientes" se toma como el id de una carga.
+// El alta y la edición NO son solo de ADMIN: son operatoria diaria de Calidad
+// (mismo criterio que el alta manual de casos). El borrado sí es de ADMIN.
+router.get("/clientes", asyncHandler(listarClientesFidelizacion));
+router.post("/clientes", asyncHandler(crearClienteFidelizacion));
+router.patch("/clientes/:id", asyncHandler(editarClienteFidelizacion));
+router.post("/clientes/:id/excluir", asyncHandler(excluirClienteFidelizacion));
+router.post("/clientes/:id/enviar", asyncHandler(enviarClienteFidelizacion));
+router.delete("/clientes/:id", requireAdmin, asyncHandler(eliminarClienteFidelizacion));
 
 // Subir el Excel de agendamientos: detecta los clientes con service 1°-5°
 // pendiente y los deja PENDIENTE (mismo formato Ford, .xls o .xlsx).

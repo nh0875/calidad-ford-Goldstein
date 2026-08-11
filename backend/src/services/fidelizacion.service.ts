@@ -21,6 +21,11 @@ import { env } from "../config/env";
 import { prisma } from "../config/prisma";
 import { fidelizacionQueue } from "../jobs/queues";
 import {
+  estadoMeta,
+  obtenerCredencialesMeta,
+  obtenerEstadoPlantillaFidelizacion,
+} from "./configuracion.service";
+import {
   CampoCaso,
   derivarPeriodoDeFilas,
   parsearFecha,
@@ -476,12 +481,12 @@ export async function encolarEnviosFidelizacion(uploadId: string): Promise<numbe
   // aprobara la plantilla) vuelven a PENDIENTE para poder reenviarlos. Los
   // OMITIDO (sin teléfono / suprimidos) NO se tocan: son descartes a propósito.
   await prisma.clienteFidelizacion.updateMany({
-    where: { uploadId, estado: EstadoFidelizacion.ERROR },
+    where: { uploadId, estado: EstadoFidelizacion.ERROR, eliminadoEn: null },
     data: { estado: EstadoFidelizacion.PENDIENTE, error: null },
   });
 
   const clientes = await prisma.clienteFidelizacion.findMany({
-    where: { uploadId, estado: EstadoFidelizacion.PENDIENTE },
+    where: { uploadId, estado: EstadoFidelizacion.PENDIENTE, eliminadoEn: null },
     select: { id: true },
     orderBy: { createdAt: "asc" },
   });
@@ -519,6 +524,95 @@ export async function encolarEnviosFidelizacion(uploadId: string): Promise<numbe
   );
 
   return clientes.length;
+}
+
+// Estados de Meta que NO permiten enviar (todo lo que no sea aprobado). "" =
+// sin confirmar todavía: se deja intentar (si falla, el error lo explica).
+export function plantillaBloqueaEnvio(estado: string): boolean {
+  return estado !== "" && estado.toUpperCase() !== "APPROVED";
+}
+
+/**
+ * Chequea si hoy se puede mandar un recordatorio de fidelización. Devuelve null
+ * si se puede, o el motivo (texto para mostrarle a la usuaria) si no.
+ * Lo comparten el envío por carga y el envío individual.
+ */
+export async function motivoBloqueoEnvio(): Promise<string | null> {
+  if (env.modoDemo) return null;
+
+  const meta = await estadoMeta();
+  if (!meta.completo) {
+    return (
+      "Faltan las credenciales de WhatsApp en Configuración (token y phone number ID de Meta). " +
+      "Cargálas y probá la conexión antes de enviar."
+    );
+  }
+
+  // La plantilla tiene que estar aprobada por Meta. Si Meta ya avisó por el
+  // webhook que NO está aprobada, no se envía (para no dejar todo en Error).
+  const estadoPlantilla = await obtenerEstadoPlantillaFidelizacion();
+  if (plantillaBloqueaEnvio(estadoPlantilla)) {
+    const creds = await obtenerCredencialesMeta();
+    return (
+      `La plantilla "${creds.fidelizacionTemplateName}" todavía no está aprobada por Meta ` +
+      `(estado actual: ${estadoPlantilla}). Vas a poder enviar los recordatorios en cuanto ` +
+      `Meta la apruebe; el sistema lo detecta solo.`
+    );
+  }
+  return null;
+}
+
+/**
+ * Encola el recordatorio de UN cliente puntual (el que se agregó a mano, o el que
+ * falló y se quiere reintentar sin remandar toda la carga). Devuelve false si el
+ * cliente no está en condiciones de recibirlo (ya enviado, excluido, sin teléfono).
+ */
+export async function encolarEnvioFidelizacionCliente(clienteId: string): Promise<boolean> {
+  const cliente = await prisma.clienteFidelizacion.findFirst({
+    where: { id: clienteId, eliminadoEn: null },
+    select: { id: true, estado: true, telefonosNorm: true },
+  });
+  if (!cliente) return false;
+  // OMITIDO es una exclusión deliberada: no se pisa desde acá (para eso está
+  // "reincorporar"). ENVIADO tampoco se remanda solo.
+  if (cliente.estado !== EstadoFidelizacion.PENDIENTE && cliente.estado !== EstadoFidelizacion.ERROR) {
+    return false;
+  }
+  if (cliente.telefonosNorm.length === 0) return false;
+
+  if (cliente.estado === EstadoFidelizacion.ERROR) {
+    await prisma.clienteFidelizacion.update({
+      where: { id: cliente.id },
+      data: { estado: EstadoFidelizacion.PENDIENTE, error: null },
+    });
+  }
+
+  // Mismo jobId que el envío por carga: si quedó un job viejo terminado, se saca
+  // para que este pueda encolarse.
+  const jobId = `fidel-${cliente.id}`;
+  try {
+    const job = await fidelizacionQueue.getJob(jobId);
+    if (job) {
+      const estado = await job.getState();
+      if (estado === "failed" || estado === "completed") await job.remove();
+      else return true; // ya está en cola / enviándose
+    }
+  } catch {
+    // best-effort
+  }
+
+  await fidelizacionQueue.add(
+    "enviar-fidelizacion",
+    { clienteId: cliente.id },
+    {
+      jobId,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: { age: 3600, count: 5000 },
+      removeOnFail: { age: 24 * 3600 },
+    }
+  );
+  return true;
 }
 
 export async function progresoColaFidelizacion() {

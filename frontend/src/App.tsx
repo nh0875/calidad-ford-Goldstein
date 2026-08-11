@@ -17,6 +17,7 @@ import Auditoria from "./pages/Auditoria";
 import Configuracion from "./pages/Configuracion";
 import Refuerzos from "./pages/Refuerzos";
 import Fidelizacion from "./pages/Fidelizacion";
+import ClientesFidelizacion from "./pages/ClientesFidelizacion";
 import Supresion from "./pages/Supresion";
 import Normalizacion from "./pages/Normalizacion";
 
@@ -45,6 +46,7 @@ export default function App() {
           <Route path="/rqr/nuevo" element={<RqrNuevo />} />
           <Route path="/refuerzos" element={<Refuerzos />} />
           <Route path="/fidelizacion" element={<Fidelizacion />} />
+          <Route path="/fidelizacion/clientes" element={<ClientesFidelizacion />} />
           <Route path="/rqr/:id" element={<RqrDetalle />} />
           <Route path="/usuarios" element={<Usuarios />} />
           <Route path="/supresion" element={<Supresion />} />

@@ -184,7 +184,7 @@ export async function listarConversaciones(req: Request, res: Response) {
     }),
     // Fidelización: sin restricción de área (la ve cualquiera de la provincia).
     prisma.clienteFidelizacion.findMany({
-      where: { mensajes: { some: {} } },
+      where: { eliminadoEn: null, mensajes: { some: {} } },
       select: {
         id: true,
         nombre: true,
@@ -311,7 +311,7 @@ export async function contarPendientesSeguimiento(req: Request, res: Response) {
     }),
     // Fidelización que pidió turno con asesor (sin restricción de área).
     prisma.clienteFidelizacion.findMany({
-      where: { quiereAsesorEn: { not: null } },
+      where: { eliminadoEn: null, quiereAsesorEn: { not: null } },
       select: { sucursal: true },
     }),
   ]);

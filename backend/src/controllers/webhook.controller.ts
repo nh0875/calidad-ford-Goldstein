@@ -67,6 +67,7 @@ function extraerContenido(mensaje: MensajeEntranteMeta): string {
 function buscarClienteFidelizacion(candidatos: string[]) {
   return prisma.clienteFidelizacion.findFirst({
     where: {
+      eliminadoEn: null,
       estado: EstadoFidelizacion.ENVIADO,
       OR: [{ telefono: { in: candidatos } }, { telefonosNorm: { hasSome: candidatos } }],
     },

@@ -575,6 +575,10 @@ async function procesarEnvioFidelizacion(job: Job<DatosFidelizacion>, token?: st
   if (!cliente) {
     throw new UnrecoverableError("El cliente de fidelización ya no existe en la base.");
   }
+  // Lo borraron (lógicamente) entre que se encoló y se procesó: no se le escribe.
+  if (cliente.eliminadoEn) {
+    return { omitido: "cliente eliminado" };
+  }
 
   // Idempotencia: si ya no está PENDIENTE (ya se envió/omitió), no se reenvía.
   if (cliente.estado !== EstadoFidelizacion.PENDIENTE) {

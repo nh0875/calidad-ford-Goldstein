@@ -6,21 +6,16 @@ import { env } from "../config/env";
 import { abrirWorkbook } from "../services/excel.service";
 import {
   encolarEnviosFidelizacion,
+  motivoBloqueoEnvio,
   parsearPlanillaFidelizacion,
+  plantillaBloqueaEnvio,
   progresoColaFidelizacion,
 } from "../services/fidelizacion.service";
 import {
-  estadoMeta,
   obtenerCredencialesMeta,
   obtenerEstadoPlantillaFidelizacion,
 } from "../services/configuracion.service";
 import { ACCIONES, auditar } from "../services/audit.service";
-
-// Estados de Meta que NO permiten enviar (todo lo que no sea aprobado). "" =
-// sin confirmar todavía: se deja intentar (si falla, el error lo explica).
-function plantillaBloqueaEnvio(estado: string): boolean {
-  return estado !== "" && estado.toUpperCase() !== "APPROVED";
-}
 
 // ---------- POST /api/fidelizacion (subir Excel y detectar candidatos) ----------
 // A diferencia del Contacto Posventa, acá NO hay paso de preview/confirm ni
@@ -172,12 +167,12 @@ export async function listarFidelizacion(_req: Request, res: Response) {
   const [conteos, origenes] = await Promise.all([
     prisma.clienteFidelizacion.groupBy({
       by: ["uploadId", "estado"],
-      where: { uploadId: { in: ids } },
+      where: { uploadId: { in: ids }, eliminadoEn: null },
       _count: { _all: true },
     }),
     prisma.clienteFidelizacion.groupBy({
       by: ["uploadId", "origen"],
-      where: { uploadId: { in: ids } },
+      where: { uploadId: { in: ids }, eliminadoEn: null },
       _count: { _all: true },
     }),
   ]);
@@ -229,7 +224,7 @@ export async function detalleFidelizacion(req: Request, res: Response) {
   if (!upload) return res.status(404).json({ message: "No se encontró la carga de fidelización." });
 
   const clientes = await prisma.clienteFidelizacion.findMany({
-    where: { uploadId: upload.id },
+    where: { uploadId: upload.id, eliminadoEn: null },
     // En VENTAS no hay service: esas filas ordenan por nombre (numeroServicio es
     // null y Postgres los manda al final, así que el orden queda estable igual).
     orderBy: [{ numeroServicio: "asc" }, { nombre: "asc" }],
@@ -272,29 +267,9 @@ export async function enviarFidelizacion(req: Request, res: Response) {
   });
   if (!upload) return res.status(404).json({ message: "No se encontró la carga de fidelización." });
 
-  // Sin credenciales de Meta (y sin MODO_DEMO) no tiene sentido encolar.
-  if (!env.modoDemo) {
-    const meta = await estadoMeta();
-    if (!meta.completo) {
-      return res.status(409).json({
-        message:
-          "Faltan las credenciales de WhatsApp en Configuración (token y phone number ID de Meta). " +
-          "Cargálas y probá la conexión antes de enviar.",
-      });
-    }
-    // La plantilla tiene que estar aprobada por Meta. Si Meta ya avisó por el
-    // webhook que NO está aprobada, no se envía (para no dejar todo en Error).
-    const estadoPlantilla = await obtenerEstadoPlantillaFidelizacion();
-    if (plantillaBloqueaEnvio(estadoPlantilla)) {
-      const creds = await obtenerCredencialesMeta();
-      return res.status(409).json({
-        message:
-          `La plantilla "${creds.fidelizacionTemplateName}" todavía no está aprobada por Meta ` +
-          `(estado actual: ${estadoPlantilla}). Vas a poder enviar los recordatorios en cuanto ` +
-          `Meta la apruebe; el sistema lo detecta solo.`,
-      });
-    }
-  }
+  // Sin credenciales de Meta o sin la plantilla aprobada no tiene sentido encolar.
+  const bloqueo = await motivoBloqueoEnvio();
+  if (bloqueo) return res.status(409).json({ message: bloqueo });
 
   const encolados = await encolarEnviosFidelizacion(upload.id);
 

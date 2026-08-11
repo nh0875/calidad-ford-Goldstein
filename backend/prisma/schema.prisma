@@ -25,6 +25,7 @@ enum TipoUpload {
 enum OrigenFidelizacion {
   TURNOS
   VENTAS
+  MANUAL // alta a mano desde la pantalla, para el cliente que no vino en ninguna planilla
 }
 
 // Estado del recordatorio de fidelización por cliente (Parte C: recordatorio de
@@ -206,6 +207,12 @@ model ClienteFidelizacion {
   // de que un asesor lo llame. Se resalta en Seguimiento. null = no lo pidió.
   quiereAsesorEn DateTime?
   createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  // Borrado lógico (solo ADMIN); los listados excluyen los eliminados.
+  eliminadoEn    DateTime?
+  eliminadoPorId String?
+  eliminadoPor   Usuario?  @relation("ClienteFidelizacionEliminadoPor", fields: [eliminadoPorId], references: [id])
 
   // Conversación: recordatorio saliente + respuestas del cliente (se ven en
   // Seguimiento igual que las de un Caso).
@@ -213,6 +220,8 @@ model ClienteFidelizacion {
 
   @@index([uploadId])
   @@index([estado])
+  @@index([origen])
+  @@index([eliminadoEn])
 }
 
 // Cada fila del seguimiento post-servicio ("Contacto Posterior")
@@ -442,6 +451,7 @@ model Usuario {
 
   auditLogs          AuditLog[]
   casosEliminados    Caso[]               @relation("CasoEliminadoPor")
+  fidelizacionesEliminadas ClienteFidelizacion[] @relation("ClienteFidelizacionEliminadoPor")
   rqrsEliminados     RQR[]                @relation("RQREliminadoPor")
   uploadsEliminados  ExcelUpload[]        @relation("ExcelUploadEliminadoPor")
   tareasAsignadas    TareaRefuerzo[]      @relation("TareaAsignada")

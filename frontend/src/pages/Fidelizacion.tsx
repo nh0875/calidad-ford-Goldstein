@@ -7,6 +7,7 @@
 //  - Ventas de la agencia: no trae dato de service, así que toma a todos los
 //    Ford 0km de la planilla.
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { FileUp, Gift, Send, Trash2, Users } from "lucide-react";
 import { apiDelete, apiGet, apiPostForm, apiPostJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
@@ -304,7 +305,12 @@ export default function Fidelizacion() {
 
       {/* Historial de cargas */}
       <Card padding="p-0">
-        <div className="border-b px-4 py-3 text-sm font-semibold text-ink">Cargas de fidelización</div>
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <span className="text-sm font-semibold text-ink">Cargas de fidelización</span>
+          <Link to="/fidelizacion/clientes" className="text-xs font-medium text-accent-dark hover:underline">
+            Ver todos los clientes →
+          </Link>
+        </div>
         {cargas.length === 0 ? (
           <div className="p-6">
             <EmptyState
