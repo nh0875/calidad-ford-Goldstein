@@ -37,16 +37,13 @@ export interface ResultadoAnalisis {
 }
 
 // El modelo sugiere semáforo y severidad, pero la REGLA DE NEGOCIO manda (en
-// código, no delegada al modelo): ROJO siempre abre RQR; AMARILLO solo si la
-// severidad es MODERADA o GRAVE (un AMARILLO LEVE no escala a RQR automático,
-// aunque el modelo esté muy seguro de la clasificación). La confianza ya NO
-// decide la apertura: mide certeza del análisis, no gravedad del reclamo.
-export function aplicarReglaRQR(semaforo: Semaforo | null, severidad: Severidad | null): boolean {
-  if (semaforo === Semaforo.ROJO) return true;
-  if (semaforo === Semaforo.AMARILLO) {
-    return severidad === Severidad.MODERADA || severidad === Severidad.GRAVE;
-  }
-  return false;
+// código, no delegada al modelo): CUALQUIER objeción abre RQR. ROJO y AMARILLO
+// (con cualquier severidad, incluso LEVE) escalan a RQR automático; solo VERDE o
+// "sin clasificar" (null) no abren. Decisión del área de Calidad: preferimos
+// revisar de más antes que dejar pasar una queja porque el cliente también elogió
+// algo. La severidad se sigue usando para priorizar/reportar, no para decidir la apertura.
+export function aplicarReglaRQR(semaforo: Semaforo | null, _severidad: Severidad | null): boolean {
+  return semaforo === Semaforo.ROJO || semaforo === Semaforo.AMARILLO;
 }
 
 // ---------- Validación de la respuesta del modelo ----------
