@@ -51,11 +51,14 @@ frontend/.vite/
 uploads-temp/
 calidad-uploads/
 
-# Compose de la PC local (build-based): lo usan las PCs de la oficina (Vanina /
-# Yesica) y los scripts de Windows (vigilante, iniciar-sistema). NO va al repo:
-# la regla de INDEN es sin `build:` en los compose; el del repo (docker-compose.yml)
-# usa imagenes de GHCR. Se distribuye dentro del ZIP de instalacion, no por git.
-docker-compose.prod.yml
+# NOTA (ago-2026): docker-compose.prod.yml VOLVIO al repo.
+# Es el compose de la PC local (build-based) que usan las PCs de la oficina y los
+# scripts de Windows. Estuvo ignorado porque la regla de INDEN pide composes sin
+# `build:`, pero esa regla aplica a lo que corre el SERVIDOR y para eso esta
+# docker-compose.yml (imagenes de GHCR), que es el que Portainer tiene apuntado.
+# Dejarlo afuera significaba que la infraestructura multimarca (Ford + Volkswagen)
+# viviera sin versionar ni respaldar en un solo disco. No lleva secretos: todos
+# los valores entran por ${...} desde .env.prod, que SI sigue fuera del repo.
 docker-compose.local.yml
 
 # ===== Logs y sistema =====

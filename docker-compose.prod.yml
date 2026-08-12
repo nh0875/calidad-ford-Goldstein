@@ -1,0 +1,296 @@
+# Stack de PRODUCCIÓN: imágenes compiladas, sin volúmenes de código ni
+# puertos de base de datos expuestos. Uso:
+#   cp .env.prod.example .env.prod   (y completar credenciales)
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# ---------------------------------------------------------------------------
+# DOS MARCAS EN EL MISMO STACK (Ford y Volkswagen)
+# ---------------------------------------------------------------------------
+# Corre el MISMO código dos veces, cada copia contra su PROPIA base de datos:
+#   backend    -> base calidad_ford   (Redis DB 0)   · pantalla en HTTP_PORT (80)
+#   backend-vw -> base calidad_vw     (Redis DB 1)   · pantalla en HTTP_PORT_VW (8080)
+#
+# El aislamiento NO depende de que el código filtre bien: el backend de una marca
+# no tiene conexión abierta a la base de la otra. No hay consulta, por descuidada
+# que sea, que pueda traer una fila de la otra marca.
+#
+# Postgres y Redis NO se duplican (son los que consumen memoria en reposo); sí se
+# duplican los procesos Node y el nginx, que son livianos.
+#
+# Para levantar SOLO Ford (sin VW), usar el perfil por defecto:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+# Los servicios de VW están bajo el perfil "vw" y no arrancan salvo que se pida:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod --profile vw up -d
+# ---------------------------------------------------------------------------
+
+# Config común a los backends de las dos marcas. Lo que cambia por marca (base,
+# credenciales de Meta, admin inicial) se declara en cada servicio.
+x-backend-comun: &backend-comun
+  build:
+    context: ./backend
+    dockerfile: Dockerfile.prod
+  restart: unless-stopped
+  volumes:
+    # Solo lectura: el backend lee el estado que escribe el contenedor de backup
+    - backup_status:/var/backup-status:ro
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+    interval: 15s
+    timeout: 5s
+    retries: 5
+    start_period: 30s
+
+# Variables que valen IGUAL para las dos marcas. Ojo con las que NO están acá:
+#  - MAX_ENVIOS_DIARIOS sí está, pero cada backend lleva su propio conteo contra
+#    su propia base, así que cada marca tiene su cupo (no se lo comen entre sí).
+#  - CONFIG_ENCRYPTION_KEY se COMPARTE a propósito: es una sola clave que
+#    proteger y respaldar. Perderla deja ilegibles los tokens de Meta cifrados.
+#  - JWT_SECRET NO está acá: cada marca firma sus sesiones con su propia clave.
+x-backend-env-comun: &backend-env-comun
+  NODE_ENV: production
+  PORT: 3000
+  # Zona horaria del proceso: sin esto el contenedor corre en UTC y las
+  # fechas "de hoy", la ventana de envío y los reportes por día se corren
+  # 3 horas (a la madrugada un caso caería en el día siguiente).
+  TZ: ${TZ:-America/Argentina/Buenos_Aires}
+  META_GRAPH_BASE_URL: ${META_GRAPH_BASE_URL:-https://graph.facebook.com/v20.0}
+  WHATSAPP_ENVIO_DELAY_MS: ${WHATSAPP_ENVIO_DELAY_MS:-2500}
+  DIAS_SIN_RESPUESTA_PARA_NC: ${DIAS_SIN_RESPUESTA_PARA_NC:-5}
+  # Ventana horaria y tope diario de envíos de campaña (por marca)
+  MAX_ENVIOS_DIARIOS: ${MAX_ENVIOS_DIARIOS:-200}
+  HORA_INICIO_ENVIO: ${HORA_INICIO_ENVIO:-09:00}
+  HORA_FIN_ENVIO: ${HORA_FIN_ENVIO:-19:00}
+  # Demora del agradecimiento (3 min)
+  DELAY_AGRADECIMIENTO_MS: ${DELAY_AGRADECIMIENTO_MS:-180000}
+  # Ventana de consolidacion de la respuesta del cliente (ver .env)
+  DELAY_ANALISIS_MS: ${DELAY_ANALISIS_MS:-90000}
+  # Cifrado de secretos guardados en Configuración (credenciales de Meta)
+  CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:?definir en .env.prod}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+  AI_PROVIDER: ${AI_PROVIDER:-}
+  ANALISIS_MODO_MOCK: ${ANALISIS_MODO_MOCK:-false}
+  ANALISIS_MAX_POR_MINUTO: ${ANALISIS_MAX_POR_MINUTO:-8}
+  MODO_DEMO: ${MODO_DEMO:-false}
+  JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+  RATE_LIMIT_POR_MINUTO: ${RATE_LIMIT_POR_MINUTO:-100}
+  # Tope aparte y holgado para /webhooks (Meta entrega en ráfagas)
+  RATE_LIMIT_WEBHOOK_POR_MINUTO: ${RATE_LIMIT_WEBHOOK_POR_MINUTO:-600}
+  # Estado del backup para /api/sistema/estado-backup (volumen compartido)
+  BACKUP_STATUS_FILE: /var/backup-status/status.json
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # Tope de memoria: sin esto un contenedor puede consumir toda la VM de WSL2
+    # y tumbar Docker Desktop.
+    # Suma de los topes con UNA marca: 768 + 192 + 1024 + 128 + 256 = 2368m.
+    # Con las DOS marcas se suman 768 (backend-vw) + 128 (web-vw) = 3264m, que
+    # pide subir el memory del .wslconfig de 3GB a 4GB en la PC de 8 GB.
+    # Son TECHOS, no reservas: en reposo el stack usa ~100 MB en total.
+    mem_limit: 768m
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?definir en .env.prod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definir en .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:-calidad_ford}
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-calidad_ford}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    mem_limit: 192m
+    volumes:
+      - redisdata_prod:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ----------------------------- MARCA 1: FORD -----------------------------
+  backend:
+    <<: *backend-comun
+    # El proceso Node (API + workers) es el que más crece: importaciones de
+    # Excel, análisis con IA y exportaciones. Es el tope más alto del stack.
+    mem_limit: 1024m
+    environment:
+      <<: *backend-env-comun
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-calidad_ford}?schema=public
+      # Sin índice = DB 0 de Redis (el default). VW usa la 1.
+      REDIS_URL: redis://redis:6379
+      META_WHATSAPP_TOKEN: ${META_WHATSAPP_TOKEN:-}
+      META_PHONE_NUMBER_ID: ${META_PHONE_NUMBER_ID:-}
+      META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
+      META_TEMPLATE_NAME: ${META_TEMPLATE_NAME:-contacto_posventa}
+      META_TEMPLATE_LANG: ${META_TEMPLATE_LANG:-es_AR}
+      META_TEMPLATE_VENTA_NAME: ${META_TEMPLATE_VENTA_NAME:-contacto_venta}
+      # Plantilla del recordatorio de Fidelización (Parte C)
+      META_FIDELIZACION_TEMPLATE_NAME: ${META_FIDELIZACION_TEMPLATE_NAME:-fidelizacion_posventa}
+      META_RESPUESTA_NO_RECIBIDA_NAME: ${META_RESPUESTA_NO_RECIBIDA_NAME:-respuesta_no_recibida}
+      META_RESPUESTA_NO_RECIBIDA_LANG: ${META_RESPUESTA_NO_RECIBIDA_LANG:-es_AR}
+      JWT_SECRET: ${JWT_SECRET:?definir en .env.prod}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD_INICIAL: ${ADMIN_PASSWORD_INICIAL:-}
+      # CORS restrictivo (dominio real del sistema)
+      FRONTEND_URL: ${FRONTEND_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      # HTTP_BIND permite atar el puerto solo a localhost cuando adelante hay un
+      # reverse proxy (ej. el nginx del servidor de la empresa): HTTP_BIND=127.0.0.1
+      # deja el sitio accesible SOLO por ese nginx, no directo por la IP de la VM.
+      # Por defecto 0.0.0.0 (comportamiento actual en la PC local).
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+    depends_on:
+      - backend
+
+  # -------------------------- MARCA 2: VOLKSWAGEN --------------------------
+  # Bajo el perfil "vw": no arrancan salvo que se pase --profile vw.
+
+  # Crea la base de VW dentro del MISMO Postgres si todavía no existe. Corre una
+  # sola vez por arranque y termina; backend-vw espera a que termine bien.
+  # (El init de la imagen de Postgres solo corre con el volumen vacío, y acá el
+  # volumen ya tiene la base de Ford, así que la de VW hay que crearla aparte.)
+  init-db-vw:
+    image: postgres:16-alpine
+    profiles: ["vw"]
+    restart: "no"
+    mem_limit: 128m
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      DB_VW: ${POSTGRES_DB_VW:-calidad_vw}
+    command:
+      - sh
+      - -c
+      - createdb "$$DB_VW" 2>/dev/null && echo "base $$DB_VW creada" || echo "la base $$DB_VW ya existe, no se toca"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend-vw:
+    <<: *backend-comun
+    profiles: ["vw"]
+    mem_limit: 768m
+    environment:
+      <<: *backend-env-comun
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB_VW:-calidad_vw}?schema=public
+      # DB 1 de Redis: las colas de BullMQ tienen los mismos nombres en las dos
+      # marcas, así que separarlas por índice evita que se pisen los trabajos.
+      REDIS_URL: redis://redis:6379/1
+      META_WHATSAPP_TOKEN: ${VW_META_WHATSAPP_TOKEN:-}
+      META_PHONE_NUMBER_ID: ${VW_META_PHONE_NUMBER_ID:-}
+      META_WEBHOOK_VERIFY_TOKEN: ${VW_META_WEBHOOK_VERIFY_TOKEN:-}
+      META_TEMPLATE_NAME: ${VW_META_TEMPLATE_NAME:-contacto_posventa}
+      META_TEMPLATE_LANG: ${VW_META_TEMPLATE_LANG:-es_AR}
+      META_TEMPLATE_VENTA_NAME: ${VW_META_TEMPLATE_VENTA_NAME:-contacto_venta}
+      META_FIDELIZACION_TEMPLATE_NAME: ${VW_META_FIDELIZACION_TEMPLATE_NAME:-fidelizacion_posventa}
+      META_RESPUESTA_NO_RECIBIDA_NAME: ${VW_META_RESPUESTA_NO_RECIBIDA_NAME:-respuesta_no_recibida}
+      META_RESPUESTA_NO_RECIBIDA_LANG: ${VW_META_RESPUESTA_NO_RECIBIDA_LANG:-es_AR}
+      # Clave propia: una sesión de Ford no vale en VW ni al revés.
+      # OJO: va con default vacío, NO con `:?`. Compose interpola TODO el archivo
+      # aunque el perfil "vw" esté apagado, así que un `:?` acá haría fallar el
+      # arranque de FORD por una variable de VW. Si falta, el que corta es el
+      # backend de VW al arrancar (env.ts exige JWT_SECRET), que es donde importa.
+      JWT_SECRET: ${VW_JWT_SECRET:-}
+      ADMIN_EMAIL: ${VW_ADMIN_EMAIL:-}
+      ADMIN_PASSWORD_INICIAL: ${VW_ADMIN_PASSWORD_INICIAL:-}
+      FRONTEND_URL: ${VW_FRONTEND_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      init-db-vw:
+        condition: service_completed_successfully
+    networks:
+      default: {}
+      red-vw:
+        # ALIAS "backend": el nginx de la imagen del frontend hace proxy a
+        # http://backend:3000 (está compilado adentro). En la red red-vw ese
+        # nombre resuelve a ESTE contenedor, así que web-vw habla con el backend
+        # de VW sin necesidad de una imagen ni una config distintas.
+        aliases:
+          - backend
+
+  web-vw:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    profiles: ["vw"]
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT_VW:-8080}:80"
+    # SOLO en red-vw: así "backend" resuelve al de VW y no al de Ford.
+    networks:
+      - red-vw
+    depends_on:
+      - backend-vw
+
+  # Backup diario de Postgres + copia offsite S3 + verificación semanal de
+  # integridad. No expone puertos; solo habla con postgres por la red interna.
+  backup:
+    build:
+      context: ./backup
+    restart: unless-stopped
+    # pg_dump + gzip del dump: crece con el tamaño de la base.
+    mem_limit: 256m
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-calidad_ford}
+      TZ: ${BACKUP_TZ:-America/Argentina/Buenos_Aires}
+      BACKUP_HOUR: ${BACKUP_HOUR:-03}
+      VERIFY_DOW: ${VERIFY_DOW:-7}
+      VERIFY_HOUR: ${VERIFY_HOUR:-04}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      VERIFY_MIN_CASOS: ${VERIFY_MIN_CASOS:-1}
+      # Almacenamiento offsite S3-compatible (AWS S3 / Backblaze B2 / DO Spaces).
+      # Si se dejan vacíos, el backup se hace local igual (con aviso en el log).
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_S3_ACCESS_KEY: ${BACKUP_S3_ACCESS_KEY:-}
+      BACKUP_S3_SECRET_KEY: ${BACKUP_S3_SECRET_KEY:-}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-us-east-1}
+    volumes:
+      - backups:/backups
+      - backup_status:/var/backup-status
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  default:
+  # Red exclusiva de VW: existe para que el nombre "backend" resuelva al backend
+  # de VW dentro de web-vw. No lleva tráfico de Ford.
+  red-vw:
+
+volumes:
+  pgdata_prod:
+  redisdata_prod:
+  backups: # dumps locales (rotación configurable)
+  backup_status: # status.json compartido entre backup y backend
