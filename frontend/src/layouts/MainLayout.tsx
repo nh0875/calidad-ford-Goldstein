@@ -28,6 +28,7 @@ import { apiGet, apiPostJson } from "../lib/api";
 import { Badge } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
 import PageTransition from "../components/ui/PageTransition";
+import { getMarca } from "../lib/marca";
 import CartelAvisos from "../components/CartelAvisos";
 
 // `exacto` = el link solo se marca activo con esa ruta EXACTA. Hace falta cuando
@@ -35,7 +36,15 @@ import CartelAvisos from "../components/CartelAvisos";
 // /fidelizacion/clientes), porque si no se marcarían las dos a la vez. Los que no
 // lo tienen se marcan también en sus sub-rutas (ej. /rqr con /rqr/nuevo), que es
 // lo que se quiere ahí.
-const navItems: Array<{ to: string; label: string; icono: LucideIcon; exacto?: boolean }> = [
+// `modulo` ata el item a un módulo de la marca: si esa marca no lo tiene, el
+// item no se muestra (y el backend además responde 404 en sus endpoints).
+const navItems: Array<{
+  to: string;
+  label: string;
+  icono: LucideIcon;
+  exacto?: boolean;
+  modulo?: "fidelizacion" | "refuerzo";
+}> = [
   { to: "/dashboard", label: "Dashboard", icono: LayoutDashboard },
   { to: "/upload", label: "Carga de Excel", icono: UploadCloud },
   { to: "/casos", label: "Casos", icono: ClipboardList },
@@ -43,9 +52,10 @@ const navItems: Array<{ to: string; label: string; icono: LucideIcon; exacto?: b
   { to: "/reportes/causas-raiz", label: "Causas Raíz", icono: GitBranch },
   { to: "/rqr", label: "RQR", icono: MessageSquareWarning },
   { to: "/seguimiento", label: "Seguimiento", icono: MessagesSquare },
-  { to: "/refuerzos", label: "Refuerzo Ford", icono: ClipboardCheck },
-  { to: "/fidelizacion", label: "Fidelización", icono: Gift, exacto: true },
-  { to: "/fidelizacion/clientes", label: "Clientes de fidelización", icono: HeartHandshake },
+  { to: "/refuerzos", label: "Refuerzo de encuesta", icono: ClipboardCheck, modulo: "refuerzo" },
+  // Fidelización solo existe en las marcas que la usan (ver modulo abajo).
+  { to: "/fidelizacion", label: "Fidelización", icono: Gift, exacto: true, modulo: "fidelizacion" },
+  { to: "/fidelizacion/clientes", label: "Clientes de fidelización", icono: HeartHandshake, modulo: "fidelizacion" },
 ];
 
 const pageTitles: Record<string, string> = {
@@ -61,7 +71,7 @@ const pageTitles: Record<string, string> = {
   "/supresion": "Lista de supresión (no contactar)",
   "/auditoria": "Auditoría del sistema",
   "/configuracion": "Configuración",
-  "/refuerzos": "Refuerzo de encuesta Ford",
+  "/refuerzos": "Refuerzo de la encuesta de fábrica",
   "/fidelizacion": "Fidelización — carga de planillas",
   "/fidelizacion/clientes": "Clientes de fidelización",
   "/cambiar-password": "Cambiar mi contraseña",
@@ -93,19 +103,25 @@ export default function MainLayout() {
         ? "Detalle de RQR"
         : "Calidad");
 
+  // Se sacan los items de los módulos que esta marca no usa (ej. Fidelización
+  // en Volkswagen). El backend igual responde 404 en esos endpoints: esconder
+  // la pestaña es comodidad, no la barrera.
+  const modulos = getMarca().modulos;
+  const itemsDeLaMarca = navItems.filter((i) => !i.modulo || modulos[i.modulo]);
+
   // Los links de administración solo aparecen para ADMIN (el backend también lo
   // exige, así que ocultarlos acá es cosmético, no la protección real)
   const items =
     usuario?.rol === "ADMIN"
       ? [
-          ...navItems,
+          ...itemsDeLaMarca,
           { to: "/usuarios", label: "Usuarios", icono: Users },
           { to: "/normalizacion", label: "Normalización", icono: GitMerge },
           { to: "/supresion", label: "Supresión", icono: PhoneOff },
           { to: "/auditoria", label: "Auditoría", icono: ScrollText },
           { to: "/configuracion", label: "Configuración", icono: Settings },
         ]
-      : navItems;
+      : itemsDeLaMarca;
 
   async function cerrarSesion() {
     // Logout efectivo del lado del servidor: revoca el token (denylist en Redis)
@@ -126,7 +142,7 @@ export default function MainLayout() {
         <div className="flex items-center gap-2.5 border-b border-white/10 px-6 py-5">
           <ShieldCheck className="h-6 w-6 text-accent" aria-hidden="true" />
           <div>
-            <h1 className="font-display text-base font-bold tracking-wide">Calidad Ford</h1>
+            <h1 className="font-display text-base font-bold tracking-wide">Calidad {getMarca().nombre}</h1>
             <p className="text-xs text-white/50">Contacto Posterior &amp; RQR</p>
           </div>
         </div>

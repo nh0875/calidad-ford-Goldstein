@@ -3,6 +3,7 @@ import { asyncHandler } from "../middlewares/asyncHandler";
 import { requireAuth } from "../middlewares/auth";
 import { rateLimitGlobal } from "../middlewares/rateLimit";
 import healthRoutes from "./health.routes";
+import marcaRoutes from "./marca.routes";
 import authRoutes from "./auth.routes";
 import webhookRoutes from "./webhook.routes";
 import uploadRoutes from "./upload.routes";
@@ -23,6 +24,7 @@ import supresionRoutes from "./supresion.routes";
 import normalizacionRoutes from "./normalizacion.routes";
 import avisoRoutes from "./aviso.routes";
 import fidelizacionRoutes from "./fidelizacion.routes";
+import { requireFidelizacion, requireRefuerzo } from "../middlewares/marca";
 import seguimientoRoutes from "./seguimiento.routes";
 
 const router = Router();
@@ -32,6 +34,9 @@ const router = Router();
 // /webhooks: Meta entrega mensajes en ráfagas desde pocas IPs; se protege sola
 // con META_WEBHOOK_VERIFY_TOKEN y no debe caer bajo el límite por IP.
 router.use("/health", healthRoutes);
+// /marca: qué marca es esta instancia y qué módulos tiene. Pública porque la
+// pantalla de login ya la necesita (no expone nada sensible).
+router.use("/marca", marcaRoutes);
 router.use("/webhooks", webhookRoutes);
 
 // ---------- A partir de acá, límite general por IP (anti abuso / loops) ----------
@@ -60,11 +65,14 @@ router.use("/sistema", sistemaRoutes); // solo ADMIN adentro
 router.use("/admin", adminRoutes); // solo ADMIN adentro (restaurar borrados)
 router.use("/demo", demoRoutes); // simulación para demostraciones (MODO_DEMO)
 router.use("/configuracion", configuracionRoutes); // textos de mensajes automáticos
-router.use("/refuerzos", refuerzoRoutes); // tareas de refuerzo de encuesta Ford
+router.use("/refuerzos", requireRefuerzo, refuerzoRoutes); // tareas de refuerzo de la encuesta de fábrica
 router.use("/supresion", supresionRoutes); // lista de supresión por teléfono (solo ADMIN)
 router.use("/normalizacion", normalizacionRoutes); // normalización de asesores/sucursales (solo ADMIN)
 router.use("/avisos", avisoRoutes); // cartel rojo en pantalla (RQR abierto, escaladas, amarillos)
-router.use("/fidelizacion", fidelizacionRoutes); // Parte C: recordatorio de service pendiente (1°-5°)
+// Fidelización solo existe en las marcas que la usan (Ford sí, Volkswagen no):
+// requireFidelizacion responde 404 en las demás, así que ocultar la pestaña en
+// el frontend no es la única barrera.
+router.use("/fidelizacion", requireFidelizacion, fidelizacionRoutes);
 router.use("/seguimiento", seguimientoRoutes); // WhatsApp interno: conversaciones + respuesta manual (por provincia)
 
 export default router;

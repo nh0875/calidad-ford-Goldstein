@@ -125,6 +125,9 @@ services:
     mem_limit: 1024m
     environment:
       <<: *backend-env-comun
+      # Marca de esta instancia: define la escala (semáforo vs estrellas), qué
+      # módulos existen y el nombre en pantallas y documentos. Ver config/marca.ts.
+      MARCA: FORD
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-calidad_ford}?schema=public
       # Sin índice = DB 0 de Redis (el default). VW usa la 1.
       REDIS_URL: redis://redis:6379
@@ -195,6 +198,9 @@ services:
     mem_limit: 768m
     environment:
       <<: *backend-env-comun
+      # Volkswagen: mide con ESTRELLAS (1 a 5), no tiene Fidelización y el
+      # refuerzo de encuesta notifica a los vendedores por mail. Ver config/marca.ts.
+      MARCA: VOLKSWAGEN
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB_VW:-calidad_vw}?schema=public
       # DB 1 de Redis: las colas de BullMQ tienen los mismos nombres en las dos
       # marcas, así que separarlas por índice evita que se pisen los trabajos.

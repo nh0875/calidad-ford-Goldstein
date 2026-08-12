@@ -5,6 +5,7 @@ import { ShieldCheck } from "lucide-react";
 import { apiPostJson } from "../lib/api";
 import { getToken, guardarModoDemo, guardarSesion, UsuarioSesion } from "../lib/auth";
 import { Alert } from "../components/ui/Alert";
+import { getMarca } from "../lib/marca";
 import { Campo, Input } from "../components/ui/Field";
 import { claseBoton } from "../components/ui/Button";
 import TechGridBackground from "../components/ui/TechGridBackground";
@@ -51,7 +52,7 @@ export default function Login() {
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-white/10 ring-1 ring-white/20">
             <ShieldCheck className="h-6 w-6 text-accent" aria-hidden="true" />
           </div>
-          <h1 className="font-display text-2xl font-bold tracking-tight">Calidad Ford</h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Calidad {getMarca().nombre}</h1>
           <p className="text-sm text-white/60">Contacto Posterior &amp; RQR</p>
         </div>
 
