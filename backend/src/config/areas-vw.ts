@@ -7,8 +7,9 @@
 // Ford NO usa esto: su RQR se clasifica por causa raíz, no por subárea.
 //
 // Decisiones de transcripción tomadas al cargar la hoja (revisar si cambian):
-//  - "Taller" figuraba en Posventa TACHADO, así que no se incluye ahí. Sí queda
-//    en Plan de Ahorro, donde aparece sin tachar.
+//  - "Taller" está en Posventa Y en Plan de Ahorro. En la foto de la hoja la
+//    línea de Posventa parecía tachada, pero era el DOBLEZ del papel (confirmado
+//    con quien la escribió).
 //  - "At. Cte." tenía las encuestas anotadas entre paréntesis como un tercer
 //    nivel; se despliegan como subáreas propias para que se elijan de un solo
 //    desplegable sin perder el detalle.
@@ -49,6 +50,7 @@ export const SUBAREAS_VW: Record<AreaVW, SubareaVW[]> = {
   POSVENTA: [
     { valor: "PV_TURNOS_PRECIO", etiqueta: "Turnos / Precio" },
     { valor: "PV_RECEPCION", etiqueta: "Recepción" },
+    { valor: "PV_TALLER", etiqueta: "Taller" },
     { valor: "PV_REPUESTOS", etiqueta: "Repuestos" },
     { valor: "PV_GARANTIA", etiqueta: "Garantía" },
     { valor: "PV_ASESORAMIENTO_SERVICIO", etiqueta: "Asesoramiento de Servicio" },
