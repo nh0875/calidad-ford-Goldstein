@@ -34,6 +34,11 @@ export interface PerfilMarca {
   /** Módulo de Fidelización (recordatorio para que el cliente vuelva al taller). */
   fidelizacion: boolean;
   /**
+   * El RQR se clasifica por ÁREA + SUBÁREA (Volkswagen) además de por causa
+   * raíz. Ford no lo usa: su RQR se clasifica solo por causa raíz.
+   */
+  rqrConSubareas: boolean;
+  /**
    * Refuerzo de la encuesta de fábrica. Las dos marcas lo tienen (fábrica manda
    * la encuesta al mail del cliente), pero se gestiona distinto:
    *  - Ford: los asesores entran al sistema y trabajan sus tareas.
@@ -53,6 +58,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     escala: "SEMAFORO",
     estrellasSinRqr: null,
     fidelizacion: true,
+    rqrConSubareas: false,
     refuerzo: { habilitado: true, notificarPorMail: false },
   },
   VOLKSWAGEN: {
@@ -64,6 +70,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     // Volkswagen no usa Fidelización: las pantallas no se muestran y sus
     // endpoints responden 404 (ver requireModulo en middlewares/marca.ts).
     fidelizacion: false,
+    rqrConSubareas: true,
     refuerzo: { habilitado: true, notificarPorMail: true },
   },
 };

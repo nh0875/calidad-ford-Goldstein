@@ -1,0 +1,99 @@
+// Áreas y subáreas del RQR de Volkswagen.
+//
+// Volkswagen clasifica cada reclamo por ÁREA (Ventas / Posventa / Plan de Ahorro)
+// y por SUBÁREA dentro de esa área. Este catálogo sale de la hoja que definió la
+// jefa de Calidad de VW (agosto 2026).
+//
+// Ford NO usa esto: su RQR se clasifica por causa raíz, no por subárea.
+//
+// Decisiones de transcripción tomadas al cargar la hoja (revisar si cambian):
+//  - "Taller" figuraba en Posventa TACHADO, así que no se incluye ahí. Sí queda
+//    en Plan de Ahorro, donde aparece sin tachar.
+//  - "At. Cte." tenía las encuestas anotadas entre paréntesis como un tercer
+//    nivel; se despliegan como subáreas propias para que se elijan de un solo
+//    desplegable sin perder el detalle.
+//  - "Vta Trad." se escribe "Venta Tradicional".
+
+/** Área del RQR en Volkswagen. Es el "tipo de contacto" del formulario. */
+export const AREAS_VW = ["VENTAS", "POSVENTA", "PLAN_DE_AHORRO"] as const;
+export type AreaVW = (typeof AREAS_VW)[number];
+
+export const NOMBRE_AREA_VW: Record<AreaVW, string> = {
+  VENTAS: "Ventas",
+  POSVENTA: "Posventa",
+  PLAN_DE_AHORRO: "Plan de Ahorro",
+};
+
+// Subáreas por área. El `valor` es lo que se guarda en la base (estable, no
+// cambia si se corrige la redacción); la `etiqueta` es lo que se ve en pantalla.
+export interface SubareaVW {
+  valor: string;
+  etiqueta: string;
+}
+
+export const SUBAREAS_VW: Record<AreaVW, SubareaVW[]> = {
+  VENTAS: [
+    { valor: "VTA_PRODUCTO", etiqueta: "Producto" },
+    { valor: "VTA_RECEPCION", etiqueta: "Recepción" },
+    { valor: "VTA_ASESORAMIENTO", etiqueta: "Asesoramiento / Vendedor" },
+    { valor: "VTA_ADM_GESTORIA", etiqueta: "Administración / Gestoría" },
+    { valor: "VTA_PRE_ENTREGA", etiqueta: "Pre Entrega" },
+    { valor: "VTA_ENTREGA", etiqueta: "Entrega" },
+    { valor: "VTA_PRECIO", etiqueta: "Precio" },
+    // Atención al cliente, abierta por el origen de la encuesta.
+    { valor: "VTA_AT_CTE_INTERNA", etiqueta: "At. Cliente (enc. interna)" },
+    { valor: "VTA_AT_CTE_ESPONTANEA", etiqueta: "At. Cliente (enc. espontánea)" },
+    { valor: "VTA_AT_CTE_CEM", etiqueta: "At. Cliente (enc. CEM)" },
+    { valor: "VTA_AT_CTE_SSI", etiqueta: "At. Cliente (enc. SSI)" },
+  ],
+  POSVENTA: [
+    { valor: "PV_TURNOS_PRECIO", etiqueta: "Turnos / Precio" },
+    { valor: "PV_RECEPCION", etiqueta: "Recepción" },
+    { valor: "PV_REPUESTOS", etiqueta: "Repuestos" },
+    { valor: "PV_GARANTIA", etiqueta: "Garantía" },
+    { valor: "PV_ASESORAMIENTO_SERVICIO", etiqueta: "Asesoramiento de Servicio" },
+    { valor: "PV_LAVADO", etiqueta: "Lavado" },
+    { valor: "PV_AT_CTE_INTERNA", etiqueta: "At. Cliente (enc. interna)" },
+    { valor: "PV_AT_CTE_CEM", etiqueta: "At. Cliente (enc. CEM)" },
+    { valor: "PV_AT_CTE_OSI", etiqueta: "At. Cliente (enc. OSI)" },
+  ],
+  PLAN_DE_AHORRO: [
+    { valor: "PA_ADJUDICACION", etiqueta: "Adjudicación" },
+    { valor: "PA_AGRUPAMIENTO", etiqueta: "Agrupamiento" },
+    { valor: "PA_LICITACION_SORTEO", etiqueta: "Licitación / Sorteo" },
+    { valor: "PA_CANCELACION_LIQUIDACION", etiqueta: "Cancelación / Liquidación" },
+    { valor: "PA_CONTROL_CALIDAD", etiqueta: "Control de Calidad" },
+    { valor: "PA_ENTREGA", etiqueta: "Entrega" },
+    { valor: "PA_FACTURACION", etiqueta: "Facturación" },
+    { valor: "PA_FIDELIZACION", etiqueta: "Fidelización" },
+    { valor: "PA_INGRESO", etiqueta: "Ingreso" },
+    { valor: "PA_LAVADERO", etiqueta: "Lavadero" },
+    { valor: "PA_PEDIDO_UNIDAD", etiqueta: "Pedido (unidad)" },
+    { valor: "PA_PROSPECCION", etiqueta: "Prospección" },
+    { valor: "PA_SUSCRIPCION", etiqueta: "Suscripción" },
+    { valor: "PA_TALLER", etiqueta: "Taller" },
+    { valor: "PA_TURNOS", etiqueta: "Turnos" },
+    { valor: "PA_USO_MANTENIMIENTO", etiqueta: "Uso / Mantenimiento" },
+    { valor: "PA_VENTA_TRADICIONAL", etiqueta: "Venta Tradicional" },
+  ],
+};
+
+/** Todas las subáreas válidas, para validar lo que llega del formulario. */
+export const SUBAREAS_VW_VALIDAS: Set<string> = new Set(
+  Object.values(SUBAREAS_VW).flatMap((lista) => lista.map((s) => s.valor))
+);
+
+/** Etiqueta para mostrar de una subárea guardada (o el valor crudo si no está). */
+export function etiquetaSubareaVW(valor: string | null | undefined): string {
+  if (!valor) return "—";
+  for (const lista of Object.values(SUBAREAS_VW)) {
+    const encontrada = lista.find((s) => s.valor === valor);
+    if (encontrada) return encontrada.etiqueta;
+  }
+  return valor;
+}
+
+/** ¿Esa subárea pertenece a esa área? Evita guardar combinaciones imposibles. */
+export function subareaPerteneceAlArea(area: AreaVW, subarea: string): boolean {
+  return SUBAREAS_VW[area]?.some((s) => s.valor === subarea) ?? false;
+}
