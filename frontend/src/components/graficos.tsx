@@ -277,3 +277,123 @@ export function BarrasCategorias({
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Evolución del PROMEDIO de estrellas (marcas que miden así, ej. Volkswagen)
+// ---------------------------------------------------------------------------
+// Va aparte de EvolucionSemaforo y no como una cuarta serie de aquel: son
+// magnitudes distintas. Aquel grafica CANTIDAD de casos por color, con el eje
+// arrancando en 0 y creciendo con el volumen; este grafica una NOTA, con el eje
+// fijo de 1 a 5. Meterlos en el mismo dibujo obligaría a dos ejes y se leería
+// peor que dos gráficos separados.
+export function EvolucionEstrellas({
+  puntos,
+  agrupacion,
+}: {
+  puntos: Array<{ fecha: string; promedioEstrellas: number | null }>;
+  agrupacion: "dia" | "semana";
+}) {
+  // Solo los períodos que tuvieron al menos un caso puntuado: un día sin casos
+  // no es "0 estrellas", es un día sin datos, y dibujarlo en el piso mentiría.
+  const conDato = puntos.filter(
+    (p): p is { fecha: string; promedioEstrellas: number } => p.promedioEstrellas !== null
+  );
+
+  if (conDato.length === 0) {
+    return <p className="py-10 text-center text-sm text-ink-muted">Todavía no hay casos puntuados en este rango.</p>;
+  }
+
+  const ancho = 720;
+  const alto = 240;
+  const margen = { arriba: 12, abajo: 28, izquierda: 34, derecha: 12 };
+  const anchoUtil = ancho - margen.izquierda - margen.derecha;
+  const altoUtil = alto - margen.arriba - margen.abajo;
+
+  // Eje fijo 1..5: así dos períodos distintos se comparan a ojo, sin que el
+  // gráfico se reescale y haga parecer enorme una diferencia de una décima.
+  const x = (i: number) =>
+    margen.izquierda + (conDato.length <= 1 ? anchoUtil / 2 : (i / (conDato.length - 1)) * anchoUtil);
+  const y = (v: number) => margen.arriba + altoUtil - ((v - 1) / 4) * altoUtil;
+
+  const d = conDato.map((p, i) => `${i === 0 ? "M" : "L"}${x(i)},${y(p.promedioEstrellas)}`).join(" ");
+  const pasoX = Math.max(1, Math.ceil(conDato.length / 8));
+
+  return (
+    <svg viewBox={`0 0 ${ancho} ${alto}`} className="w-full" role="img" aria-label="Evolución del promedio de estrellas">
+      {/* Grilla y eje Y: una línea por estrella */}
+      {[1, 2, 3, 4, 5].map((v) => (
+        <g key={v}>
+          <line
+            x1={margen.izquierda}
+            x2={ancho - margen.derecha}
+            y1={y(v)}
+            y2={y(v)}
+            stroke="currentColor"
+            className="text-gray-200"
+            strokeWidth={1}
+          />
+          <text x={margen.izquierda - 6} y={y(v) + 4} textAnchor="end" className="fill-current text-[10px] text-ink-muted">
+            {v}★
+          </text>
+        </g>
+      ))}
+
+      <path d={d} fill="none" stroke="currentColor" strokeWidth={2} className="text-accent" />
+      {conDato.map((p, i) => (
+        <circle key={p.fecha} cx={x(i)} cy={y(p.promedioEstrellas)} r={3} className="fill-current text-accent">
+          <title>{`${p.fecha}: ${p.promedioEstrellas} de 5`}</title>
+        </circle>
+      ))}
+
+      {conDato.map((p, i) =>
+        i % pasoX === 0 ? (
+          <text
+            key={`t-${p.fecha}`}
+            x={x(i)}
+            y={alto - 8}
+            textAnchor="middle"
+            className="fill-current text-[10px] text-ink-muted"
+          >
+            {agrupacion === "semana" ? p.fecha.slice(5) : p.fecha.slice(5)}
+          </text>
+        ) : null
+      )}
+    </svg>
+  );
+}
+
+// Distribución de los CINCO puntajes. En una marca que mide con estrellas, un
+// gráfico de tres categorías esconde justo lo que interesa: la diferencia entre
+// un 4 (objeción menor) y un 3 (molestia concreta) desaparecía al agruparlos
+// como "amarillo".
+export function DistribucionEstrellas({
+  distribucion,
+  conPuntaje,
+}: {
+  distribucion: Record<"1" | "2" | "3" | "4" | "5", number>;
+  conPuntaje: number;
+}) {
+  const filas = (["5", "4", "3", "2", "1"] as const).map((n) => ({
+    n,
+    cantidad: distribucion[n],
+    pct: conPuntaje > 0 ? Math.round((distribucion[n] / conPuntaje) * 1000) / 10 : 0,
+  }));
+  const color = (n: string) =>
+    n === "5" ? "bg-semaforo-verde" : n === "4" || n === "3" ? "bg-semaforo-amarillo" : "bg-semaforo-rojo";
+
+  return (
+    <div className="space-y-2">
+      {filas.map((f) => (
+        <div key={f.n} className="flex items-center gap-2">
+          <span className="w-10 shrink-0 text-right text-xs font-medium text-ink-muted">{f.n} ★</span>
+          <div className="h-3 flex-1 overflow-hidden rounded-full bg-gray-100">
+            <div className={`h-full rounded-full ${color(f.n)}`} style={{ width: `${f.pct}%` }} />
+          </div>
+          <span className="w-20 shrink-0 text-xs text-ink-muted">
+            {f.cantidad} ({f.pct}%)
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}

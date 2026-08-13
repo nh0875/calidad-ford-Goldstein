@@ -6,7 +6,7 @@ import { getUsuario, veTodasLasAreas } from "../lib/auth";
 import { etiquetaCategoria } from "../lib/categorias";
 import { AREAS, etiquetaArea } from "../lib/area";
 import { FiltroFecha, FiltroSelect, FiltroTexto } from "../components/filtros";
-import { DistribucionSemaforo, EvolucionSemaforo } from "../components/graficos";
+import { DistribucionEstrellas, DistribucionSemaforo, EvolucionSemaforo } from "../components/graficos";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
@@ -649,41 +649,5 @@ function TablaRanking({
         </p>
       )}
     </Card>
-  );
-}
-
-// Distribución de los CINCO puntajes. En una marca que mide con estrellas, un
-// gráfico de tres categorías esconde justo lo que interesa: la diferencia entre
-// un 4 (objeción menor) y un 3 (molestia concreta) desaparecía al agruparlos
-// como "amarillo".
-function DistribucionEstrellas({
-  distribucion,
-  conPuntaje,
-}: {
-  distribucion: Record<"1" | "2" | "3" | "4" | "5", number>;
-  conPuntaje: number;
-}) {
-  const filas = (["5", "4", "3", "2", "1"] as const).map((n) => ({
-    n,
-    cantidad: distribucion[n],
-    pct: conPuntaje > 0 ? Math.round((distribucion[n] / conPuntaje) * 1000) / 10 : 0,
-  }));
-  const color = (n: string) =>
-    n === "5" ? "bg-semaforo-verde" : n === "4" || n === "3" ? "bg-semaforo-amarillo" : "bg-semaforo-rojo";
-
-  return (
-    <div className="space-y-2">
-      {filas.map((f) => (
-        <div key={f.n} className="flex items-center gap-2">
-          <span className="w-10 shrink-0 text-right text-xs font-medium text-ink-muted">{f.n} ★</span>
-          <div className="h-3 flex-1 overflow-hidden rounded-full bg-gray-100">
-            <div className={`h-full rounded-full ${color(f.n)}`} style={{ width: `${f.pct}%` }} />
-          </div>
-          <span className="w-20 shrink-0 text-xs text-ink-muted">
-            {f.cantidad} ({f.pct}%)
-          </span>
-        </div>
-      ))}
-    </div>
   );
 }

@@ -4,15 +4,36 @@ import { FileDown } from "lucide-react";
 import { apiDescargarArchivo, apiGet } from "../lib/api";
 import { BarraFiltros, FILTROS_VACIOS, FiltrosComunes, filtrosAQuery, useOpcionesCasos } from "../components/filtros";
 import { getUsuario, veTodasLasAreas } from "../lib/auth";
-import { DistribucionSemaforo, EvolucionSemaforo } from "../components/graficos";
+import {
+  DistribucionEstrellas,
+  DistribucionSemaforo,
+  EvolucionEstrellas,
+  EvolucionSemaforo,
+} from "../components/graficos";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { claseBoton } from "../components/ui/Button";
 
 interface Reporte {
+  escala: "SEMAFORO" | "ESTRELLAS";
   totales: { VERDE: number; AMARILLO: number; ROJO: number; sinClasificar: number; revisionManual: number };
   porcentajes: { VERDE: number; AMARILLO: number; ROJO: number };
-  evolucion: { agrupacion: "dia" | "semana"; puntos: Array<{ fecha: string; VERDE: number; AMARILLO: number; ROJO: number }> };
+  estrellas: {
+    conPuntaje: number;
+    distribucion: Record<"1" | "2" | "3" | "4" | "5", number>;
+    promedio: number | null;
+    pctCinco: number;
+  };
+  evolucion: {
+    agrupacion: "dia" | "semana";
+    puntos: Array<{
+      fecha: string;
+      VERDE: number;
+      AMARILLO: number;
+      ROJO: number;
+      promedioEstrellas: number | null;
+    }>;
+  };
   porSucursal: Desglose[];
   porAsesor: Desglose[];
   tasaRespuesta: {
@@ -35,6 +56,8 @@ interface Desglose {
   ROJO: number;
   total: number;
   pctRojos: number;
+  promedioEstrellas: number | null;
+  pctCinco: number;
 }
 
 type OrdenDesglose = "pctRojos" | "total";
@@ -60,6 +83,9 @@ export default function ReporteSentimiento() {
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  // Esta marca mide en estrellas Y hay casos puntuados en el rango.
+  const porEstrellas = reporte?.escala === "ESTRELLAS" && reporte.estrellas.conPuntaje > 0;
 
   const ordenar = (filas: Desglose[]) =>
     [...filas].sort((a, b) => (orden === "pctRojos" ? b.pctRojos - a.pctRojos : b.total - a.total));
@@ -100,9 +126,34 @@ export default function ReporteSentimiento() {
         <>
           {/* Tarjetas resumen */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            <Tarjeta titulo="Verdes" valor={reporte.totales.VERDE} detalle={`${reporte.porcentajes.VERDE}%`} color="text-green-700" />
-            <Tarjeta titulo="Amarillos" valor={reporte.totales.AMARILLO} detalle={`${reporte.porcentajes.AMARILLO}%`} color="text-yellow-700" />
-            <Tarjeta titulo="Rojos" valor={reporte.totales.ROJO} detalle={`${reporte.porcentajes.ROJO}%`} color="text-red-700" />
+            {porEstrellas ? (
+              <>
+                <Tarjeta
+                  titulo="Promedio"
+                  valor={`${reporte.estrellas.promedio ?? 0} ★`}
+                  detalle={`${reporte.estrellas.conPuntaje} caso(s) puntuados`}
+                  color="text-accent-dark"
+                />
+                <Tarjeta
+                  titulo="5 estrellas"
+                  valor={`${reporte.estrellas.pctCinco}%`}
+                  detalle={`${reporte.estrellas.distribucion["5"]} caso(s)`}
+                  color="text-green-700"
+                />
+                <Tarjeta
+                  titulo="1 y 2 estrellas"
+                  valor={reporte.estrellas.distribucion["1"] + reporte.estrellas.distribucion["2"]}
+                  detalle="clientes disconformes"
+                  color="text-red-700"
+                />
+              </>
+            ) : (
+              <>
+                <Tarjeta titulo="Verdes" valor={reporte.totales.VERDE} detalle={`${reporte.porcentajes.VERDE}%`} color="text-green-700" />
+                <Tarjeta titulo="Amarillos" valor={reporte.totales.AMARILLO} detalle={`${reporte.porcentajes.AMARILLO}%`} color="text-yellow-700" />
+                <Tarjeta titulo="Rojos" valor={reporte.totales.ROJO} detalle={`${reporte.porcentajes.ROJO}%`} color="text-red-700" />
+              </>
+            )}
             <Tarjeta
               titulo="Tasa de respuesta"
               valor={`${reporte.tasaRespuesta.pctRespondidos}%`}
@@ -126,8 +177,17 @@ export default function ReporteSentimiento() {
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
-              <h3 className="mb-3 text-sm font-semibold text-ink">Distribución del semáforo</h3>
-              <DistribucionSemaforo totales={reporte.totales} porcentajes={reporte.porcentajes} />
+              <h3 className="mb-3 text-sm font-semibold text-ink">
+                {porEstrellas ? "Distribución de puntajes" : "Distribución del semáforo"}
+              </h3>
+              {porEstrellas ? (
+                <DistribucionEstrellas
+                  distribucion={reporte.estrellas.distribucion}
+                  conPuntaje={reporte.estrellas.conPuntaje}
+                />
+              ) : (
+                <DistribucionSemaforo totales={reporte.totales} porcentajes={reporte.porcentajes} />
+              )}
               <h4 className="mb-1 mt-5 text-xs font-semibold uppercase text-ink-muted">Estado de contacto</h4>
               <table className="w-full text-sm">
                 <tbody>
@@ -145,14 +205,30 @@ export default function ReporteSentimiento() {
               <h3 className="mb-3 text-sm font-semibold text-ink">
                 Evolución {reporte.evolucion.agrupacion === "semana" ? "semanal" : "diaria"}
               </h3>
-              <EvolucionSemaforo puntos={reporte.evolucion.puntos} agrupacion={reporte.evolucion.agrupacion} />
+              {porEstrellas ? (
+                <EvolucionEstrellas puntos={reporte.evolucion.puntos} agrupacion={reporte.evolucion.agrupacion} />
+              ) : (
+                <EvolucionSemaforo puntos={reporte.evolucion.puntos} agrupacion={reporte.evolucion.agrupacion} />
+              )}
             </Card>
           </div>
 
           {/* Desgloses */}
           <div className="grid gap-4 lg:grid-cols-2">
-            <TablaDesglose titulo="Por sucursal" filas={ordenar(reporte.porSucursal)} orden={orden} onOrden={setOrden} />
-            <TablaDesglose titulo="Por asesor" filas={ordenar(reporte.porAsesor)} orden={orden} onOrden={setOrden} />
+            <TablaDesglose
+              titulo="Por sucursal"
+              filas={ordenar(reporte.porSucursal)}
+              orden={orden}
+              onOrden={setOrden}
+              porEstrellas={porEstrellas}
+            />
+            <TablaDesglose
+              titulo="Por asesor"
+              filas={ordenar(reporte.porAsesor)}
+              orden={orden}
+              onOrden={setOrden}
+              porEstrellas={porEstrellas}
+            />
           </div>
         </>
       )}
@@ -206,11 +282,13 @@ function TablaDesglose({
   filas,
   orden,
   onOrden,
+  porEstrellas = false,
 }: {
   titulo: string;
   filas: Desglose[];
   orden: OrdenDesglose;
   onOrden: (o: OrdenDesglose) => void;
+  porEstrellas?: boolean;
 }) {
   const th = "px-2 py-1.5 text-right text-xs font-medium uppercase text-ink-muted";
   const botonOrden = (campo: OrdenDesglose, texto: string) => (
@@ -230,29 +308,55 @@ function TablaDesglose({
         <thead>
           <tr className="border-b">
             <th className="px-2 py-1.5 text-left text-xs font-medium uppercase text-ink-muted">Nombre</th>
-            <th className={th}>Verdes</th>
-            <th className={th}>Amar.</th>
-            <th className={th}>Rojos</th>
-            <th className={th}>{botonOrden("total", "Total")}</th>
-            <th className={th}>{botonOrden("pctRojos", "% Rojos")}</th>
+            {porEstrellas ? (
+              <>
+                <th className={th}>{botonOrden("total", "Casos")}</th>
+                <th className={th}>% 5★</th>
+                <th className={th}>{botonOrden("pctRojos", "Promedio")}</th>
+              </>
+            ) : (
+              <>
+                <th className={th}>Verdes</th>
+                <th className={th}>Amar.</th>
+                <th className={th}>Rojos</th>
+                <th className={th}>{botonOrden("total", "Total")}</th>
+                <th className={th}>{botonOrden("pctRojos", "% Rojos")}</th>
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
           {filas.map((f) => (
             <tr key={f.nombre} className="border-b border-gray-100">
               <td className="px-2 py-1.5 text-ink">{f.nombre}</td>
-              <td className="px-2 py-1.5 text-right text-ink-muted">{f.VERDE}</td>
-              <td className="px-2 py-1.5 text-right text-ink-muted">{f.AMARILLO}</td>
-              <td className="px-2 py-1.5 text-right text-ink-muted">{f.ROJO}</td>
-              <td className="px-2 py-1.5 text-right font-medium text-ink">{f.total}</td>
-              <td className={`px-2 py-1.5 text-right font-medium ${f.pctRojos >= 30 ? "text-red-700" : "text-ink"}`}>
-                {f.pctRojos}%
-              </td>
+              {porEstrellas ? (
+                <>
+                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.total}</td>
+                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.pctCinco}%</td>
+                  <td
+                    className={`px-2 py-1.5 text-right font-medium ${
+                      f.promedioEstrellas !== null && f.promedioEstrellas < 4 ? "text-red-700" : "text-ink"
+                    }`}
+                  >
+                    {f.promedioEstrellas !== null ? `${f.promedioEstrellas} ★` : "—"}
+                  </td>
+                </>
+              ) : (
+                <>
+                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.VERDE}</td>
+                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.AMARILLO}</td>
+                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.ROJO}</td>
+                  <td className="px-2 py-1.5 text-right font-medium text-ink">{f.total}</td>
+                  <td className={`px-2 py-1.5 text-right font-medium ${f.pctRojos >= 30 ? "text-red-700" : "text-ink"}`}>
+                    {f.pctRojos}%
+                  </td>
+                </>
+              )}
             </tr>
           ))}
           {filas.length === 0 && (
             <tr>
-              <td colSpan={6} className="py-6 text-center text-ink-muted">
+              <td colSpan={porEstrellas ? 4 : 6} className="py-6 text-center text-ink-muted">
                 Todavía no hay datos para el rango elegido.
               </td>
             </tr>
