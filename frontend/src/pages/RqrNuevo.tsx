@@ -2,6 +2,7 @@
 // otro canal fuera de WhatsApp. Se puede vincular un Caso existente
 // (autocompletado) o cargar los datos del cliente a mano.
 import { useEffect, useRef, useState } from "react";
+import { getMarca } from "../lib/marca";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { apiGet, apiPostJson } from "../lib/api";
@@ -61,6 +62,20 @@ export default function RqrNuevo() {
   const [bitacora, setBitacora] = useState("");
   const [observaciones, setObservaciones] = useState("");
 
+  // --- Campos propios del RQR de Volkswagen ---
+  // El catálogo (áreas, subáreas y orígenes) lo manda el backend en /api/marca:
+  // así el formulario no tiene una copia que se desactualice.
+  const marca = getMarca();
+  const rqrVW = marca.rqr?.porSubareas ?? false;
+  const [tipoContacto, setTipoContacto] = useState("");
+  const [subarea, setSubarea] = useState("");
+  const [origenRqr, setOrigenRqr] = useState("");
+  const [codigoSucursal, setCodigoSucursal] = useState("");
+  const [razonSocial, setRazonSocial] = useState("");
+  const [tratamientoDadoPor2, setTratamientoDadoPor2] = useState("");
+  // Las subáreas dependen del tipo de contacto elegido.
+  const subareasDisponibles = marca.rqr?.areas.find((a) => a.valor === tipoContacto)?.subareas ?? [];
+
   // Autocompletado con debounce
   useEffect(() => {
     if (timeoutBusqueda.current) clearTimeout(timeoutBusqueda.current);
@@ -118,6 +133,17 @@ export default function RqrNuevo() {
         causaRaiz: causaRaiz || undefined,
         tratamientoBitacora: bitacora.trim() || undefined,
         observaciones: observaciones.trim() || undefined,
+        // Campos de Volkswagen: se mandan solo si la marca los usa.
+        ...(rqrVW
+          ? {
+              tipoContacto: tipoContacto || undefined,
+              subarea: subarea || undefined,
+              origenRqr: origenRqr || undefined,
+              codigoSucursal: codigoSucursal.trim() || undefined,
+              razonSocial: razonSocial.trim() || undefined,
+              tratamientoDadoPor2: tratamientoDadoPor2.trim() || undefined,
+            }
+          : {}),
       });
       navigate(`/rqr/${data.id}`);
     } catch (err) {
@@ -243,6 +269,74 @@ export default function RqrNuevo() {
           </div>
         )}
       </Card>
+
+      {/* Clasificación de Volkswagen: tipo de contacto, subárea, origen y
+          datos del concesionario. En Ford esta tarjeta no aparece. */}
+      {rqrVW && (
+        <Card padding="p-5">
+          <h3 className="mb-3 font-display text-sm font-bold uppercase tracking-wide text-navy">
+            Clasificación y concesionario
+          </h3>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Campo etiqueta="Tipo de contacto">
+              <Select
+                value={tipoContacto}
+                onChange={(e) => {
+                  setTipoContacto(e.target.value);
+                  // La subárea elegida puede no existir en el área nueva.
+                  setSubarea("");
+                }}
+              >
+                <option value="">(elegir)</option>
+                {marca.rqr?.areas.map((a) => (
+                  <option key={a.valor} value={a.valor}>
+                    {a.etiqueta}
+                  </option>
+                ))}
+              </Select>
+            </Campo>
+            <Campo
+              etiqueta="Subárea"
+              hint={tipoContacto ? undefined : "Elegí primero el tipo de contacto"}
+            >
+              <Select
+                value={subarea}
+                onChange={(e) => setSubarea(e.target.value)}
+                disabled={!tipoContacto}
+              >
+                <option value="">(elegir)</option>
+                {subareasDisponibles.map((s) => (
+                  <option key={s.valor} value={s.valor}>
+                    {s.etiqueta}
+                  </option>
+                ))}
+              </Select>
+            </Campo>
+            <Campo etiqueta="Origen del reclamo" hint="Por dónde llegó">
+              <Select value={origenRqr} onChange={(e) => setOrigenRqr(e.target.value)}>
+                <option value="">(elegir)</option>
+                {marca.rqr?.origenes.map((o) => (
+                  <option key={o.valor} value={o.valor}>
+                    {o.etiqueta}
+                  </option>
+                ))}
+              </Select>
+            </Campo>
+            <Campo etiqueta="Código de sucursal" hint="4 caracteres">
+              <Input
+                type="text"
+                value={codigoSucursal}
+                maxLength={4}
+                placeholder="0000"
+                onChange={(e) => setCodigoSucursal(e.target.value)}
+              />
+            </Campo>
+            <Campo etiqueta="Razón social">
+              <Input type="text" value={razonSocial} onChange={(e) => setRazonSocial(e.target.value)} />
+            </Campo>
+          </div>
+        </Card>
+      )}
 
       {/* Datos del reclamo */}
       <Card padding="p-5">

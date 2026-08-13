@@ -23,6 +23,17 @@ export interface InfoMarca {
     fidelizacion: boolean;
     refuerzo: boolean;
   };
+  // Catálogo del RQR de las marcas que clasifican por área + subárea (VW).
+  // En las demás viene con porSubareas=false y las listas vacías.
+  rqr: {
+    porSubareas: boolean;
+    areas: Array<{
+      valor: string;
+      etiqueta: string;
+      subareas: Array<{ valor: string; etiqueta: string }>;
+    }>;
+    origenes: Array<{ valor: string; etiqueta: string }>;
+  };
 }
 
 // Ford es el default: si la consulta falla (backend caído, red), el sistema se
@@ -33,6 +44,7 @@ const POR_DEFECTO: InfoMarca = {
   escala: "SEMAFORO",
   estrellasSinRqr: null,
   modulos: { fidelizacion: true, refuerzo: true },
+  rqr: { porSubareas: false, areas: [], origenes: [] },
 };
 
 let cache: InfoMarca = POR_DEFECTO;

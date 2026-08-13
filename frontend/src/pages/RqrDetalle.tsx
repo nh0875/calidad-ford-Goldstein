@@ -2,6 +2,7 @@
 // papel que usa Calidad. Los datos del caso son solo lectura; el resto se
 // edita y guarda con PATCH /api/rqr/:id.
 import { useCallback, useEffect, useState } from "react";
+import { getMarca } from "../lib/marca";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, FileDown, Trash2 } from "lucide-react";
 import { apiDelete, apiDescargarArchivo, apiGet, apiPatchJson } from "../lib/api";
@@ -16,6 +17,14 @@ import { SkeletonBlock } from "../components/ui/Skeleton";
 import { ConfirmarEliminacion } from "../components/ui/ConfirmarEliminacion";
 
 interface RqrDetalleData {
+  // --- Campos de Volkswagen (null en Ford) ---
+  tipoContacto: string | null;
+  subarea: string | null;
+  origenRqr: string | null;
+  codigoSucursal: string | null;
+  razonSocial: string | null;
+  tratamientoDadoPor2: string | null;
+  creadoPor: { nombre: string } | null;
   id: string;
   numeroRQR: string;
   fechaApertura: string;
@@ -279,6 +288,18 @@ export default function RqrDetalle() {
             <Dato etiqueta="Vehículo" valor={rqr.modeloManual ?? "—"} />
           </div>
         )}
+        {/* Clasificación de Volkswagen. Se muestra solo si el RQR la tiene
+            cargada: en Ford estos campos vienen vacíos y la fila no aparece. */}
+        {(rqr.tipoContacto || rqr.origenRqr || rqr.codigoSucursal || rqr.razonSocial) && (
+          <div className="mt-3 grid gap-x-6 gap-y-2 border-t border-gray-100 pt-3 text-sm sm:grid-cols-3">
+            <Dato etiqueta="Tipo de contacto" valor={etiquetaCatalogo(rqr.tipoContacto, "area")} />
+            <Dato etiqueta="Subárea" valor={etiquetaCatalogo(rqr.subarea, "subarea")} />
+            <Dato etiqueta="Origen del reclamo" valor={etiquetaCatalogo(rqr.origenRqr, "origen")} />
+            <Dato etiqueta="Código de sucursal" valor={rqr.codigoSucursal ?? "—"} />
+            <Dato etiqueta="Razón social" valor={rqr.razonSocial ?? "—"} />
+            <Dato etiqueta="Cargado por" valor={rqr.creadoPor?.nombre ?? "—"} />
+          </div>
+        )}
         {rqr.sentimentAnalysis && (
           <div className="mt-3 space-y-2">
             {(rqr.sentimentAnalysis.severidad || rqr.sentimentAnalysis.semaforo) && (
@@ -387,6 +408,23 @@ function Seccion({ titulo, children }: { titulo: string; children: React.ReactNo
       {children}
     </Card>
   );
+}
+
+/**
+ * Traduce un código guardado (VTA_PRODUCTO, EMAIL…) a su etiqueta legible.
+ * El catálogo lo manda el backend en /api/marca, así que la pantalla no tiene
+ * una copia propia que se desactualice cuando Calidad cambie una redacción.
+ */
+function etiquetaCatalogo(valor: string | null, tipo: "area" | "subarea" | "origen"): string {
+  if (!valor) return "—";
+  const rqr = getMarca().rqr;
+  if (tipo === "origen") return rqr.origenes.find((o) => o.valor === valor)?.etiqueta ?? valor;
+  if (tipo === "area") return rqr.areas.find((a) => a.valor === valor)?.etiqueta ?? valor;
+  for (const a of rqr.areas) {
+    const s = a.subareas.find((x) => x.valor === valor);
+    if (s) return s.etiqueta;
+  }
+  return valor;
 }
 
 function Dato({ etiqueta, valor }: { etiqueta: string; valor: string }) {
