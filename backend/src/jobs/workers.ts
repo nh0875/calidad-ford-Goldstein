@@ -361,6 +361,9 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
       messageId: ultimoId,
       semaforo: resultado.semaforo,
       severidad: resultado.severidad,
+      // Puntaje 1-5 en las marcas que miden por estrellas (Volkswagen). El
+      // semáforo de arriba se derivó de este mismo puntaje.
+      estrellas: resultado.estrellas,
       confianza: resultado.confianza,
       categoriaCausaRaiz: resultado.categoriaCausaRaiz,
       resumenIA: resultado.resumen,

@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Semaforo, Severidad } from "@prisma/client";
 import { z } from "zod";
 import { env } from "../config/env";
+import { marca, usaEstrellas } from "../config/marca";
 
 // ---------- Categorías de causa raíz (lista cerrada, editable acá) ----------
 
@@ -28,12 +29,63 @@ export interface ContextoCaso {
 export interface ResultadoAnalisis {
   semaforo: Semaforo | null; // null solo cuando la IA no devolvió nada interpretable
   severidad: Severidad | null; // gravedad del malestar (independiente de la confianza)
+  // Puntaje 1-5 en las marcas que miden por estrellas (Volkswagen); null en Ford.
+  // Cuando hay estrellas, el semáforo y la severidad de arriba se DERIVAN de
+  // ellas: son el mismo hecho expresado en dos escalas, no dos opiniones.
+  estrellas: number | null;
   confianza: number;
   categoriaCausaRaiz: string | null;
   resumen: string;
   requiereRQR: boolean;
   requiereRevisionManual: boolean;
   respuestaCruda: unknown; // lo que devolvió el modelo (o el mock), para auditoría
+}
+
+// ---------- Estrellas (Volkswagen) ----------
+
+/**
+ * Traduce un puntaje de estrellas al semáforo y la severidad equivalentes.
+ *
+ * POR QUÉ: el sistema entero está construido sobre el semáforo — los avisos en
+ * pantalla, qué mensaje de agradecimiento se manda, los filtros de Seguimiento,
+ * los reportes y la apertura automática de RQR. Si en Volkswagen guardáramos
+ * SOLO estrellas, todo eso quedaría vacío y habría que reescribirlo.
+ *
+ * Guardando las dos escalas, VW muestra estrellas y el resto del sistema sigue
+ * funcionando sin tocar una línea. El mapeo se eligió para que coincida con la
+ * regla de negocio de VW ("todo lo que no sea 5 abre RQR"): 5 es el único que
+ * cae en VERDE, y como cualquier AMARILLO o ROJO ya abre RQR (aplicarReglaRQR),
+ * la regla sale sola sin un caso especial.
+ */
+export function derivarDeEstrellas(estrellas: number): {
+  semaforo: Semaforo;
+  severidad: Severidad | null;
+} {
+  switch (estrellas) {
+    case 5:
+      return { semaforo: Semaforo.VERDE, severidad: null };
+    case 4:
+      return { semaforo: Semaforo.AMARILLO, severidad: Severidad.LEVE };
+    case 3:
+      return { semaforo: Semaforo.AMARILLO, severidad: Severidad.MODERADA };
+    case 2:
+      return { semaforo: Semaforo.ROJO, severidad: Severidad.MODERADA };
+    default: // 1 (y cualquier valor fuera de rango que se haya colado)
+      return { semaforo: Semaforo.ROJO, severidad: Severidad.GRAVE };
+  }
+}
+
+/**
+ * Inverso de derivarDeEstrellas: de semáforo+severidad al puntaje equivalente.
+ * Solo lo usa el modo mock (que razona en semáforo) para poder probar el
+ * circuito de Volkswagen sin gastar API. Devuelve null si la marca no usa
+ * estrellas o si no hubo clasificación.
+ */
+function estrellasDesde(semaforo: Semaforo | null, severidad: Severidad | null): number | null {
+  if (!usaEstrellas() || semaforo === null) return null;
+  if (semaforo === Semaforo.VERDE) return 5;
+  if (semaforo === Semaforo.AMARILLO) return severidad === Severidad.LEVE ? 4 : 3;
+  return severidad === Severidad.GRAVE ? 1 : 2;
 }
 
 // El modelo sugiere semáforo y severidad, pero la REGLA DE NEGOCIO manda (en
@@ -62,6 +114,19 @@ const esquemaRespuestaIA = z.object({
 
 type RespuestaIA = z.infer<typeof esquemaRespuestaIA>;
 
+// Volkswagen puntúa de 1 a 5 estrellas en vez de semáforo. El resto de los
+// campos (causa raíz, resumen, confianza, revisión manual) son idénticos: lo
+// único que cambia es la escala con la que se mide la satisfacción.
+const esquemaRespuestaEstrellas = z.object({
+  estrellas: z.number().int().min(1).max(5),
+  confianza: z.number().min(0).max(1),
+  categoriaCausaRaiz: z.enum(CATEGORIAS_CAUSA_RAIZ).nullable(),
+  resumen: z.string().min(1),
+  requiereRevisionManual: z.boolean(),
+});
+
+type RespuestaEstrellasIA = z.infer<typeof esquemaRespuestaEstrellas>;
+
 function parsearJsonSeguro(texto: string): RespuestaIA | null {
   // El prompt pide JSON puro, pero por las dudas se tolera un bloque ```json ... ```
   const limpio = texto
@@ -75,6 +140,34 @@ function parsearJsonSeguro(texto: string): RespuestaIA | null {
   } catch {
     return null;
   }
+}
+
+function parsearJsonEstrellas(texto: string): RespuestaEstrellasIA | null {
+  const limpio = texto
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+  try {
+    const validado = esquemaRespuestaEstrellas.safeParse(JSON.parse(limpio));
+    return validado.success ? validado.data : null;
+  } catch {
+    return null;
+  }
+}
+
+// El analisis parseado, en la escala que use la marca.
+type ParseadoAnalisis =
+  | { tipo: "semaforo"; datos: RespuestaIA }
+  | { tipo: "estrellas"; datos: RespuestaEstrellasIA };
+
+/** Parsea la respuesta del modelo con el esquema que corresponde a la marca. */
+function parsearSegunMarca(texto: string): ParseadoAnalisis | null {
+  if (usaEstrellas()) {
+    const datos = parsearJsonEstrellas(texto);
+    return datos ? { tipo: "estrellas", datos } : null;
+  }
+  const datos = parsearJsonSeguro(texto);
+  return datos ? { tipo: "semaforo", datos } : null;
 }
 
 // ---------- Prompts ----------
@@ -134,6 +227,65 @@ Salida: {"semaforo":"ROJO","severidad":"GRAVE","confianza":0.95,"categoriaCausaR
 Respondé ÚNICAMENTE con un objeto JSON válido con esta forma exacta, sin texto adicional antes ni después:
 {"semaforo": "VERDE" | "AMARILLO" | "ROJO", "severidad": "LEVE" | "MODERADA" | "GRAVE" | null, "confianza": number, "categoriaCausaRaiz": string | null, "resumen": string, "requiereRevisionManual": boolean}`;
 
+const PROMPT_ESTRELLAS = `Sos el analista de calidad de una concesionaria ${marca.nombre}. Analizás respuestas de WhatsApp de clientes y las puntuás para el área de Calidad.
+
+ESCALA DE ESTRELLAS (1 a 5, donde 5 es lo mejor):
+- 5: cliente plenamente conforme, SIN ninguna queja ni objeción. Solo elogios o conformidad.
+- 4: conforme, pero con una objeción MENOR mencionada al pasar (ej: "todo bien, tardaron 5 minutos de más nomás").
+- 3: satisfacción parcial o molestia concreta: se queja con intención aunque el resultado no haya sido grave (ej: "tardaron mucho más de lo prometido, aunque el trabajo quedó bien").
+- 2: insatisfecho, reclamo claro: trato descortés, trabajo mal hecho, cobro que siente indebido.
+- 1: muy insatisfecho: indignación, problema sin resolver, pérdida de confianza en la marca.
+
+REGLA CLAVE — MENSAJES MIXTOS (elogio + queja):
+Cuando el mensaje mezcla cosas buenas y malas, GANA LA QUEJA. Calidad busca detectar problemas, no promediar.
+- Un elogio a una persona puntual ("Eugenia 10 puntos", "el de repuestos un genio") NO sube a 5 el caso si el cliente TAMBIÉN se queja del precio, del servicio o del trabajo.
+- Puntuá según la queja MÁS grave del mensaje, no según la parte positiva.
+- El 5 se reserva para quien no planteó NINGUNA objeción. Ante la duda entre 5 y 4, elegí 4.
+
+TONO / PALABRAS QUE BAJAN EL PUNTAJE:
+- "un robo", "una estafa", "un abuso", "una vergüenza", "me estafaron", "chorros" → indignación → 1.
+- Queja de precio percibido como excesivo o injusto → 3 o menos (categoría PRECIO_FACTURACION); con indignación → 1.
+- Que digan que NO le hicieron algo que correspondía y le cobraron igual → 1 o 2.
+
+CATEGORÍAS DE CAUSA RAÍZ (usá exclusivamente una de estas, o null si son 5 estrellas o no hay causa identificable):
+- DEMORA_SERVICIO: demoras en la entrega o en los turnos.
+- MAL_TRATO_PERSONAL: trato descortés o mala atención de una persona.
+- PRECIO_FACTURACION: quejas por precios, cobros o facturación.
+- CALIDAD_TRABAJO: el trabajo quedó mal hecho o el problema persiste.
+- FALTA_COMUNICACION: no avisaron, no informaron el estado, no devolvieron llamados.
+- REPUESTOS: faltantes o demoras de repuestos.
+- OTRO: causa identificable que no encaja en las anteriores.
+
+REGLAS:
+- "confianza" es tu certeza en la puntuación, de 0 a 1. NO es el puntaje: podés estar 100% seguro de que algo merece 2 estrellas.
+- "requiereRevisionManual" es true si la respuesta es ambigua, muy corta (ej: "ok", "👍"), irónica sin certeza, o no es interpretable como opinión sobre el servicio.
+- "resumen": 1 o 2 frases en español rioplatense neutro, para que una persona de Calidad entienda el caso de un vistazo. Si el mensaje era mixto, mencioná TANTO la queja como el elogio.
+
+EJEMPLOS (muestran el formato de salida exacto):
+Cliente: "Excelente atención, el auto quedó impecable. Muchas gracias!"
+Salida: {"estrellas":5,"confianza":0.97,"categoriaCausaRaiz":null,"resumen":"Cliente muy conforme con la atención y el trabajo.","requiereRevisionManual":false}
+
+Cliente: "Todo bien, pero tardaron más de lo que me habían dicho."
+Salida: {"estrellas":4,"confianza":0.85,"categoriaCausaRaiz":"DEMORA_SERVICIO","resumen":"Conforme en general, con una objeción por demora respecto a lo prometido.","requiereRevisionManual":false}
+
+Cliente: "Me parece un robo que cobren casi $500.000 y ni siquiera cambiaron el filtro de aire. Igual Eugenia de recepción, 10 puntos."
+Salida: {"estrellas":1,"confianza":0.9,"categoriaCausaRaiz":"PRECIO_FACTURACION","resumen":"Indignado por el precio (lo llama un robo) y porque no le habrían cambiado un filtro que esperaba. Elogia a la recepcionista, pero la queja de precio define el caso.","requiereRevisionManual":false}
+
+Cliente: "Un desastre. Llevé el auto por un ruido y me lo devolvieron igual, no lo solucionó nadie."
+Salida: {"estrellas":1,"confianza":0.95,"categoriaCausaRaiz":"CALIDAD_TRABAJO","resumen":"Problema sin resolver: llevó el auto por un ruido y se lo devolvieron igual.","requiereRevisionManual":false}
+
+Respondé ÚNICAMENTE con un objeto JSON válido con esta forma exacta, sin texto adicional antes ni después:
+{"estrellas": 1 | 2 | 3 | 4 | 5, "confianza": number, "categoriaCausaRaiz": string | null, "resumen": string, "requiereRevisionManual": boolean}`;
+
+/**
+ * Prompt del sistema segun la marca de esta instancia. Ford clasifica por
+ * semaforo y Volkswagen puntua de 1 a 5 estrellas; el resto del analisis
+ * (causa raiz, resumen, revision manual) es igual en las dos.
+ */
+function promptDelSistema(): string {
+  return usaEstrellas() ? PROMPT_ESTRELLAS : SYSTEM_PROMPT;
+}
+
 const RECORDATORIO_ESTRICTO =
   "Tu respuesta anterior no fue JSON válido. Respondé EXCLUSIVAMENTE el objeto JSON pedido, sin explicaciones, sin markdown, sin ```.";
 
@@ -168,7 +320,7 @@ async function llamarAnthropic(mensajes: MensajeIA[]): Promise<string> {
   const respuesta = await anthropic.messages.create({
     model: env.anthropicModel,
     max_tokens: 1024,
-    system: SYSTEM_PROMPT,
+    system: promptDelSistema(),
     messages: mensajes,
   });
   const bloqueTexto = respuesta.content.find(
@@ -213,7 +365,7 @@ async function llamarGemini(mensajes: MensajeIA[]): Promise<string> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        systemInstruction: { parts: [{ text: promptDelSistema() }] },
         contents,
         generationConfig,
       }),
@@ -328,7 +480,7 @@ async function analizarConIA(
 
   // Primer intento
   const primerTexto = await llamarModelo(mensajes);
-  let parseado = parsearJsonSeguro(primerTexto);
+  let parseado = parsearSegunMarca(primerTexto);
   let crudo: unknown = primerTexto;
 
   // Si no devolvió JSON válido, un reintento con instrucción más estricta
@@ -339,7 +491,7 @@ async function analizarConIA(
       { role: "assistant", content: primerTexto || "(respuesta vacía)" },
       { role: "user", content: RECORDATORIO_ESTRICTO },
     ]);
-    parseado = parsearJsonSeguro(segundoTexto);
+    parseado = parsearSegunMarca(segundoTexto);
     crudo = { primerIntento: primerTexto, segundoIntento: segundoTexto };
   }
 
@@ -348,6 +500,7 @@ async function analizarConIA(
     return {
       semaforo: null,
       severidad: null,
+      estrellas: null,
       confianza: 0,
       categoriaCausaRaiz: null,
       resumen:
@@ -358,22 +511,45 @@ async function analizarConIA(
     };
   }
 
-  const semaforo = Semaforo[parseado.semaforo];
+  // Volkswagen: el modelo devolvio estrellas. El semaforo y la severidad se
+  // DERIVAN de ese puntaje para que el resto del sistema (avisos, agradecimientos,
+  // filtros, apertura de RQR, reportes) siga funcionando sin cambios.
+  if (parseado.tipo === "estrellas") {
+    const { estrellas, confianza, categoriaCausaRaiz, resumen, requiereRevisionManual } = parseado.datos;
+    const { semaforo, severidad } = derivarDeEstrellas(estrellas);
+    return {
+      semaforo,
+      severidad,
+      estrellas,
+      confianza,
+      categoriaCausaRaiz,
+      resumen,
+      // Con el mapeo de derivarDeEstrellas, "todo lo que no sea 5" cae en
+      // AMARILLO o ROJO, asi que la regla de VW sale de la regla general.
+      requiereRQR: aplicarReglaRQR(semaforo, severidad),
+      requiereRevisionManual,
+      respuestaCruda: crudo,
+    };
+  }
+
+  const datos = parseado.datos;
+  const semaforo = Semaforo[datos.semaforo];
   // Default defensivo: si el modelo omite severidad en un AMARILLO, asumimos
   // MODERADA (preferimos un RQR de más antes que perder un reclamo real).
-  const severidad: Severidad | null = parseado.severidad
-    ? Severidad[parseado.severidad]
+  const severidad: Severidad | null = datos.severidad
+    ? Severidad[datos.severidad]
     : semaforo === Semaforo.AMARILLO
       ? Severidad.MODERADA
       : null;
   return {
     semaforo,
     severidad,
-    confianza: parseado.confianza,
-    categoriaCausaRaiz: parseado.categoriaCausaRaiz,
-    resumen: parseado.resumen,
+    estrellas: null,
+    confianza: datos.confianza,
+    categoriaCausaRaiz: datos.categoriaCausaRaiz,
+    resumen: datos.resumen,
     requiereRQR: aplicarReglaRQR(semaforo, severidad),
-    requiereRevisionManual: parseado.requiereRevisionManual,
+    requiereRevisionManual: datos.requiereRevisionManual,
     respuestaCruda: crudo,
   };
 }
@@ -394,6 +570,7 @@ function analizarMock(texto: string): ResultadoAnalisis {
   ): ResultadoAnalisis => ({
     semaforo,
     severidad,
+    estrellas: estrellasDesde(semaforo, severidad),
     confianza,
     categoriaCausaRaiz: categoria,
     resumen: `[MOCK] ${resumen}`,

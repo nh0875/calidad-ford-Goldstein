@@ -347,6 +347,13 @@ model SentimentAnalysis {
   // Gravedad del malestar (LEVE/MODERADA/GRAVE), independiente de la confianza.
   // La confianza sigue guardándose como señal de calidad, pero ya NO decide el RQR.
   severidad              Severidad?
+  // Puntaje de 1 a 5 estrellas (5 = mejor). Lo usan las marcas que miden por
+  // estrellas en vez de semáforo (Volkswagen); en Ford queda null.
+  // El semáforo y la severidad se DERIVAN de este puntaje (ver
+  // derivarDeEstrellas en sentiment.service.ts), así todo lo que ya funciona
+  // por semáforo —avisos, agradecimientos, filtros, apertura de RQR— sigue
+  // andando igual sin tocar nada, y las pantallas muestran las estrellas.
+  estrellas              Int?
   confianza              Float
   categoriaCausaRaiz     String?
   resumenIA              String           @db.Text
