@@ -160,6 +160,15 @@ export interface DatosRqrManual {
   tratamientoBitacora?: string;
   observaciones?: string;
   area: AreaTrabajo;
+  // Quién lo cargó: se imprime en el documento del RQR.
+  creadoPorId?: string;
+  // --- Campos de Volkswagen (quedan null en Ford) ---
+  tipoContacto?: string;
+  subarea?: string;
+  origenRqr?: string;
+  codigoSucursal?: string;
+  razonSocial?: string;
+  tratamientoDadoPor2?: string;
 }
 
 export async function crearRqrManual(datos: DatosRqrManual) {
@@ -183,6 +192,13 @@ export async function crearRqrManual(datos: DatosRqrManual) {
             causaRaiz: datos.causaRaiz ?? null,
             tratamientoBitacora: datos.tratamientoBitacora ?? null,
             observaciones: datos.observaciones ?? null,
+            creadoPorId: datos.creadoPorId ?? null,
+            tipoContacto: datos.tipoContacto ?? null,
+            subarea: datos.subarea ?? null,
+            origenRqr: datos.origenRqr ?? null,
+            codigoSucursal: datos.codigoSucursal ?? null,
+            razonSocial: datos.razonSocial ?? null,
+            tratamientoDadoPor2: datos.tratamientoDadoPor2 ?? null,
             estado: EstadoRQR.ABIERTO,
           },
         });

@@ -1,6 +1,14 @@
 import { Request, Response } from "express";
 import { AreaTrabajo, EstadoRQR, Prisma } from "@prisma/client";
 import { z } from "zod";
+import {
+  AREAS_VW,
+  AreaVW,
+  LARGO_CODIGO_SUCURSAL,
+  ORIGENES_RQR_VALIDOS,
+  SUBAREAS_VW_VALIDAS,
+  subareaPerteneceAlArea,
+} from "../config/areas-vw";
 import { prisma } from "../config/prisma";
 import { crearRqrManual, recalcularTieneRqrAbierto } from "../services/rqr.service";
 import { areaPermitida, parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
@@ -85,6 +93,48 @@ export async function listRqr(req: Request, res: Response) {
 // Camino alternativo al RQR automático de la IA: reclamos que llegan por
 // teléfono, en persona u otro canal. Con Caso vinculado o con datos manuales.
 
+
+// Campos que solo usa el RQR de Volkswagen. Se definen una vez y se reusan en el
+// alta y en la edición. En Ford no vienen y quedan en null.
+const camposVW = {
+  tipoContacto: z.enum(AREAS_VW).optional(),
+  subarea: z.string().trim().min(1).optional(),
+  origenRqr: z.string().trim().min(1).optional(),
+  codigoSucursal: z
+    .string()
+    .trim()
+    .length(LARGO_CODIGO_SUCURSAL, `El código de sucursal tiene ${LARGO_CODIGO_SUCURSAL} caracteres.`)
+    .optional(),
+  razonSocial: z.string().trim().min(1).max(160).optional(),
+  tratamientoDadoPor2: z.string().trim().min(1).max(120).optional(),
+};
+
+/**
+ * Valida las combinaciones imposibles del RQR de VW: una subárea que no
+ * pertenece al área elegida, o un origen que no está en la lista. Devuelve el
+ * mensaje de error, o null si está todo bien.
+ *
+ * Se hace acá y no con un refine del schema porque la subárea depende del
+ * tipo de contacto, y en la EDICIÓN puede venir solo uno de los dos (hay que
+ * mirar también lo que ya estaba guardado).
+ */
+function validarCamposVW(datos: {
+  tipoContacto?: string | null;
+  subarea?: string | null;
+  origenRqr?: string | null;
+}): string | null {
+  if (datos.origenRqr && !ORIGENES_RQR_VALIDOS.has(datos.origenRqr)) {
+    return "El origen del RQR no es válido.";
+  }
+  if (datos.subarea) {
+    if (!SUBAREAS_VW_VALIDAS.has(datos.subarea)) return "La subárea no es válida.";
+    if (datos.tipoContacto && !subareaPerteneceAlArea(datos.tipoContacto as AreaVW, datos.subarea)) {
+      return "Esa subárea no pertenece al tipo de contacto elegido.";
+    }
+  }
+  return null;
+}
+
 const createSchema = z
   .object({
     casoId: z.string().trim().min(1).optional(),
@@ -100,6 +150,7 @@ const createSchema = z
     tratamientoBitacora: z.string().trim().min(1).optional(),
     observaciones: z.string().trim().min(1).optional(),
     area: z.nativeEnum(AreaTrabajo).optional(), // solo para RQR manual sin caso
+    ...camposVW,
   })
   .refine((v) => v.casoId || v.nombreClienteManual, {
     message: "Vinculá un caso existente o cargá al menos el nombre del cliente.",
@@ -113,6 +164,8 @@ export async function createRqr(req: Request, res: Response) {
     });
   }
   const datos = parsed.data;
+  const errorVW = validarCamposVW(datos);
+  if (errorVW) return res.status(400).json({ message: errorVW });
   const restringido = areaPermitida(req.usuario!); // null = admin/ambas
 
   // El área del RQR: si vincula un caso, hereda la del caso; si es manual, la
@@ -134,7 +187,8 @@ export async function createRqr(req: Request, res: Response) {
     area = restringido ?? datos.area ?? AreaTrabajo.POSVENTA;
   }
 
-  const rqr = await crearRqrManual({ ...datos, area });
+  // Queda registrado quién lo cargó: se imprime en el documento del RQR.
+  const rqr = await crearRqrManual({ ...datos, area, creadoPorId: req.usuario!.id });
 
   await auditar(req, {
     accion: ACCIONES.RQR_CREADO,
@@ -193,6 +247,9 @@ const INCLUDE_DETALLE = {
   sentimentAnalysis: {
     include: { message: { select: { content: true, createdAt: true } } },
   },
+  // Quién cargó el RQR: va en el documento que se imprime (Volkswagen lo pide
+  // explícitamente para los que se cargan a mano).
+  creadoPor: { select: { nombre: true } },
 } satisfies Prisma.RQRInclude;
 
 export async function getRqr(req: Request, res: Response) {
@@ -251,6 +308,8 @@ const patchSchema = z
     observaciones: z.string().trim().nullable().optional(),
     responsableCierre: z.string().trim().nullable().optional(),
     causaRaiz: z.string().trim().nullable().optional(),
+    // Campos de Volkswagen: se pueden corregir después de creado el RQR.
+    ...camposVW,
     // Se completa sola al pasar a CERRADO, pero Calidad puede corregirla
     fechaCierre: z
       .string()
@@ -277,6 +336,15 @@ export async function patchRqr(req: Request, res: Response) {
   if (!puedeAcceder(req.usuario!, existente.area)) {
     return res.status(403).json({ message: "Este RQR es de otra área; no podés modificarlo." });
   }
+
+  // La subárea depende del tipo de contacto, y en una edición puede venir solo
+  // uno de los dos: se valida contra la mezcla de lo nuevo y lo ya guardado.
+  const errorVW = validarCamposVW({
+    tipoContacto: parsed.data.tipoContacto ?? existente.tipoContacto,
+    subarea: parsed.data.subarea ?? existente.subarea,
+    origenRqr: parsed.data.origenRqr ?? existente.origenRqr,
+  });
+  if (errorVW) return res.status(400).json({ message: errorVW });
 
   const { fechaCierre: fechaCierreManual, ...cambios } = parsed.data;
   const seCierra = cambios.estado === EstadoRQR.CERRADO && existente.estado !== EstadoRQR.CERRADO;

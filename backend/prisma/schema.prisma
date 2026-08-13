@@ -422,6 +422,28 @@ model RQR {
   responsableCierre   String?
   causaRaiz           String? // sugerida por IA, confirmable/editable por Calidad
   estado              EstadoRQR          @default(ABIERTO)
+
+  // ---- Campos del RQR de Volkswagen (quedan null en Ford) ----
+  // VW clasifica el reclamo con más detalle que Ford. Todos son opcionales para
+  // que el mismo modelo sirva a las dos marcas; el formulario los pide (y el
+  // controller los exige) solo cuando la marca los usa.
+  //
+  // OJO con `tipoContacto` vs `area`: `area` (AreaTrabajo) es lo que gobierna
+  // QUIÉN puede ver el RQR y solo tiene VENTAS/POSVENTA, así que se sigue
+  // usando para eso. `tipoContacto` es el dato de negocio de VW y suma
+  // PLAN_DE_AHORRO, que no existe como área de usuario.
+  tipoContacto        String? // VENTAS | POSVENTA | PLAN_DE_AHORRO (ver config/areas-vw.ts)
+  subarea             String? // código de subárea dentro del tipo de contacto
+  origenRqr           String? // EMAIL | TELEFONO | WHATSAPP | PERSONALMENTE
+  // Datos del concesionario donde ocurrió el hecho.
+  codigoSucursal      String? // 4 caracteres, viene de la carga de casos
+  razonSocial         String?
+  // El tratamiento puede quedar a cargo de hasta dos personas.
+  tratamientoDadoPor2 String?
+  // Quién cargó el RQR (sobre todo para los manuales). Es dato del formulario,
+  // distinto de la auditoría: acá se ve en el documento que se imprime.
+  creadoPorId         String?
+  creadoPor           Usuario?           @relation("RQRCreadoPor", fields: [creadoPorId], references: [id])
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
 
@@ -460,6 +482,7 @@ model Usuario {
   casosEliminados    Caso[]               @relation("CasoEliminadoPor")
   fidelizacionesEliminadas ClienteFidelizacion[] @relation("ClienteFidelizacionEliminadoPor")
   rqrsEliminados     RQR[]                @relation("RQREliminadoPor")
+  rqrsCreados        RQR[]                @relation("RQRCreadoPor")
   uploadsEliminados  ExcelUpload[]        @relation("ExcelUploadEliminadoPor")
   tareasAsignadas    TareaRefuerzo[]      @relation("TareaAsignada")
   supresionesCreadas SupresionContacto[]  @relation("SupresionCreadaPor")

@@ -99,3 +99,25 @@ export function etiquetaSubareaVW(valor: string | null | undefined): string {
 export function subareaPerteneceAlArea(area: AreaVW, subarea: string): boolean {
   return SUBAREAS_VW[area]?.some((s) => s.valor === subarea) ?? false;
 }
+
+// ---------------------------------------------------------------------------
+// Origen del RQR: por dónde llegó el reclamo
+// ---------------------------------------------------------------------------
+// Es distinto del canal de contacto del sistema: un cliente al que el sistema
+// escribió por WhatsApp puede reclamar por mail o acercarse al mostrador.
+export const ORIGENES_RQR_VW = [
+  { valor: "EMAIL", etiqueta: "Email" },
+  { valor: "TELEFONO", etiqueta: "Teléfono" },
+  { valor: "WHATSAPP", etiqueta: "WhatsApp" },
+  { valor: "PERSONALMENTE", etiqueta: "Comentario en persona" },
+] as const;
+
+export const ORIGENES_RQR_VALIDOS: Set<string> = new Set(ORIGENES_RQR_VW.map((o) => o.valor));
+
+export function etiquetaOrigenRqr(valor: string | null | undefined): string {
+  if (!valor) return "—";
+  return ORIGENES_RQR_VW.find((o) => o.valor === valor)?.etiqueta ?? valor;
+}
+
+/** El código de sucursal de VW son 4 caracteres (lo define la carga de casos). */
+export const LARGO_CODIGO_SUCURSAL = 4;

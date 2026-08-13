@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { marca } from "../config/marca";
-import { AREAS_VW, NOMBRE_AREA_VW, SUBAREAS_VW } from "../config/areas-vw";
+import { AREAS_VW, NOMBRE_AREA_VW, ORIGENES_RQR_VW, SUBAREAS_VW } from "../config/areas-vw";
 
 // Qué marca es esta instancia y qué módulos tiene. Lo consulta el frontend al
 // arrancar para saber qué pestañas mostrar y cómo mostrar la satisfacción
@@ -31,7 +31,10 @@ export function infoMarca(_req: Request, res: Response) {
             etiqueta: NOMBRE_AREA_VW[a],
             subareas: SUBAREAS_VW[a],
           })),
+          // Por dónde llegó el reclamo (distinto del canal por el que el
+          // sistema había contactado al cliente).
+          origenes: ORIGENES_RQR_VW,
         }
-      : { porSubareas: false, areas: [] },
+      : { porSubareas: false, areas: [], origenes: [] },
   });
 }
