@@ -5,6 +5,15 @@ export const env = {
   port: Number(process.env.PORT ?? 3000),
   databaseUrl: process.env.DATABASE_URL ?? "",
   redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
+  // Correo saliente (SMTP). Lo usa el Refuerzo de Volkswagen para mandarle a
+  // cada vendedor sus clientes asignados. Con Gmail/Workspace, MAIL_PASSWORD
+  // tiene que ser una CONTRASEÑA DE APLICACIÓN, no la de la cuenta.
+  mail: {
+    host: process.env.MAIL_HOST ?? "smtp.gmail.com",
+    puerto: Number(process.env.MAIL_PUERTO ?? 465),
+    usuario: process.env.MAIL_USUARIO ?? "",
+    password: process.env.MAIL_PASSWORD ?? "",
+  },
   meta: {
     token: process.env.META_WHATSAPP_TOKEN ?? "",
     phoneNumberId: process.env.META_PHONE_NUMBER_ID ?? "",

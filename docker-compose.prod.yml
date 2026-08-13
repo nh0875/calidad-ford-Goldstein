@@ -78,6 +78,12 @@ x-backend-env-comun: &backend-env-comun
   RATE_LIMIT_POR_MINUTO: ${RATE_LIMIT_POR_MINUTO:-100}
   # Tope aparte y holgado para /webhooks (Meta entrega en ráfagas)
   RATE_LIMIT_WEBHOOK_POR_MINUTO: ${RATE_LIMIT_WEBHOOK_POR_MINUTO:-600}
+  # Correo saliente (Refuerzo de VW: aviso a los vendedores).
+  # MAIL_PASSWORD tiene que ser una CONTRASEÑA DE APLICACIÓN de Google.
+  MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+  MAIL_PUERTO: ${MAIL_PUERTO:-465}
+  MAIL_USUARIO: ${MAIL_USUARIO:-}
+  MAIL_PASSWORD: ${MAIL_PASSWORD:-}
   # Estado del backup para /api/sistema/estado-backup (volumen compartido)
   BACKUP_STATUS_FILE: /var/backup-status/status.json
 

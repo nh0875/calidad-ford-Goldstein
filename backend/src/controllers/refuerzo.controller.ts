@@ -1,4 +1,8 @@
 import { Request, Response } from "express";
+import { marca } from "../config/marca";
+import { env } from "../config/env";
+import { mailHabilitado } from "../services/mail.service";
+import { notificarVendedores } from "../services/refuerzo-mail.service";
 import {
   AreaTrabajo,
   EstadoTareaRefuerzo,
@@ -312,4 +316,58 @@ export async function vincularTarea(req: Request, res: Response) {
   });
 
   res.status(201).json({ message: "Caso vinculado y tarea creada (queda en el pool del equipo).", data: tarea });
+}
+
+// ---------- POST /api/refuerzos/notificar (solo ADMIN) ----------
+// Le manda a cada vendedor, por correo, el detalle de los clientes que tiene
+// asignados. Pensado para Volkswagen, donde los vendedores NO entran al sistema.
+
+export async function notificarRefuerzo(req: Request, res: Response) {
+  if (!marca.refuerzo.notificarPorMail) {
+    return res.status(404).json({
+      message: `En ${marca.nombre} los asesores gestionan sus tareas desde el sistema; no se notifica por correo.`,
+    });
+  }
+  if (!mailHabilitado()) {
+    return res.status(409).json({
+      message:
+        "No hay una casilla de correo configurada. Cargá MAIL_USUARIO y MAIL_PASSWORD " +
+        "(contraseña de aplicación de Google) antes de notificar.",
+    });
+  }
+
+  const resultados = await notificarVendedores();
+  const enviados = resultados.filter((r) => r.enviado);
+  const fallidos = resultados.filter((r) => !r.enviado);
+
+  await auditar(req, {
+    accion: ACCIONES.REFUERZO_NOTIFICADO,
+    entidad: "TareaRefuerzo",
+    detalles: {
+      vendedores: resultados.length,
+      enviados: enviados.length,
+      fallidos: fallidos.length,
+      clientes: resultados.reduce((a, r) => a + r.clientes, 0),
+    },
+  });
+
+  res.json({
+    message:
+      resultados.length === 0
+        ? "No hay tareas pendientes asignadas: no se envió ningún correo."
+        : `Se notificó a ${enviados.length} de ${resultados.length} vendedor(es).` +
+          (fallidos.length > 0 ? ` ${fallidos.length} fallaron (ver el detalle).` : ""),
+    resultados,
+  });
+}
+
+// ---------- GET /api/refuerzos/estado-mail ----------
+// Si la pantalla puede ofrecer el botón de notificar, y contra qué casilla.
+
+export async function estadoMailRefuerzo(_req: Request, res: Response) {
+  res.json({
+    notificaPorMail: marca.refuerzo.notificarPorMail,
+    configurado: mailHabilitado(),
+    casilla: mailHabilitado() ? env.mail.usuario : null,
+  });
 }
