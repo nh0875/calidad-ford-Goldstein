@@ -191,10 +191,16 @@ export async function dashboardResumen(f: FiltrosReporte) {
       pctRespondidos: pctContactados(respondidos),
       pctNoRespondieron: pctContactados(noRespondieron),
     },
+    // Con qué escala mide esta marca (SEMAFORO en Ford, ESTRELLAS en VW).
+    escala: sentimiento.escala,
     semaforo: {
       totales: sentimiento.totales,
       porcentajes: sentimiento.porcentajes,
     },
+    // Desempeño en estrellas: promedio, distribución de los 5 puntajes y el
+    // % de 5 (el único puntaje que no abre RQR en Volkswagen). En las marcas
+    // que miden por semáforo viene en cero y el tablero no lo muestra.
+    estrellas: sentimiento.estrellas,
     evolucion: sentimiento.evolucion,
     topCategorias,
     rqrAbiertos,

@@ -1,4 +1,5 @@
 import { AreaTrabajo, EstadoContacto, EstadoRQR, Prisma, Semaforo } from "@prisma/client";
+import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { claveAgrupacionAsesor, claveNormalizada } from "./normalizacion.service";
 
@@ -60,6 +61,7 @@ export async function reporteSentimiento(f: FiltrosReporte) {
     },
     select: {
       semaforo: true,
+      estrellas: true,
       requiereRevisionManual: true,
       analyzedAt: true,
       caso: { select: { sucursal: true, asesor: true, asesorCodigo: true } },
@@ -74,6 +76,30 @@ export async function reporteSentimiento(f: FiltrosReporte) {
     else totales.sinClasificar++;
     if (a.requiereRevisionManual) totales.revisionManual++;
   }
+  // --- Métricas en ESTRELLAS (las marcas que miden así, ej. Volkswagen) ---
+  // Se calculan siempre: en las marcas de semáforo no hay puntajes, así que
+  // quedan en cero y el frontend directamente no las muestra.
+  const distribucion: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  let sumaEstrellas = 0;
+  let conPuntaje = 0;
+  for (const a of analisis) {
+    if (a.estrellas == null) continue;
+    const e = Math.min(5, Math.max(1, a.estrellas)) as 1 | 2 | 3 | 4 | 5;
+    distribucion[e]++;
+    sumaEstrellas += e;
+    conPuntaje++;
+  }
+  const estrellas = {
+    conPuntaje,
+    distribucion,
+    // Promedio con un decimal: es el número que se puede seguir mes a mes,
+    // algo que con tres colores no se podía.
+    promedio: conPuntaje > 0 ? Math.round((sumaEstrellas / conPuntaje) * 10) / 10 : null,
+    // En Volkswagen el 5 es el único puntaje que NO abre RQR, así que este
+    // porcentaje es la métrica que de verdad importa.
+    pctCinco: conPuntaje > 0 ? Math.round((distribucion[5] / conPuntaje) * 1000) / 10 : 0,
+  };
+
   const clasificados = totales.VERDE + totales.AMARILLO + totales.ROJO;
   const pct = (n: number) => (clasificados > 0 ? Math.round((n / clasificados) * 1000) / 10 : 0);
   const porcentajes = {
@@ -90,30 +116,55 @@ export async function reporteSentimiento(f: FiltrosReporte) {
   const agrupacion: "dia" | "semana" = dias > AGRUPAR_POR_SEMANA_A_PARTIR_DE_DIAS ? "semana" : "dia";
   const clave = agrupacion === "semana" ? claveSemana : claveDia;
 
-  const evolucionMapa = new Map<string, { VERDE: number; AMARILLO: number; ROJO: number }>();
+  const evolucionMapa = new Map<
+    string,
+    { VERDE: number; AMARILLO: number; ROJO: number; sumaEstrellas: number; conPuntaje: number }
+  >();
   for (const a of analisis) {
     if (!a.semaforo) continue;
     const k = clave(a.analyzedAt);
-    const punto = evolucionMapa.get(k) ?? { VERDE: 0, AMARILLO: 0, ROJO: 0 };
+    const punto =
+      evolucionMapa.get(k) ?? { VERDE: 0, AMARILLO: 0, ROJO: 0, sumaEstrellas: 0, conPuntaje: 0 };
     punto[a.semaforo]++;
+    if (a.estrellas != null) {
+      punto.sumaEstrellas += a.estrellas;
+      punto.conPuntaje++;
+    }
     evolucionMapa.set(k, punto);
   }
   const evolucion = [...evolucionMapa.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([fecha, valores]) => ({ fecha, ...valores }));
+    .map(([fecha, v]) => ({
+      fecha,
+      VERDE: v.VERDE,
+      AMARILLO: v.AMARILLO,
+      ROJO: v.ROJO,
+      // Promedio del período: es lo que se grafica en las marcas de estrellas.
+      promedioEstrellas: v.conPuntaje > 0 ? Math.round((v.sumaEstrellas / v.conPuntaje) * 10) / 10 : null,
+    }));
 
   // Desglose por sucursal y por asesor (con % de rojos para detectar concentración).
   // Se agrupa por una CLAVE normalizada (insensible a acentos/mayúsculas, y por
   // código de asesor cuando existe, para no fragmentar ni mezclar homónimos),
   // pero se MUESTRA el nombre canónico.
   const desglosar = (obtener: (a: (typeof analisis)[number]) => { clave: string; nombre: string }) => {
-    const mapa = new Map<string, { nombre: string; VERDE: number; AMARILLO: number; ROJO: number }>();
+    const mapa = new Map<
+      string,
+      { nombre: string; VERDE: number; AMARILLO: number; ROJO: number; suma: number; conPuntaje: number; cinco: number }
+    >();
     for (const a of analisis) {
       if (!a.semaforo) continue;
       const { clave, nombre } = obtener(a);
       const k = clave || "(sin dato)";
-      const fila = mapa.get(k) ?? { nombre: nombre || "(sin dato)", VERDE: 0, AMARILLO: 0, ROJO: 0 };
+      const fila =
+        mapa.get(k) ??
+        { nombre: nombre || "(sin dato)", VERDE: 0, AMARILLO: 0, ROJO: 0, suma: 0, conPuntaje: 0, cinco: 0 };
       fila[a.semaforo]++;
+      if (a.estrellas != null) {
+        fila.suma += a.estrellas;
+        fila.conPuntaje++;
+        if (a.estrellas === 5) fila.cinco++;
+      }
       mapa.set(k, fila);
     }
     return [...mapa.values()]
@@ -126,9 +177,18 @@ export async function reporteSentimiento(f: FiltrosReporte) {
           ROJO: v.ROJO,
           total,
           pctRojos: total > 0 ? Math.round((v.ROJO / total) * 1000) / 10 : 0,
+          // Desempeño en estrellas de ese asesor/sucursal (null si no aplica).
+          promedioEstrellas: v.conPuntaje > 0 ? Math.round((v.suma / v.conPuntaje) * 10) / 10 : null,
+          pctCinco: v.conPuntaje > 0 ? Math.round((v.cinco / v.conPuntaje) * 1000) / 10 : 0,
         };
       })
-      .sort((a, b) => b.pctRojos - a.pctRojos);
+      // Peor primero. En las marcas de estrellas ordena por promedio ascendente
+      // (más preciso que el % de rojos, que solo distingue tres escalones).
+      .sort((a, b) =>
+        a.promedioEstrellas != null && b.promedioEstrellas != null
+          ? a.promedioEstrellas - b.promedioEstrellas
+          : b.pctRojos - a.pctRojos
+      );
   };
 
   // Tasa de respuesta sobre los casos contactados (excluye PENDIENTE;
@@ -146,8 +206,12 @@ export async function reporteSentimiento(f: FiltrosReporte) {
     contactados > 0 ? Math.round((n / contactados) * 1000) / 10 : 0;
 
   return {
+    // Con qué escala mide esta marca: el frontend decide si dibuja semáforo o
+    // estrellas sin tener que consultarlo aparte.
+    escala: marca.escala,
     totales,
     porcentajes,
+    estrellas,
     evolucion: { agrupacion, puntos: evolucion },
     porSucursal: desglosar((a) => ({
       clave: claveNormalizada(a.caso.sucursal || ""),

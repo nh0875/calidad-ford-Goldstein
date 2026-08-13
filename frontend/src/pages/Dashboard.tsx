@@ -19,11 +19,28 @@ interface Resumen {
   totalCasos: number;
   mensajesSalientes: number;
   tasaRespuesta: { contactados: number; respondidos: number; pctRespondidos: number };
+  escala: "SEMAFORO" | "ESTRELLAS";
   semaforo: {
     totales: { VERDE: number; AMARILLO: number; ROJO: number; sinClasificar: number; revisionManual: number };
     porcentajes: { VERDE: number; AMARILLO: number; ROJO: number };
   };
-  evolucion: { agrupacion: "dia" | "semana"; puntos: Array<{ fecha: string; VERDE: number; AMARILLO: number; ROJO: number }> };
+  // Desempeño en estrellas (Volkswagen). En las marcas de semáforo viene en cero.
+  estrellas: {
+    conPuntaje: number;
+    distribucion: Record<"1" | "2" | "3" | "4" | "5", number>;
+    promedio: number | null;
+    pctCinco: number;
+  };
+  evolucion: {
+    agrupacion: "dia" | "semana";
+    puntos: Array<{
+      fecha: string;
+      VERDE: number;
+      AMARILLO: number;
+      ROJO: number;
+      promedioEstrellas: number | null;
+    }>;
+  };
   topCategorias: Array<{ categoria: string; total: number; conRqr: number; sinRqr: number }>;
   rqrAbiertos: {
     total: number;
@@ -69,6 +86,9 @@ interface Ranking {
   ROJO: number;
   total: number;
   pctRojos: number;
+  // Desempeño en estrellas de ese asesor/sucursal (null en las marcas de semáforo).
+  promedioEstrellas: number | null;
+  pctCinco: number;
 }
 
 function hace30Dias(): string {
@@ -114,6 +134,10 @@ export default function Dashboard() {
   }, [cargar]);
 
   const maxOrigen = Math.max(1, ...(resumen?.porOrigen.map((o) => o.total) ?? [1]));
+  // Esta marca mide en estrellas Y hay casos puntuados. Si todavia no hay
+  // ninguno se muestra el semaforo derivado, que al menos no deja el tablero
+  // en blanco el primer dia.
+  const porEstrellas = resumen?.escala === "ESTRELLAS" && resumen.estrellas.conPuntaje > 0;
 
   return (
     <div className="space-y-4">
@@ -163,30 +187,61 @@ export default function Dashboard() {
               detalle={`${resumen.tasaRespuesta.respondidos} de ${resumen.tasaRespuesta.contactados}`}
               color="text-accent-dark"
             />
-            <Kpi
-              titulo="Verdes"
-              punto="VERDE"
-              valor={resumen.semaforo.porcentajes.VERDE}
-              sufijo="%"
-              detalle={`${resumen.semaforo.totales.VERDE} casos`}
-              color="text-green-700"
-            />
-            <Kpi
-              titulo="Amarillos"
-              punto="AMARILLO"
-              valor={resumen.semaforo.porcentajes.AMARILLO}
-              sufijo="%"
-              detalle={`${resumen.semaforo.totales.AMARILLO} casos`}
-              color="text-yellow-700"
-            />
-            <Kpi
-              titulo="Rojos"
-              punto="ROJO"
-              valor={resumen.semaforo.porcentajes.ROJO}
-              sufijo="%"
-              detalle={`${resumen.semaforo.totales.ROJO} casos`}
-              color="text-red-700"
-            />
+            {porEstrellas ? (
+              <>
+                {/* El promedio es el numero que se puede seguir mes a mes: con
+                    tres colores no habia forma de decir "mejoramos un poco". */}
+                <Kpi
+                  titulo="Promedio"
+                  valor={resumen.estrellas.promedio ?? 0}
+                  sufijo=" ★"
+                  detalle={`sobre ${resumen.estrellas.conPuntaje} caso(s) puntuados`}
+                  color="text-accent-dark"
+                />
+                {/* En Volkswagen el 5 es el UNICO puntaje que no abre RQR:
+                    este porcentaje es la meta real del area. */}
+                <Kpi
+                  titulo="5 estrellas"
+                  valor={resumen.estrellas.pctCinco}
+                  sufijo="%"
+                  detalle={`${resumen.estrellas.distribucion["5"]} caso(s) perfectos`}
+                  color="text-green-700"
+                />
+                <Kpi
+                  titulo="1 y 2 estrellas"
+                  valor={resumen.estrellas.distribucion["1"] + resumen.estrellas.distribucion["2"]}
+                  detalle="clientes disconformes"
+                  color="text-red-700"
+                />
+              </>
+            ) : (
+              <>
+                <Kpi
+                  titulo="Verdes"
+                  punto="VERDE"
+                  valor={resumen.semaforo.porcentajes.VERDE}
+                  sufijo="%"
+                  detalle={`${resumen.semaforo.totales.VERDE} casos`}
+                  color="text-green-700"
+                />
+                <Kpi
+                  titulo="Amarillos"
+                  punto="AMARILLO"
+                  valor={resumen.semaforo.porcentajes.AMARILLO}
+                  sufijo="%"
+                  detalle={`${resumen.semaforo.totales.AMARILLO} casos`}
+                  color="text-yellow-700"
+                />
+                <Kpi
+                  titulo="Rojos"
+                  punto="ROJO"
+                  valor={resumen.semaforo.porcentajes.ROJO}
+                  sufijo="%"
+                  detalle={`${resumen.semaforo.totales.ROJO} casos`}
+                  color="text-red-700"
+                />
+              </>
+            )}
             <Kpi
               titulo="RQR abiertos"
               valor={resumen.rqrAbiertos.total}
@@ -237,7 +292,14 @@ export default function Dashboard() {
             {/* Distribución + top causas */}
             <Card>
               <h3 className="mb-3 text-sm font-semibold text-ink">Distribución del semáforo</h3>
-              <DistribucionSemaforo totales={resumen.semaforo.totales} porcentajes={resumen.semaforo.porcentajes} />
+              {porEstrellas ? (
+                <DistribucionEstrellas
+                  distribucion={resumen.estrellas.distribucion}
+                  conPuntaje={resumen.estrellas.conPuntaje}
+                />
+              ) : (
+                <DistribucionSemaforo totales={resumen.semaforo.totales} porcentajes={resumen.semaforo.porcentajes} />
+              )}
               {resumen.semaforo.totales.revisionManual > 0 && (
                 <Link
                   to="/seguimiento"
@@ -294,8 +356,18 @@ export default function Dashboard() {
           </Card>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <TablaRanking titulo="Todas las sucursales" filas={resumen.rankingSucursales} minimo={resumen.minimoCasosRanking} />
-            <TablaRanking titulo="Todos los asesores" filas={resumen.rankingAsesores} minimo={resumen.minimoCasosRanking} />
+            <TablaRanking
+              titulo="Todas las sucursales"
+              filas={resumen.rankingSucursales}
+              minimo={resumen.minimoCasosRanking}
+              porEstrellas={porEstrellas}
+            />
+            <TablaRanking
+              titulo="Todos los asesores"
+              filas={resumen.rankingAsesores}
+              minimo={resumen.minimoCasosRanking}
+              porEstrellas={porEstrellas}
+            />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -485,7 +557,17 @@ function BadgeRojos({ pct }: { pct: number }) {
   return <Badge tono={pct >= 30 ? "rojo" : pct >= 10 ? "amarillo" : "verde"}>{pct}%</Badge>;
 }
 
-function TablaRanking({ titulo, filas, minimo }: { titulo: string; filas: Ranking[]; minimo: number }) {
+function TablaRanking({
+  titulo,
+  filas,
+  minimo,
+  porEstrellas = false,
+}: {
+  titulo: string;
+  filas: Ranking[];
+  minimo: number;
+  porEstrellas?: boolean;
+}) {
   const hayPocos = filas.some((f) => f.total < minimo);
   return (
     <Card>
@@ -499,11 +581,21 @@ function TablaRanking({ titulo, filas, minimo }: { titulo: string; filas: Rankin
           <thead className="sticky top-0 bg-white">
             <tr className="border-b text-xs uppercase text-ink-muted">
               <th className="px-2 py-1.5 text-left">Nombre</th>
-              <th className="px-2 py-1.5 text-right">Verdes</th>
-              <th className="px-2 py-1.5 text-right">Amar.</th>
-              <th className="px-2 py-1.5 text-right">Rojos</th>
-              <th className="px-2 py-1.5 text-right">Total</th>
-              <th className="px-2 py-1.5 text-right">% Rojos</th>
+              {porEstrellas ? (
+                <>
+                  <th className="px-2 py-1.5 text-right">Casos</th>
+                  <th className="px-2 py-1.5 text-right">% 5★</th>
+                  <th className="px-2 py-1.5 text-right">Promedio</th>
+                </>
+              ) : (
+                <>
+                  <th className="px-2 py-1.5 text-right">Verdes</th>
+                  <th className="px-2 py-1.5 text-right">Amar.</th>
+                  <th className="px-2 py-1.5 text-right">Rojos</th>
+                  <th className="px-2 py-1.5 text-right">Total</th>
+                  <th className="px-2 py-1.5 text-right">% Rojos</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -519,13 +611,25 @@ function TablaRanking({ titulo, filas, minimo }: { titulo: string; filas: Rankin
                       </span>
                     )}
                   </td>
-                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.VERDE}</td>
-                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.AMARILLO}</td>
-                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.ROJO}</td>
-                  <td className="px-2 py-1.5 text-right text-ink-muted">{f.total}</td>
-                  <td className="px-2 py-1.5 text-right">
-                    {pocos ? <span className="text-xs text-ink-muted">{f.pctRojos}%</span> : <BadgeRojos pct={f.pctRojos} />}
-                  </td>
+                  {porEstrellas ? (
+                    <>
+                      <td className="px-2 py-1.5 text-right text-ink-muted">{f.total}</td>
+                      <td className="px-2 py-1.5 text-right text-ink-muted">{f.pctCinco}%</td>
+                      <td className="px-2 py-1.5 text-right font-medium text-ink">
+                        {f.promedioEstrellas !== null ? `${f.promedioEstrellas} ★` : "—"}
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="px-2 py-1.5 text-right text-ink-muted">{f.VERDE}</td>
+                      <td className="px-2 py-1.5 text-right text-ink-muted">{f.AMARILLO}</td>
+                      <td className="px-2 py-1.5 text-right text-ink-muted">{f.ROJO}</td>
+                      <td className="px-2 py-1.5 text-right text-ink-muted">{f.total}</td>
+                      <td className="px-2 py-1.5 text-right">
+                        {pocos ? <span className="text-xs text-ink-muted">{f.pctRojos}%</span> : <BadgeRojos pct={f.pctRojos} />}
+                      </td>
+                    </>
+                  )}
                 </tr>
               );
             })}
@@ -545,5 +649,41 @@ function TablaRanking({ titulo, filas, minimo }: { titulo: string; filas: Rankin
         </p>
       )}
     </Card>
+  );
+}
+
+// Distribución de los CINCO puntajes. En una marca que mide con estrellas, un
+// gráfico de tres categorías esconde justo lo que interesa: la diferencia entre
+// un 4 (objeción menor) y un 3 (molestia concreta) desaparecía al agruparlos
+// como "amarillo".
+function DistribucionEstrellas({
+  distribucion,
+  conPuntaje,
+}: {
+  distribucion: Record<"1" | "2" | "3" | "4" | "5", number>;
+  conPuntaje: number;
+}) {
+  const filas = (["5", "4", "3", "2", "1"] as const).map((n) => ({
+    n,
+    cantidad: distribucion[n],
+    pct: conPuntaje > 0 ? Math.round((distribucion[n] / conPuntaje) * 1000) / 10 : 0,
+  }));
+  const color = (n: string) =>
+    n === "5" ? "bg-semaforo-verde" : n === "4" || n === "3" ? "bg-semaforo-amarillo" : "bg-semaforo-rojo";
+
+  return (
+    <div className="space-y-2">
+      {filas.map((f) => (
+        <div key={f.n} className="flex items-center gap-2">
+          <span className="w-10 shrink-0 text-right text-xs font-medium text-ink-muted">{f.n} ★</span>
+          <div className="h-3 flex-1 overflow-hidden rounded-full bg-gray-100">
+            <div className={`h-full rounded-full ${color(f.n)}`} style={{ width: `${f.pct}%` }} />
+          </div>
+          <span className="w-20 shrink-0 text-xs text-ink-muted">
+            {f.cantidad} ({f.pct}%)
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
