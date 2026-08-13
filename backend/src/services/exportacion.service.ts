@@ -1,8 +1,12 @@
 import ExcelJS from "exceljs";
+import fs from "fs";
+import path from "path";
 import {
   AlignmentType,
+  BorderStyle,
   Document,
   HeadingLevel,
+  ImageRun,
   Packer,
   Paragraph,
   Table,
@@ -14,6 +18,8 @@ import {
 import { Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { reporteCausaRaiz, reporteSentimiento, FiltrosCausaRaiz, FiltrosReporte } from "./reporte.service";
+import { marca } from "../config/marca";
+import { etiquetaOrigenRqr, etiquetaSubareaVW, NOMBRE_AREA_VW, AreaVW } from "../config/areas-vw";
 
 // Enums -> texto que lee gerencia (no las MAYUSCULAS_CON_GUION del código)
 const AREA_LABEL: Record<string, string> = { POSVENTA: "Posventa", VENTAS: "Ventas" };
@@ -274,6 +280,7 @@ type RqrCompleto = Prisma.RQRGetPayload<{
   include: {
     caso: true;
     sentimentAnalysis: { include: { message: { select: { content: true } } } };
+    creadoPor: { select: { nombre: true } };
   };
 }>;
 
@@ -281,7 +288,7 @@ function tituloSeccion(texto: string): Paragraph {
   return new Paragraph({
     heading: HeadingLevel.HEADING_2,
     spacing: { before: 300, after: 120 },
-    children: [new TextRun({ text: texto, bold: true, color: "003478" })],
+    children: [new TextRun({ text: texto, bold: true, color: marca.colorDocumento })],
   });
 }
 
@@ -304,6 +311,81 @@ function filaDato(etiqueta: string, valor: string): TableRow {
   });
 }
 
+// El logo se lee UNA vez y se cachea: el Word se exporta de a uno pero la
+// lectura de disco no tiene por qué repetirse en cada descarga.
+// `undefined` = todavía no se intentó; `null` = se intentó y no está.
+let logoCache: Buffer | null | undefined;
+
+/**
+ * Logo de la marca para el encabezado del documento. Devuelve null si no está.
+ *
+ * NUNCA lanza: un formulario de RQR es un documento que Calidad necesita mandar,
+ * y no puede fallar la descarga porque falte un archivo de imagen. Si no está,
+ * el Word sale sin logo y queda un aviso en el log (una sola vez).
+ */
+function leerLogoMarca(): Buffer | null {
+  if (logoCache !== undefined) return logoCache;
+  const ruta =
+    process.env.LOGO_MARCA_ARCHIVO?.trim() ||
+    path.join(process.cwd(), "assets", marca.logoArchivo);
+  try {
+    logoCache = fs.readFileSync(ruta);
+  } catch {
+    console.warn(
+      `[word] No se encontró el logo de ${marca.nombre} en ${ruta}. ` +
+        `El formulario de RQR se genera sin logo (ver backend/assets/README.md).`
+    );
+    logoCache = null;
+  }
+  return logoCache;
+}
+
+/** Encabezado: logo centrado (si está) + título del formulario. */
+function encabezadoDocumento(numeroRQR: string): Paragraph[] {
+  const logo = leerLogoMarca();
+  const partes: Paragraph[] = [];
+  if (logo) {
+    partes.push(
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 120 },
+        children: [
+          new ImageRun({
+            type: "png",
+            data: logo,
+            // 45 mm de ancho. docx trabaja en puntos (1 mm ≈ 2,835 pt).
+            transformation: { width: 128, height: 128 },
+          }),
+        ],
+      })
+    );
+  }
+  partes.push(
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun({ text: `Formulario RQR — ${numeroRQR}`, bold: true, color: marca.colorDocumento }),
+      ],
+    })
+  );
+  partes.push(
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 60 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: marca.colorDocumento } },
+      children: [
+        new TextRun({
+          text: `${marca.nombre} — Reclamo / Queja / Reporte`,
+          size: 18,
+          color: "666666",
+        }),
+      ],
+    })
+  );
+  return partes;
+}
+
 export async function wordRqr(rqr: RqrCompleto): Promise<Buffer> {
   // Los RQR manuales pueden no tener Caso vinculado: se usan los datos manuales
   const caso = rqr.caso;
@@ -316,16 +398,10 @@ export async function wordRqr(rqr: RqrCompleto): Promise<Buffer> {
     sections: [
       {
         children: [
-          new Paragraph({
-            heading: HeadingLevel.HEADING_1,
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({ text: `Formulario RQR — ${rqr.numeroRQR}`, bold: true, color: "003478" }),
-            ],
-          }),
+          ...encabezadoDocumento(rqr.numeroRQR),
           new Paragraph({
             alignment: AlignmentType.CENTER,
-            spacing: { after: 300 },
+            spacing: { before: 120, after: 300 },
             children: [
               new TextRun({
                 text: `Canal: ${rqr.canal}  |  Área de origen: ${rqr.areaOrigen}  |  Estado: ${rqr.estado}  |  Apertura: ${fechaCorta(rqr.fechaApertura)}`,
@@ -333,6 +409,28 @@ export async function wordRqr(rqr: RqrCompleto): Promise<Buffer> {
               }),
             ],
           }),
+
+          // Clasificación de la marca (Volkswagen). Va primero porque es lo que
+          // define de qué se trata el reclamo; en Ford la sección no existe.
+          ...(rqr.tipoContacto || rqr.origenRqr || rqr.codigoSucursal || rqr.razonSocial
+            ? [
+                tituloSeccion("Clasificación y concesionario"),
+                new Table({
+                  width: { size: 100, type: WidthType.PERCENTAGE },
+                  rows: [
+                    filaDato(
+                      "Tipo de contacto",
+                      rqr.tipoContacto ? (NOMBRE_AREA_VW[rqr.tipoContacto as AreaVW] ?? rqr.tipoContacto) : "-"
+                    ),
+                    filaDato("Subárea", etiquetaSubareaVW(rqr.subarea)),
+                    filaDato("Origen del reclamo", etiquetaOrigenRqr(rqr.origenRqr)),
+                    filaDato("Código de sucursal", rqr.codigoSucursal || "-"),
+                    filaDato("Razón social", rqr.razonSocial || "-"),
+                    filaDato("Cargado por", rqr.creadoPor?.nombre ?? "-"),
+                  ],
+                }),
+              ]
+            : []),
 
           tituloSeccion("1. Datos del cliente"),
           new Table({
@@ -357,7 +455,16 @@ export async function wordRqr(rqr: RqrCompleto): Promise<Buffer> {
 
           tituloSeccion("3. Tratamiento / Bitácora"),
           parrafo(rqr.tratamientoBitacora || "(pendiente de completar)"),
-          ...(rqr.tratamientoDadoPor ? [parrafo(`Tratamiento dado por: ${rqr.tratamientoDadoPor}`)] : []),
+          // El tratamiento puede quedar a cargo de hasta dos personas.
+          ...(rqr.tratamientoDadoPor || rqr.tratamientoDadoPor2
+            ? [
+                parrafo(
+                  `Tratamiento dado por: ${[rqr.tratamientoDadoPor, rqr.tratamientoDadoPor2]
+                    .filter(Boolean)
+                    .join(" y ")}`
+                ),
+              ]
+            : []),
 
           tituloSeccion("4. Solución propuesta"),
           parrafo(rqr.solucionPropuesta || "(pendiente de completar)"),

@@ -68,3 +68,7 @@ logs/
 .DS_Store
 Thumbs.db
 npm-debug.log*
+
+# ===== Logos de marca (material de terceros, no se versionan) =====
+# Ver backend/assets/README.md: se copian a mano en cada despliegue.
+backend/assets/logo-*

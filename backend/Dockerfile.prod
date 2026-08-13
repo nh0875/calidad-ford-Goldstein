@@ -34,6 +34,10 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY package*.json ./
+# Logos de marca para el Word del RQR. Van aparte de src/ porque el build solo
+# emite dist/ y un archivo binario dentro de src no llegaria a la imagen.
+# Si la carpeta no tiene el logo, el Word igual se genera (sin logo).
+COPY assets ./assets
 
 EXPOSE 3000
 

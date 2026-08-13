@@ -49,6 +49,10 @@ export interface PerfilMarca {
     habilitado: boolean;
     notificarPorMail: boolean;
   };
+  /** Color institucional para los títulos de los documentos que se exportan. */
+  colorDocumento: string;
+  /** Nombre del archivo del logo dentro de backend/assets (ver su README). */
+  logoArchivo: string;
 }
 
 const PERFILES: Record<CodigoMarca, PerfilMarca> = {
@@ -60,6 +64,8 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     fidelizacion: true,
     rqrConSubareas: false,
     refuerzo: { habilitado: true, notificarPorMail: false },
+    colorDocumento: "003478", // azul Ford
+    logoArchivo: "logo-ford.png",
   },
   VOLKSWAGEN: {
     codigo: "VOLKSWAGEN",
@@ -72,6 +78,8 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     fidelizacion: false,
     rqrConSubareas: true,
     refuerzo: { habilitado: true, notificarPorMail: true },
+    colorDocumento: "001E50", // azul Volkswagen
+    logoArchivo: "logo-volkswagen.png",
   },
 };
 

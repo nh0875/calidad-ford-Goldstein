@@ -13,7 +13,14 @@
 //  - "At. Cte." tenía las encuestas anotadas entre paréntesis como un tercer
 //    nivel; se despliegan como subáreas propias para que se elijan de un solo
 //    desplegable sin perder el detalle.
-//  - "Vta Trad." se escribe "Venta Tradicional".
+//  - "Vta Trad." se escribe "Venta Tradicional" (confirmado).
+//
+// Sobre las encuestas de At. Cliente: SSI (ventas), OSI (posventa) y CEM las
+// manda FÁBRICA, de forma ALEATORIA, a clientes elegidos por ella. La agencia no
+// controla a quién le llegan. La "interna" y la "espontánea" son propias.
+// Por eso el subárea dice de qué encuesta salió el reclamo: no es lo mismo un
+// reclamo que llega por una encuesta de fábrica —que impacta en los índices que
+// mide VW— que uno que surge de una encuesta propia.
 
 /** Área del RQR en Volkswagen. Es el "tipo de contacto" del formulario. */
 export const AREAS_VW = ["VENTAS", "POSVENTA", "PLAN_DE_AHORRO"] as const;
