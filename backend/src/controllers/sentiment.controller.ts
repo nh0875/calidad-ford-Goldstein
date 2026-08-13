@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { AreaTrabajo, Prisma, Semaforo, TipoAviso } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
-import { CATEGORIAS_CAUSA_RAIZ } from "../services/sentiment.service";
+import { CATEGORIAS_CAUSA_RAIZ, derivarDeEstrellas } from "../services/sentiment.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { apagarAvisosCaso } from "../services/aviso.service";
 import { parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
@@ -154,11 +154,16 @@ export async function contarRevisionManual(req: Request, res: Response) {
 const patchSchema = z
   .object({
     semaforo: z.nativeEnum(Semaforo).nullable().optional(),
+    // Corrección en la escala de estrellas (Volkswagen). Si viene, el semáforo
+    // y la severidad se recalculan a partir del puntaje: son la misma opinión
+    // en dos escalas y no pueden quedar contradiciéndose.
+    estrellas: z.number().int().min(1).max(5).nullable().optional(),
     categoriaCausaRaiz: z.enum(CATEGORIAS_CAUSA_RAIZ).nullable().optional(),
     requiereRevisionManual: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
-    message: "Indicá al menos un campo para corregir (semaforo, categoriaCausaRaiz o requiereRevisionManual).",
+    message:
+      "Indicá al menos un campo para corregir (semaforo, estrellas, categoriaCausaRaiz o requiereRevisionManual).",
   });
 
 export async function patchSentimentAnalysis(req: Request, res: Response) {
@@ -185,7 +190,14 @@ export async function patchSentimentAnalysis(req: Request, res: Response) {
   const actualizado = await prisma.sentimentAnalysis.update({
     where: { id: existente.id },
     data: {
-      ...(cambios.semaforo !== undefined ? { semaforo: cambios.semaforo } : {}),
+      // Si corrigen las estrellas, el semáforo y la severidad se DERIVAN del
+      // puntaje nuevo (misma regla que usa la IA), y esa derivación pisa un
+      // semáforo que hubiera venido en el mismo pedido.
+      ...(cambios.estrellas != null
+        ? { estrellas: cambios.estrellas, ...derivarDeEstrellas(cambios.estrellas) }
+        : cambios.semaforo !== undefined
+          ? { semaforo: cambios.semaforo }
+          : {}),
       ...(cambios.categoriaCausaRaiz !== undefined
         ? { categoriaCausaRaiz: cambios.categoriaCausaRaiz }
         : {}),
@@ -208,6 +220,8 @@ export async function patchSentimentAnalysis(req: Request, res: Response) {
     detalles: {
       semaforoAntes: existente.semaforo,
       semaforoDespues: actualizado.semaforo,
+      estrellasAntes: existente.estrellas,
+      estrellasDespues: actualizado.estrellas,
       categoriaAntes: existente.categoriaCausaRaiz,
       categoriaDespues: actualizado.categoriaCausaRaiz,
     },

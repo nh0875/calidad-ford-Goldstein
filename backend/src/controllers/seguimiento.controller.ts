@@ -175,7 +175,7 @@ export async function listarConversaciones(req: Request, res: Response) {
           where: { esSeguimiento: false },
           orderBy: { analyzedAt: "desc" },
           take: 1,
-          select: { semaforo: true, requiereRevisionManual: true },
+          select: { semaforo: true, estrellas: true, requiereRevisionManual: true },
         },
         _count: { select: { mensajes: true } },
       },
@@ -242,6 +242,8 @@ export async function listarConversaciones(req: Request, res: Response) {
       optOut: c.whatsappOptOut,
       quiereAsesor: false,
       semaforo: a?.semaforo ?? null,
+      // Puntaje 1-5 en las marcas que miden por estrellas (null en las demas).
+      estrellas: a?.estrellas ?? null,
       requiereRevision: a?.requiereRevisionManual ?? false,
       totalMensajes: c._count.mensajes,
       ultimoMensaje: um
@@ -266,6 +268,7 @@ export async function listarConversaciones(req: Request, res: Response) {
       optOut: false,
       quiereAsesor: f.quiereAsesorEn != null,
       semaforo: null,
+      estrellas: null,
       requiereRevision: false,
       totalMensajes: f._count.mensajes,
       ultimoMensaje: um
@@ -355,7 +358,14 @@ export async function verConversacion(req: Request, res: Response) {
   const analisis = await prisma.sentimentAnalysis.findFirst({
     where: { casoId: caso.id, esSeguimiento: false },
     orderBy: { analyzedAt: "desc" },
-    select: { id: true, semaforo: true, requiereRevisionManual: true, resumenIA: true, categoriaCausaRaiz: true },
+    select: {
+      id: true,
+      semaforo: true,
+      estrellas: true,
+      requiereRevisionManual: true,
+      resumenIA: true,
+      categoriaCausaRaiz: true,
+    },
   });
 
   const ultimoEntrante =

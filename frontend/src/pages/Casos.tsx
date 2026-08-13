@@ -35,7 +35,12 @@ interface Caso {
   suprimido: boolean;
   ultimoErrorEnvio: string | null;
   periodo: string;
-  ultimoAnalisis: { semaforo: string; esHistoricoImportado: boolean } | null;
+  ultimoAnalisis: {
+    semaforo: string;
+    // Puntaje 1-5 en las marcas que miden por estrellas (null en las demas).
+    estrellas: number | null;
+    esHistoricoImportado: boolean;
+  } | null;
 }
 
 interface CasosResponse {
@@ -681,7 +686,11 @@ export default function Casos() {
                             : "Clasificado por IA"
                         }
                       >
-                        <PuntoSemaforo semaforo={c.ultimoAnalisis.semaforo} soloIcono />
+                        <PuntoSemaforo
+                          semaforo={c.ultimoAnalisis.semaforo}
+                          estrellas={c.ultimoAnalisis.estrellas}
+                          soloIcono
+                        />
                       </span>
                     ) : (
                       <span className="text-gray-300">—</span>

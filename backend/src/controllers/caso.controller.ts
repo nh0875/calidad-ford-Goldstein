@@ -183,7 +183,7 @@ export async function listCasos(req: Request, res: Response) {
           where: { esSeguimiento: false },
           orderBy: { analyzedAt: "desc" },
           take: 1,
-          select: { semaforo: true, esHistoricoImportado: true, resumenIA: true },
+          select: { semaforo: true, estrellas: true, esHistoricoImportado: true, resumenIA: true },
         },
       },
     }),

@@ -24,7 +24,7 @@ interface FilaRqr {
   caso: { numeroOrden: string; nombrePropietario: string; modelo: string; sucursal: string } | null;
   nombreClienteManual: string | null;
   modeloManual: string | null;
-  sentimentAnalysis: { semaforo: string | null } | null;
+  sentimentAnalysis: { semaforo: string | null; estrellas: number | null } | null;
 }
 
 interface Respuesta {
@@ -228,7 +228,12 @@ export default function Rqr() {
                   <td className="whitespace-nowrap px-3 py-2 text-ink-muted">{fechaCorta(r.fechaApertura)}</td>
                   <td className="px-3 py-2 text-ink-muted">{etiquetaCategoria(r.causaRaiz)}</td>
                   <td className="px-3 py-2 text-center">
-                    <PuntoSemaforo semaforo={semaforo} pulsar={pulsar} soloIcono />
+                    <PuntoSemaforo
+                      semaforo={semaforo}
+                      estrellas={r.sentimentAnalysis?.estrellas ?? null}
+                      pulsar={pulsar}
+                      soloIcono
+                    />
                   </td>
                   <td className="px-3 py-2">
                     <Badge tono={BADGE_ESTADO[r.estado] ?? "gris"}>{r.estado.replace("_", " ")}</Badge>

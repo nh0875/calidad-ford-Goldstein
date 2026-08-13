@@ -65,7 +65,7 @@ export async function listRqr(req: Request, res: Response) {
         caso: {
           select: { numeroOrden: true, nombrePropietario: true, modelo: true, sucursal: true },
         },
-        sentimentAnalysis: { select: { semaforo: true, confianza: true } },
+        sentimentAnalysis: { select: { semaforo: true, estrellas: true, confianza: true } },
       },
     }),
   ]);

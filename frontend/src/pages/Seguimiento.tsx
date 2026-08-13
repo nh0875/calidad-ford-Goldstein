@@ -13,8 +13,9 @@ import {
 } from "lucide-react";
 import { apiGet, apiPatchJson, apiPostJson, ApiError } from "../lib/api";
 import { etiquetaArea, tonoArea } from "../lib/area";
+import { usaEstrellas } from "../lib/marca";
 import { Alert } from "../components/ui/Alert";
-import { Badge } from "../components/ui/Badge";
+import { Badge, PuntoSemaforo } from "../components/ui/Badge";
 import { EmptyState } from "../components/ui/EmptyState";
 
 // ---------- "WhatsApp interno" ----------
@@ -45,6 +46,8 @@ interface Conversacion {
   optOut: boolean;
   quiereAsesor: boolean;
   semaforo: Semaforo;
+  // Puntaje 1-5 en las marcas que miden por estrellas (null en las demas).
+  estrellas: number | null;
   requiereRevision: boolean;
   totalMensajes: number;
   ultimoMensaje: UltimoMensaje | null;
@@ -77,7 +80,13 @@ interface Hilo {
     quiereAsesor: boolean;
   };
   mensajes: Mensaje[];
-  analisis: { id: string; semaforo: Semaforo; requiereRevisionManual: boolean; resumenIA: string } | null;
+  analisis: {
+    id: string;
+    semaforo: Semaforo;
+    estrellas: number | null;
+    requiereRevisionManual: boolean;
+    resumenIA: string;
+  } | null;
   ventana: { abierta: boolean; cierraEn: string | null };
   puedeResponder: { ok: boolean; motivo: string };
   puedeReenviarPlantilla: boolean;
@@ -95,12 +104,6 @@ const SEMAFOROS: Array<{ valor: "VERDE" | "AMARILLO" | "ROJO"; etiqueta: string;
   { valor: "AMARILLO", etiqueta: "Amarillo", clase: "border-yellow-300 bg-yellow-50 text-yellow-800 hover:bg-yellow-100" },
   { valor: "ROJO", etiqueta: "Rojo", clase: "border-red-300 bg-red-50 text-red-800 hover:bg-red-100" },
 ];
-
-const PUNTO_SEMAFORO: Record<"VERDE" | "AMARILLO" | "ROJO", string> = {
-  VERDE: "bg-green-500",
-  AMARILLO: "bg-yellow-500",
-  ROJO: "bg-red-500",
-};
 
 // Hora/fecha en horario de Argentina. Los timestamps vienen en UTC desde el
 // backend; antes se leía el UTC crudo del texto y quedaba 3 h adelantado.
@@ -248,13 +251,23 @@ export default function Seguimiento() {
     }
   }
 
-  async function clasificar(semaforo: "VERDE" | "AMARILLO" | "ROJO") {
+  // Clasificacion manual. En las marcas que miden por estrellas se manda el
+  // puntaje y el backend recalcula el semaforo; en las demas, el semaforo.
+  async function clasificar(valor: "VERDE" | "AMARILLO" | "ROJO" | number) {
     if (!hilo?.analisis) return;
     setClasificando(true);
     setError(null);
     try {
-      await apiPatchJson(`/api/sentiment-analysis/${hilo.analisis.id}`, { semaforo, requiereRevisionManual: false });
-      setAviso(`Clasificado como ${semaforo.toLowerCase()}.`);
+      const cuerpo =
+        typeof valor === "number"
+          ? { estrellas: valor, requiereRevisionManual: false }
+          : { semaforo: valor, requiereRevisionManual: false };
+      await apiPatchJson(`/api/sentiment-analysis/${hilo.analisis.id}`, cuerpo);
+      setAviso(
+        typeof valor === "number"
+          ? `Clasificado con ${valor} ${valor === 1 ? "estrella" : "estrellas"}.`
+          : `Clasificado como ${valor.toLowerCase()}.`
+      );
       await cargarHilo(hilo.caso.id);
       cargarLista();
     } catch (err) {
@@ -344,7 +357,7 @@ export default function Seguimiento() {
                   }`}
                 >
                   <div className="mt-1 flex flex-col items-center gap-1">
-                    {c.semaforo && <span className={`h-2.5 w-2.5 rounded-full ${PUNTO_SEMAFORO[c.semaforo]}`} />}
+                    {c.semaforo && <PuntoSemaforo semaforo={c.semaforo} estrellas={c.estrellas} soloIcono />}
                     {c.requiereRevision && (
                       <span title="Necesita revisión" className="h-2 w-2 rounded-full bg-accent" />
                     )}
@@ -395,7 +408,11 @@ export default function Seguimiento() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   {hilo.analisis?.semaforo && (
-                    <span className={`h-2.5 w-2.5 rounded-full ${PUNTO_SEMAFORO[hilo.analisis.semaforo]}`} />
+                    <PuntoSemaforo
+                      semaforo={hilo.analisis.semaforo}
+                      estrellas={hilo.analisis.estrellas}
+                      soloIcono
+                    />
                   )}
                   <span className="truncate font-medium text-ink">{hilo.caso.nombre}</span>
                   {hilo.caso.tieneRqrAbierto && <Badge tono="rojo" className="cursor-default">RQR abierto</Badge>}
@@ -412,16 +429,28 @@ export default function Seguimiento() {
                   {hilo.analisis.requiereRevisionManual && (
                     <span className="mr-1 text-xs font-medium text-accent-dark">Clasificar:</span>
                   )}
-                  {SEMAFOROS.map((s) => (
-                    <button
-                      key={s.valor}
-                      onClick={() => clasificar(s.valor)}
-                      disabled={clasificando}
-                      className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${s.clase}`}
-                    >
-                      {s.etiqueta}
-                    </button>
-                  ))}
+                  {usaEstrellas()
+                    ? [1, 2, 3, 4, 5].map((n) => (
+                        <button
+                          key={n}
+                          onClick={() => clasificar(n)}
+                          disabled={clasificando}
+                          title={`Clasificar con ${n} de 5 estrellas`}
+                          className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-ink transition-colors hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          {n} ★
+                        </button>
+                      ))
+                    : SEMAFOROS.map((s) => (
+                        <button
+                          key={s.valor}
+                          onClick={() => clasificar(s.valor)}
+                          disabled={clasificando}
+                          className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${s.clase}`}
+                        >
+                          {s.etiqueta}
+                        </button>
+                      ))}
                 </div>
               )}
             </div>

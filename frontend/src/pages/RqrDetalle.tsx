@@ -49,6 +49,7 @@ interface RqrDetalleData {
   modeloManual: string | null;
   sentimentAnalysis: {
     semaforo: string | null;
+    estrellas: number | null;
     severidad: string | null;
     confianza: number;
     resumenIA: string;
@@ -215,7 +216,14 @@ export default function RqrDetalle() {
           </Link>
           <h2 className="flex items-center gap-2 font-display text-xl font-bold text-ink">
             {rqr.numeroRQR}
-            {semaforo && <PuntoSemaforo semaforo={semaforo} pulsar={pulsar} soloIcono />}
+            {semaforo && (
+              <PuntoSemaforo
+                semaforo={semaforo}
+                estrellas={rqr.sentimentAnalysis?.estrellas ?? null}
+                pulsar={pulsar}
+                soloIcono
+              />
+            )}
           </h2>
           <p className="text-xs text-ink-muted">
             Abierto el {fechaCorta(rqr.fechaApertura)} · Canal {rqr.canal}
