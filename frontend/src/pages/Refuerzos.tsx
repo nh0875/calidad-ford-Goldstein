@@ -5,7 +5,7 @@
 // veces al mismo cliente). ADMIN además tiene la vista por pool.
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, ClipboardCheck, Info, Mail, SearchX, UserCheck } from "lucide-react";
-import { apiGet, apiPatchJson } from "../lib/api";
+import { apiGet, apiPatchJson, apiPostJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
 import { fechaCorta } from "../lib/categorias";
 import { etiquetaArea, tonoArea } from "../lib/area";
@@ -276,8 +276,45 @@ interface GestorResumen {
   completadas: number;
 }
 
+interface EstadoMail {
+  notificaPorMail: boolean;
+  configurado: boolean;
+  casilla: string | null;
+}
+interface ResultadoNotificacion {
+  vendedor: string;
+  email: string;
+  clientes: number;
+  enviado: boolean;
+  error: string | null;
+}
+
 function AdminTareas() {
   const [tareas, setTareas] = useState<Tarea[]>([]);
+  // Aviso por correo a los vendedores (Volkswagen: no entran al sistema).
+  const [estadoMail, setEstadoMail] = useState<EstadoMail | null>(null);
+  const [notificando, setNotificando] = useState(false);
+  const [resultadosMail, setResultadosMail] = useState<ResultadoNotificacion[] | null>(null);
+  const [mensajeMail, setMensajeMail] = useState<string | null>(null);
+
+  async function notificar() {
+    setNotificando(true);
+    setError(null);
+    setResultadosMail(null);
+    try {
+      const r = await apiPostJson<{ message: string; resultados: ResultadoNotificacion[] }>(
+        "/api/refuerzos/notificar",
+        {}
+      );
+      setResultadosMail(r.resultados);
+      setMensajeMail(r.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo enviar el aviso.");
+    } finally {
+      setNotificando(false);
+    }
+  }
+
   const [pools, setPools] = useState<PoolResumen[]>([]);
   const [porGestor, setPorGestor] = useState<GestorResumen[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -288,13 +325,15 @@ function AdminTareas() {
     try {
       const params = new URLSearchParams();
       if (filtroEstado) params.set("estado", filtroEstado);
-      const [t, r] = await Promise.all([
+      const [t, r, m] = await Promise.all([
         apiGet<{ data: Tarea[] }>(`/api/refuerzos?${params}`),
         apiGet<{ pools: PoolResumen[]; porGestor: GestorResumen[] }>("/api/refuerzos/resumen-empleados"),
+        apiGet<EstadoMail>("/api/refuerzos/estado-mail").catch(() => null),
       ]);
       setTareas(t.data);
       setPools(r.pools);
       setPorGestor(r.porGestor);
+      setEstadoMail(m);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos cargar las tareas.");
     }
@@ -324,6 +363,85 @@ function AdminTareas() {
           <strong>sin ningún empleado</strong> — esos casos no los ve nadie. Creá o habilitá un usuario para:{" "}
           {poolsSinGente.map((p) => `${etiquetaArea(p.area)}/${provinciaLabel(p.sucursal)}`).join(", ")}.
         </Alert>
+      )}
+
+      {/* Aviso por correo. Solo en las marcas donde los vendedores NO entran al
+          sistema: ahí el correo es la única forma de que se enteren. */}
+      {estadoMail?.notificaPorMail && (
+        <Card padding="p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 text-sm">
+              <div className="font-semibold text-ink">Avisar a los vendedores por correo</div>
+              <p className="mt-0.5 text-xs text-ink-muted">
+                Le manda a cada vendedor un correo con el detalle de los clientes que tiene asignados y
+                todavía están pendientes. Los vendedores no entran al sistema: este es el aviso.
+                {estadoMail.casilla && <> Se envía desde <strong>{estadoMail.casilla}</strong>.</>}
+              </p>
+            </div>
+            <button
+              onClick={notificar}
+              disabled={notificando || !estadoMail.configurado}
+              className={claseBoton("primario", "!py-1.5")}
+              title={
+                estadoMail.configurado
+                  ? "Enviar el aviso a cada vendedor con tareas pendientes"
+                  : "Falta configurar la casilla de correo del sistema"
+              }
+            >
+              <Mail className="h-4 w-4" /> {notificando ? "Enviando…" : "Avisar a los vendedores"}
+            </button>
+          </div>
+
+          {!estadoMail.configurado && (
+            <div className="mt-3">
+              <Alert tono="advertencia">
+                Todavía no hay una casilla de correo configurada, así que el aviso no se puede enviar.
+                Hay que cargar el usuario y la contraseña de aplicación en el archivo de entorno del sistema.
+              </Alert>
+            </div>
+          )}
+
+          {/* Resultado por vendedor: quién recibió y quién no. Un fallo con uno
+              no impide que los demás reciban, así que hay que poder verlo. */}
+          {mensajeMail && (
+            <div className="mt-3">
+              <Alert tono="exito">{mensajeMail}</Alert>
+            </div>
+          )}
+
+          {resultadosMail && resultadosMail.length > 0 && (
+            <div className="mt-3 overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-gray-50 text-left text-xs uppercase text-ink-muted">
+                    <th className="px-3 py-1.5">Vendedor</th>
+                    <th className="px-3 py-1.5">Correo</th>
+                    <th className="px-3 py-1.5 text-center">Clientes</th>
+                    <th className="px-3 py-1.5">Resultado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {resultadosMail.map((r) => (
+                    <tr key={r.email} className="border-b border-gray-100">
+                      <td className="px-3 py-1.5 text-ink">{r.vendedor}</td>
+                      <td className="px-3 py-1.5 text-ink-muted">{r.email}</td>
+                      <td className="px-3 py-1.5 text-center text-ink-muted">{r.clientes}</td>
+                      <td className="px-3 py-1.5">
+                        {r.enviado ? (
+                          <span className="text-xs font-medium text-green-700">Enviado</span>
+                        ) : (
+                          <span className="text-xs text-red-700" title={r.error ?? undefined}>
+                            {r.error ?? "Falló"}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
       )}
 
       {/* Estado de cada pool (área + provincia) */}

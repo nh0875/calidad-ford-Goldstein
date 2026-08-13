@@ -314,7 +314,22 @@ function filaDato(etiqueta: string, valor: string): TableRow {
 // El logo se lee UNA vez y se cachea: el Word se exporta de a uno pero la
 // lectura de disco no tiene por qué repetirse en cada descarga.
 // `undefined` = todavía no se intentó; `null` = se intentó y no está.
-let logoCache: Buffer | null | undefined;
+let logoCache: { datos: Buffer; tipo: "png" | "jpg" } | null | undefined;
+
+/**
+ * Formato REAL de la imagen, leído de sus primeros bytes.
+ *
+ * No se confía en la extensión del archivo a propósito: el logo lo copia una
+ * persona a mano y es habitual que un JPEG termine guardado como .png. Si se le
+ * declara el tipo equivocado a la librería, el Word sale con la imagen rota y no
+ * avisa nada — el error aparece recién cuando alguien abre el documento.
+ */
+function detectarFormatoImagen(datos: Buffer): "png" | "jpg" | null {
+  if (datos.length < 4) return null;
+  if (datos[0] === 0x89 && datos[1] === 0x50 && datos[2] === 0x4e && datos[3] === 0x47) return "png";
+  if (datos[0] === 0xff && datos[1] === 0xd8 && datos[2] === 0xff) return "jpg";
+  return null;
+}
 
 /**
  * Logo de la marca para el encabezado del documento. Devuelve null si no está.
@@ -323,13 +338,24 @@ let logoCache: Buffer | null | undefined;
  * y no puede fallar la descarga porque falte un archivo de imagen. Si no está,
  * el Word sale sin logo y queda un aviso en el log (una sola vez).
  */
-function leerLogoMarca(): Buffer | null {
+function leerLogoMarca(): { datos: Buffer; tipo: "png" | "jpg" } | null {
   if (logoCache !== undefined) return logoCache;
   const ruta =
     process.env.LOGO_MARCA_ARCHIVO?.trim() ||
     path.join(process.cwd(), "assets", marca.logoArchivo);
   try {
-    logoCache = fs.readFileSync(ruta);
+    const datos = fs.readFileSync(ruta);
+    const tipo = detectarFormatoImagen(datos);
+    if (!tipo) {
+      console.warn(
+        `[word] El logo de ${marca.nombre} (${ruta}) no es un PNG ni un JPEG. ` +
+          `El formulario de RQR se genera sin logo.`
+      );
+      logoCache = null;
+    } else {
+      logoCache = { datos, tipo };
+      console.log(`[word] Logo de ${marca.nombre} cargado desde ${ruta} (formato real: ${tipo}).`);
+    }
   } catch {
     console.warn(
       `[word] No se encontró el logo de ${marca.nombre} en ${ruta}. ` +
@@ -351,8 +377,9 @@ function encabezadoDocumento(numeroRQR: string): Paragraph[] {
         spacing: { after: 120 },
         children: [
           new ImageRun({
-            type: "png",
-            data: logo,
+            // El tipo sale de los bytes del archivo, no de su extensión.
+            type: logo.tipo,
+            data: logo.datos,
             // 45 mm de ancho. docx trabaja en puntos (1 mm ≈ 2,835 pt).
             transformation: { width: 128, height: 128 },
           }),
