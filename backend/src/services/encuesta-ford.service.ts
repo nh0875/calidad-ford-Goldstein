@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { marca } from "../config/marca";
 import { AreaTrabajo, EncuestaFordEstado, TipoTareaRefuerzo } from "@prisma/client";
 import { normalizarTexto, parsearFecha } from "./excel.service";
 
@@ -111,9 +112,9 @@ export function parsearHojaFord(
   if (filaEncabezado === -1) {
     return {
       error:
-        "No se encontró la fila de encabezados del export de Ford " +
+        `No se encontró la fila de encabezados del export de ${marca.nombre} ` +
         '(se buscan las columnas "ID encuesta" y "Estado de la invitación" en las primeras 10 filas). ' +
-        "Verificá que sea el archivo de invitaciones exportado de la plataforma de Ford.",
+        `Verificá que sea el archivo de invitaciones exportado de la plataforma de ${marca.nombre}.`,
     };
   }
 

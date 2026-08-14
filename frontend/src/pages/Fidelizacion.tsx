@@ -7,6 +7,7 @@
 //  - Ventas de la agencia: no trae dato de service, así que toma a todos los
 //    Ford 0km de la planilla.
 import { useEffect, useRef, useState } from "react";
+import { getMarca } from "../lib/marca";
 import { Link } from "react-router-dom";
 import { FileUp, Gift, Send, Trash2, Users } from "lucide-react";
 import { apiDelete, apiGet, apiPostForm, apiPostJson } from "../lib/api";
@@ -234,7 +235,7 @@ export default function Fidelizacion() {
         <span className="font-medium">turnos de taller</span> (lee "Comentario del Asesor" / "Servicio" y toma únicamente
         a los que tienen pendiente el <span className="font-medium">1° a 5° service</span>) o{" "}
         <span className="font-medium">ventas</span> (no trae dato de service, así que toma a todos los{" "}
-        <span className="font-medium">Ford 0km</span> de la planilla). No clasifica la respuesta: es solo un aviso.
+        <span className="font-medium">{getMarca().nombre} 0km</span> de la planilla). No clasifica la respuesta: es solo un aviso.
       </Alert>
 
       {/* Estado de la plantilla en Meta: el sistema se entera solo por el webhook */}

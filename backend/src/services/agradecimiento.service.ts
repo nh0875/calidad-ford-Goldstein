@@ -1,4 +1,5 @@
 import { MessageDirection, MotivoSupresion } from "@prisma/client";
+import { marca } from "../config/marca";
 import { env } from "../config/env";
 import { prisma } from "../config/prisma";
 import { agradecimientoQueue } from "../jobs/queues";
@@ -78,7 +79,7 @@ export function reemplazarPlaceholders(
   return texto
     .replaceAll("{nombre}", primerNombre(datos.nombrePropietario))
     // Edge: sin email, redacción alternativa (no dejar "{email}" ni un hueco raro)
-    .replaceAll("{email}", email || "de correo registrada en Ford")
+    .replaceAll("{email}", email || `de correo registrada en ${marca.nombre}`)
     .replaceAll("{modelo}", (datos.modelo ?? "").trim() || "tu vehículo");
 }
 

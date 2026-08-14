@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { getMarca } from "../lib/marca";
 import { CheckCircle2, ClipboardList, FileSpreadsheet, ListChecks, UploadCloud } from "lucide-react";
 import { apiPostForm, apiPostJson } from "../lib/api";
 import { CAMPOS_CASO } from "../lib/camposCaso";
@@ -109,7 +110,13 @@ export default function Upload() {
       <div className="flex flex-wrap gap-2">
         <SelectorTipo activo={tipoCarga === "posventa"} onClick={() => setTipoCarga("posventa")} icono={UploadCloud} titulo="Contacto Posventa" descripcion="El Excel mensual de seguimiento post-servicio (área Posventa)." />
         <SelectorTipo activo={tipoCarga === "ventas"} onClick={() => setTipoCarga("ventas")} icono={UploadCloud} titulo="Contacto Ventas" descripcion="Mismo formato que Posventa; los casos quedan en el área Ventas." />
-        <SelectorTipo activo={tipoCarga === "ford"} onClick={() => setTipoCarga("ford")} icono={ClipboardList} titulo="Encuesta Ford" descripcion="El export de invitaciones de la plataforma de Ford." />
+        <SelectorTipo
+            activo={tipoCarga === "ford"}
+            onClick={() => setTipoCarga("ford")}
+            icono={ClipboardList}
+            titulo={`Encuesta ${getMarca().nombre}`}
+            descripcion={`El export de invitaciones de la plataforma de ${getMarca().nombre}.`}
+          />
       </div>
       {tipoCarga === "ford" ? (
         <UploadFord />

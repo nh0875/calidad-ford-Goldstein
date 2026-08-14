@@ -2,6 +2,7 @@ import { AreaTrabajo } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { env } from "../config/env";
 import { cifradoDisponible, cifrar, descifrar } from "./cripto.service";
+import { marca } from "../config/marca";
 
 // Configuración editable (clave→valor en la tabla Configuracion). Parte A guarda
 // acá los textos de los mensajes automáticos y sus toggles, editables desde
@@ -23,7 +24,7 @@ export const CLAVES_CONFIG = {
 // Placeholders soportados en los textos: {nombre} {email} {modelo}
 export const DEFAULTS_CONFIG: Record<string, string> = {
   [CLAVES_CONFIG.AGRADECIMIENTO_VERDE_AMARILLO]:
-    "¡Gracias por tu respuesta, {nombre}! Te recordamos que en los próximos días te va a llegar la encuesta oficial de Ford Argentina a tu casilla {email}. Tu opinión nos ayuda muchísimo.",
+    `¡Gracias por tu respuesta, {nombre}! Te recordamos que en los próximos días te va a llegar la encuesta oficial de ${marca.nombre} Argentina a tu casilla {email}. Tu opinión nos ayuda muchísimo.`,
   [CLAVES_CONFIG.AGRADECIMIENTO_ROJO]:
     "Gracias por contarnos tu experiencia, {nombre}. Lamentamos que no haya sido la esperada. Un responsable del área se va a comunicar con vos a la brevedad para darle una solución.",
   // El texto ROJO (empático, sin recordatorio de encuesta) se manda a los AMARILLOS

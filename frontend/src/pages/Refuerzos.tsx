@@ -4,6 +4,7 @@
 // alguien la empieza/completa, queda registrado como "gestor" (para no llamar dos
 // veces al mismo cliente). ADMIN además tiene la vista por pool.
 import { useCallback, useEffect, useState } from "react";
+import { getMarca } from "../lib/marca";
 import { AlertTriangle, ClipboardCheck, Info, Mail, SearchX, UserCheck } from "lucide-react";
 import { apiGet, apiPatchJson, apiPostJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
@@ -52,7 +53,7 @@ const TIPO_INFO: Record<string, { label: string; tono: "azul" | "amarillo"; icon
     label: "Recordar encuesta",
     tono: "azul",
     icono: ClipboardCheck,
-    ayuda: "Contactá al cliente para recordarle que responda la encuesta de Ford que recibió por email.",
+    ayuda: `Contactá al cliente para recordarle que responda la encuesta de ${getMarca().nombre} que recibió por email.`,
   },
   VERIFICAR_EMAIL: {
     label: "Verificar email",
@@ -146,7 +147,7 @@ function MisTareas() {
       {error && <Alert tono="error">{error}</Alert>}
       {mensaje && <Alert tono="exito">{mensaje}</Alert>}
       {tareas.length === 0 && (
-        <EmptyState icono={ClipboardCheck} titulo="No hay casos pendientes de refuerzo" descripcion="Cuando se importe una nueva tanda de encuestas de Ford, los casos de tu área y provincia van a aparecer acá." />
+        <EmptyState icono={ClipboardCheck} titulo="No hay casos pendientes de refuerzo" descripcion={`Cuando se importe una nueva tanda de encuestas de ${getMarca().nombre}, los casos de tu área y provincia van a aparecer acá.`} />
       )}
       {tareas.map((t) => (
         <TareaCard key={t.id} tarea={t} yoId={yoId} onActualizar={actualizar} />
@@ -190,7 +191,7 @@ function TareaCard({
             {semaforo && <PuntoSemaforo semaforo={semaforo} soloIcono />}
             {tarea.caso.tieneRqrAbierto && <Badge tono="rojo">RQR abierto</Badge>}
             {tarea.suprimido && (
-              <Badge tono="rojo" title="El cliente pidió no recibir WhatsApp nuestro. La encuesta Ford es de otro canal, pero tenelo presente.">
+              <Badge tono="rojo" title={`El cliente pidió no recibir WhatsApp nuestro. La encuesta de ${getMarca().nombre} es de otro canal, pero tenelo presente.`}>
                 no contactar por WhatsApp
               </Badge>
             )}

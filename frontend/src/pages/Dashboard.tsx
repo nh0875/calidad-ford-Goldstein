@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { getMarca } from "../lib/marca";
 import { Link } from "react-router-dom";
 import { DatabaseBackup, PartyPopper } from "lucide-react";
 import { apiGet } from "../lib/api";
@@ -337,7 +338,7 @@ export default function Dashboard() {
           {/* Encuesta oficial de Ford (Parte B) */}
           <Card>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-ink">Encuesta oficial de Ford</h3>
+              <h3 className="text-sm font-semibold text-ink">Encuesta oficial de {getMarca().nombre}</h3>
               <Link to="/refuerzos" className="text-xs font-medium text-accent-dark hover:underline">
                 Ir a los refuerzos →
               </Link>
@@ -351,7 +352,7 @@ export default function Dashboard() {
               <MiniKpi titulo="Tareas abiertas" valor={resumen.encuestaFord.tareasAbiertas} color="text-red-700" />
             </div>
             <p className="mt-2 text-xs text-ink-muted">
-              La tasa excluye los no elegibles (opt-out / cuarentena) y los que nunca tuvieron una invitación de Ford.
+              La tasa excluye los no elegibles (opt-out / cuarentena) y los que nunca tuvieron una invitación de {getMarca().nombre}.
             </p>
           </Card>
 

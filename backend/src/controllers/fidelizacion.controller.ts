@@ -3,6 +3,7 @@ import { EstadoFidelizacion, OrigenFidelizacion, Prisma, TipoUpload, UploadStatu
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { env } from "../config/env";
+import { marca } from "../config/marca";
 import { abrirWorkbook } from "../services/excel.service";
 import {
   encolarEnviosFidelizacion,
@@ -132,9 +133,9 @@ export async function subirFidelizacion(req: Request, res: Response) {
 
   const r = parseo.resumen;
   const message = esVentas
-    ? `Planilla de ventas: de ${r.totalFilas} fila(s) se tomaron ${registros.length} Ford 0km ` +
+    ? `Planilla de ventas: de ${r.totalFilas} fila(s) se tomaron ${registros.length} ${marca.nombre} 0km ` +
       `(${pendientes} listos para el recordatorio). ` +
-      `${r.noElegibles} no eran Ford 0km (usados, venta directa u otra marca), ` +
+      `${r.noElegibles} no eran ${marca.nombre} 0km (usados, venta directa u otra marca), ` +
       `${r.duplicados} tenían un teléfono repetido y ${r.sinTelefono} no tenían teléfono usable: ` +
       `esos NO reciben el mensaje.`
     : `Carga lista: se detectaron ${registros.length} cliente(s) con service 1° a 5° pendiente ` +

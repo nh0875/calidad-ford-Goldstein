@@ -2,6 +2,7 @@
 // textos del agradecimiento/recordatorio de encuesta, editables por ADMIN, con
 // vista previa. Los placeholders {nombre} {email} {modelo} se reemplazan solos.
 import { useCallback, useEffect, useState } from "react";
+import { getMarca } from "../lib/marca";
 import { MessageCircleHeart, MessageSquare, Plug, Save } from "lucide-react";
 import { apiGet, apiPatchJson, apiPostJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
@@ -26,8 +27,8 @@ const K = {
 function previsualizar(texto: string, opts: { conEmail: boolean }): string {
   return texto
     .replaceAll("{nombre}", "Lucía")
-    .replaceAll("{email}", opts.conEmail ? "lucia.fernandez@gmail.com" : "de correo registrada en Ford")
-    .replaceAll("{modelo}", "Ford Ranger");
+    .replaceAll("{email}", opts.conEmail ? "lucia.fernandez@gmail.com" : `de correo registrada en ${getMarca().nombre}`)
+    .replaceAll("{modelo}", `${getMarca().nombre} Ranger`);
 }
 
 export default function Configuracion() {
@@ -114,7 +115,7 @@ export default function Configuracion() {
         {/* VERDE (promotor) → recordatorio de encuesta */}
         <div className="mb-5">
           <label className="mb-1 block text-sm font-medium text-ink">
-            Cliente conforme (semáforo verde) — recordatorio de la encuesta de Ford
+            Cliente conforme (semáforo verde) — recordatorio de la encuesta de {getMarca().nombre}
           </label>
           <Textarea
             value={cfg[K.VERDE_AMARILLO]}
