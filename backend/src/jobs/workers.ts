@@ -268,8 +268,23 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
   // Emoji-solo que no se pudo clasificar de forma clara (negativo o ambiguo).
   const emojiSinClasificar = soloEmoji && semaforoEmoji === null;
 
-  if (esNoTextual || emojiSinClasificar) {
-    const motivo = esNoTextual ? "no-textual" : "reaccion-ambigua";
+  // PRIMERA respuesta que es SOLO un saludo o una cortesía ("buen día", "hola",
+  // "gracias"). NO es una opinión sobre el servicio y no se puede puntuar: si se
+  // manda a la IA, vuelve clasificada como positiva (pasó de verdad — un "Buen
+  // día" quedó VERDE) y el cliente termina contado como conforme sin haber dicho
+  // nada. Va a revisión manual, igual que un audio ilegible, y sin gastar IA.
+  //
+  // Ojo: se evalúa mensaje por mensaje sobre el texto ORIGINAL, no sobre el
+  // consolidado, porque consolidarTexto() los numera ("(1) buen día") y eso no
+  // matchearía nunca contra la lista de cortesías.
+  const soloCortesiaPrimera = !esSeguimiento && mensajes.every((m) => esSoloCortesia(m.content));
+
+  if (esNoTextual || emojiSinClasificar || soloCortesiaPrimera) {
+    const motivo = esNoTextual
+      ? "no-textual"
+      : emojiSinClasificar
+        ? "reaccion-ambigua"
+        : "solo-cortesia";
     await prisma.sentimentAnalysis.create({
       data: {
         casoId,
@@ -278,7 +293,9 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
         confianza: 0,
         resumenIA: esNoTextual
           ? "Respuesta no textual, requiere revisión manual"
-          : `El cliente reaccionó con ${texto.trim()} (sin sentimiento claro), requiere revisión manual`,
+          : soloCortesiaPrimera
+            ? `El cliente respondió solo un saludo ("${texto.trim()}"), sin opinión sobre el servicio. Requiere revisión manual.`
+            : `El cliente reaccionó con ${texto.trim()} (sin sentimiento claro), requiere revisión manual`,
         respuestaCrudaIA: { motivo, contenido: texto } as Prisma.InputJsonValue,
         requiereRQR: false,
         requiereRevisionManual: true,
@@ -295,11 +312,19 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
       casoId: caso.id,
       titulo: `${caso.nombrePropietario}: respuesta para clasificar a mano`,
       detalle:
-        `El cliente respondió algo que la IA no pudo clasificar (${esNoTextual ? "audio/imagen que no se pudo leer" : "reacción ambigua"}). ` +
-        `Miralo en Seguimiento antes de que pasen 24 hs.`,
+        `El cliente respondió algo que no se puede clasificar solo (${
+          esNoTextual
+            ? "audio/imagen que no se pudo leer"
+            : soloCortesiaPrimera
+              ? "solo un saludo, sin opinión sobre el servicio"
+              : "reacción ambigua"
+        }). Miralo en Seguimiento antes de que pasen 24 hs.`,
     });
-    // Edge: respuesta no clasificable → igual se programa el agradecimiento (variante VERDE/AMARILLO)
-    await programarAgradecimiento(casoId);
+    // NO se programa el agradecimiento: sin clasificar no se sabe si el cliente
+    // quedó conforme, y el texto VERDE le pide que puntúe la encuesta con 5. Se
+    // lo mandaba igual, así que a alguien que solo dijo "buen día" le llegaba un
+    // pedido de 5 puntos. Ahora espera: una persona lo clasifica en Seguimiento y
+    // desde ahí puede responderle a mano.
     return { revisionManual: true };
   }
 

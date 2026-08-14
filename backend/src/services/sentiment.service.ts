@@ -101,7 +101,10 @@ export function aplicarReglaRQR(semaforo: Semaforo | null, _severidad: Severidad
 // ---------- Validación de la respuesta del modelo ----------
 
 const esquemaRespuestaIA = z.object({
-  semaforo: z.enum(["VERDE", "AMARILLO", "ROJO"]),
+  // Nullable: el modelo necesita poder decir "esto no es una opinión" (un saludo
+  // suelto). Sin esta opción respondía con un color igual, y un "buen día"
+  // terminaba contado como cliente conforme.
+  semaforo: z.enum(["VERDE", "AMARILLO", "ROJO"]).nullable(),
   // Puede venir null/omitido: el parseo aplica un default defensivo por semáforo
   severidad: z.enum(["LEVE", "MODERADA", "GRAVE"]).nullish(),
   confianza: z.number().min(0).max(1),
@@ -118,7 +121,9 @@ type RespuestaIA = z.infer<typeof esquemaRespuestaIA>;
 // campos (causa raíz, resumen, confianza, revisión manual) son idénticos: lo
 // único que cambia es la escala con la que se mide la satisfacción.
 const esquemaRespuestaEstrellas = z.object({
-  estrellas: z.number().int().min(1).max(5),
+  // Nullable por el mismo motivo que el semáforo: un saludo no tiene puntaje, y
+  // forzar uno ensucia el promedio de la marca.
+  estrellas: z.number().int().min(1).max(5).nullable(),
   confianza: z.number().min(0).max(1),
   categoriaCausaRaiz: z.enum(CATEGORIAS_CAUSA_RAIZ).nullable(),
   resumen: z.string().min(1),
@@ -206,9 +211,13 @@ Mide qué tan grave es el malestar del cliente, INDEPENDIENTE de qué tan seguro
 - GRAVE: enojo claro, perjuicio concreto, o pérdida de confianza en la marca (esto normalmente ya es ROJO).
 Para VERDE, severidad es null. Ante duda entre LEVE y MODERADA en un AMARILLO, elegí MODERADA.
 
+UN SALUDO NO ES UNA VALORACIÓN (regla dura):
+Si el mensaje es SOLO un saludo o una cortesía —"buen día", "hola", "buenas tardes", "gracias", "ok", "listo"— NO es una opinión sobre el servicio: el cliente todavía no dijo nada. En ese caso poné "requiereRevisionManual": true y NO lo clasifiques como VERDE. Un saludo amable no significa que el cliente esté conforme.
+Distinto es un saludo QUE ADEMÁS trae contenido ("buen día, me atendieron excelente"): eso sí se clasifica por lo que dice del servicio.
+
 REGLAS:
 - "confianza" es tu certeza en la clasificación, de 0 a 1 (NO es la gravedad; para eso está "severidad").
-- "requiereRevisionManual" es true si la respuesta es ambigua, muy corta (ej: "ok", "👍"), irónica sin certeza, o no es interpretable como opinión sobre el servicio.
+- "requiereRevisionManual" es true si la respuesta es ambigua, muy corta (ej: "ok", "👍"), un saludo sin contenido, irónica sin certeza, o no es interpretable como opinión sobre el servicio.
 - "resumen": 1 o 2 frases en español rioplatense neutro, para que una persona de Calidad entienda el caso de un vistazo. Si el mensaje era mixto, mencioná TANTO la queja como el elogio.
 
 EJEMPLOS (muestran el formato de salida exacto):
@@ -224,8 +233,11 @@ Salida: {"semaforo":"ROJO","severidad":"GRAVE","confianza":0.9,"categoriaCausaRa
 Cliente: "Un desastre. Llevé el auto por un ruido y me lo devolvieron igual, no lo solucionó nadie."
 Salida: {"semaforo":"ROJO","severidad":"GRAVE","confianza":0.95,"categoriaCausaRaiz":"CALIDAD_TRABAJO","resumen":"Problema sin resolver: llevó el auto por un ruido y se lo devolvieron igual.","requiereRevisionManual":false}
 
+Cliente: "Buen día"
+Salida: {"semaforo":null,"severidad":null,"confianza":0.2,"categoriaCausaRaiz":null,"resumen":"El cliente solo saludó, todavía no dio una opinión sobre el servicio.","requiereRevisionManual":true}
+
 Respondé ÚNICAMENTE con un objeto JSON válido con esta forma exacta, sin texto adicional antes ni después:
-{"semaforo": "VERDE" | "AMARILLO" | "ROJO", "severidad": "LEVE" | "MODERADA" | "GRAVE" | null, "confianza": number, "categoriaCausaRaiz": string | null, "resumen": string, "requiereRevisionManual": boolean}`;
+{"semaforo": "VERDE" | "AMARILLO" | "ROJO" | null, "severidad": "LEVE" | "MODERADA" | "GRAVE" | null, "confianza": number, "categoriaCausaRaiz": string | null, "resumen": string, "requiereRevisionManual": boolean}`;
 
 const PROMPT_ESTRELLAS = `Sos el analista de calidad de una concesionaria ${marca.nombre}. Analizás respuestas de WhatsApp de clientes y las puntuás para el área de Calidad.
 
@@ -256,9 +268,13 @@ CATEGORÍAS DE CAUSA RAÍZ (usá exclusivamente una de estas, o null si son 5 es
 - REPUESTOS: faltantes o demoras de repuestos.
 - OTRO: causa identificable que no encaja en las anteriores.
 
+UN SALUDO NO ES UNA VALORACIÓN (regla dura):
+Si el mensaje es SOLO un saludo o una cortesía —"buen día", "hola", "buenas tardes", "gracias", "ok", "listo"— NO es una opinión sobre el servicio: el cliente todavía no dijo nada. En ese caso poné "requiereRevisionManual": true y NO le pongas 5 estrellas. Un saludo amable no significa que el cliente esté conforme.
+Distinto es un saludo QUE ADEMÁS trae contenido ("buen día, me atendieron excelente"): eso sí se puntúa por lo que dice del servicio.
+
 REGLAS:
 - "confianza" es tu certeza en la puntuación, de 0 a 1. NO es el puntaje: podés estar 100% seguro de que algo merece 2 estrellas.
-- "requiereRevisionManual" es true si la respuesta es ambigua, muy corta (ej: "ok", "👍"), irónica sin certeza, o no es interpretable como opinión sobre el servicio.
+- "requiereRevisionManual" es true si la respuesta es ambigua, muy corta (ej: "ok", "👍"), un saludo sin contenido, irónica sin certeza, o no es interpretable como opinión sobre el servicio.
 - "resumen": 1 o 2 frases en español rioplatense neutro, para que una persona de Calidad entienda el caso de un vistazo. Si el mensaje era mixto, mencioná TANTO la queja como el elogio.
 
 EJEMPLOS (muestran el formato de salida exacto):
@@ -274,8 +290,11 @@ Salida: {"estrellas":1,"confianza":0.9,"categoriaCausaRaiz":"PRECIO_FACTURACION"
 Cliente: "Un desastre. Llevé el auto por un ruido y me lo devolvieron igual, no lo solucionó nadie."
 Salida: {"estrellas":1,"confianza":0.95,"categoriaCausaRaiz":"CALIDAD_TRABAJO","resumen":"Problema sin resolver: llevó el auto por un ruido y se lo devolvieron igual.","requiereRevisionManual":false}
 
+Cliente: "Buen día"
+Salida: {"estrellas":null,"confianza":0.2,"categoriaCausaRaiz":null,"resumen":"El cliente solo saludó, todavía no dio una opinión sobre el servicio.","requiereRevisionManual":true}
+
 Respondé ÚNICAMENTE con un objeto JSON válido con esta forma exacta, sin texto adicional antes ni después:
-{"estrellas": 1 | 2 | 3 | 4 | 5, "confianza": number, "categoriaCausaRaiz": string | null, "resumen": string, "requiereRevisionManual": boolean}`;
+{"estrellas": 1 | 2 | 3 | 4 | 5 | null, "confianza": number, "categoriaCausaRaiz": string | null, "resumen": string, "requiereRevisionManual": boolean}`;
 
 /**
  * Prompt del sistema segun la marca de esta instancia. Ford clasifica por
@@ -516,6 +535,21 @@ async function analizarConIA(
   // filtros, apertura de RQR, reportes) siga funcionando sin cambios.
   if (parseado.tipo === "estrellas") {
     const { estrellas, confianza, categoriaCausaRaiz, resumen, requiereRevisionManual } = parseado.datos;
+    // Sin puntaje = el modelo dijo que no es una opinión (un saludo suelto).
+    // Queda sin clasificar y para revisión manual: no suma al promedio ni abre RQR.
+    if (estrellas === null) {
+      return {
+        semaforo: null,
+        severidad: null,
+        estrellas: null,
+        confianza,
+        categoriaCausaRaiz,
+        resumen,
+        requiereRQR: false,
+        requiereRevisionManual: true,
+        respuestaCruda: crudo,
+      };
+    }
     const { semaforo, severidad } = derivarDeEstrellas(estrellas);
     return {
       semaforo,
@@ -533,6 +567,20 @@ async function analizarConIA(
   }
 
   const datos = parseado.datos;
+  // Sin semáforo = el modelo dijo que no es una opinión (un saludo suelto).
+  if (datos.semaforo === null) {
+    return {
+      semaforo: null,
+      severidad: null,
+      estrellas: null,
+      confianza: datos.confianza,
+      categoriaCausaRaiz: datos.categoriaCausaRaiz,
+      resumen: datos.resumen,
+      requiereRQR: false,
+      requiereRevisionManual: true,
+      respuestaCruda: crudo,
+    };
+  }
   const semaforo = Semaforo[datos.semaforo];
   // Default defensivo: si el modelo omite severidad en un AMARILLO, asumimos
   // MODERADA (preferimos un RQR de más antes que perder un reclamo real).
