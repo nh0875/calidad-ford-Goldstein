@@ -264,17 +264,33 @@ Eso:
 ### D) Si esta PC se rompe: restaurar en una PC nueva
 
 1. Instalá el sistema en la PC nueva (Pasos 0 a 6). La base arranca **vacía**.
-2. Descargá de SharePoint el **último `calidad_*.dump`** y el archivo
-   `_RESTAURAR-NO-BORRAR\env.prod.copia`.
+2. Descargá de SharePoint el **último dump de CADA marca** y el archivo
+   `_RESTAURAR-NO-BORRAR\env.prod.copia`. Hay un archivo por base, con la fecha
+   en el nombre:
+   - `calidad_ford_AAAA-MM-DD_hhmm.dump`
+   - `calidad_vw_AAAA-MM-DD_hhmm.dump` *(solo si Volkswagen está en uso)*
 3. Poné ese `env.prod.copia` como **`.env.prod`** en la carpeta del proyecto (así la
    clave de cifrado coincide y el token de WhatsApp sigue sirviendo).
-4. Restaurá los datos (PowerShell en la carpeta del proyecto):
+4. Restaurá **cada base por separado** (PowerShell en la carpeta del proyecto).
+   Ojo: la base destino se indica a mano y tiene que ser la MISMA de la que salió
+   el dump — restaurar el de VW sobre la de Ford pisa los datos de Ford.
    ```powershell
    $c = (docker ps --filter "name=postgres" --format "{{.Names}}" | Select-Object -First 1)
-   docker cp .\calidad_XXXX.dump "${c}:/tmp/cal.dump"
-   docker exec $c sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists /tmp/cal.dump'
+
+   # --- Ford ---
+   docker cp .\calidad_ford_XXXX.dump "${c}:/tmp/cal.dump"
+   docker exec -e BASE=calidad_ford $c sh -c 'pg_restore -U "$POSTGRES_USER" -d "$BASE" --clean --if-exists /tmp/cal.dump'
+
+   # --- Volkswagen (solo si corresponde) ---
+   docker cp .\calidad_vw_XXXX.dump "${c}:/tmp/cal.dump"
+   docker exec -e BASE=calidad_vw $c sh -c 'pg_restore -U "$POSTGRES_USER" -d "$BASE" --clean --if-exists /tmp/cal.dump'
    ```
-5. Entrá a `http://localhost` y verificá que estén los casos. Listo.
+5. Entrá a `http://localhost` (y a `http://localhost:8080` si usás Volkswagen) y
+   verificá que estén los casos. Listo.
+
+> **Cómo saber si el respaldo cubre TODAS las marcas:** abrí el archivo
+> `Respaldos\ultimo-respaldo.json`. La lista `"bases"` tiene que tener una entrada
+> por cada marca en uso. Si un día aparece una sola, algo pasó con la otra base.
 
 > El respaldo también se puede correr a mano cuando quieras con **`Respaldo-AHORA.bat`**
 > (doble clic): usa la misma configuración, sin escribir nada.

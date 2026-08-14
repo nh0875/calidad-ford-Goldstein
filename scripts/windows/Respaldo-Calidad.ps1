@@ -52,9 +52,8 @@ function Log($msg) {
 }
 
 $fecha     = Get-Date -Format "yyyy-MM-dd_HHmm"
-$nombre    = "calidad_$fecha.dump"
-$localFile = Join-Path $localDir $nombre
 $destinosOk = @()
+$archivosHechos = @()   # un dump por base
 
 try {
   Log "=== Iniciando respaldo ==="
@@ -68,18 +67,57 @@ try {
   }
   Log "Contenedor Postgres: $Contenedor"
 
-  # 2) Dump binario (-Fc) DENTRO del contenedor y afuera con 'docker cp'.
-  & docker exec $Contenedor sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" -f /tmp/cal.dump'
-  if ($LASTEXITCODE -ne 0) { throw "Falló pg_dump dentro del contenedor (código $LASTEXITCODE)." }
-  & docker cp "${Contenedor}:/tmp/cal.dump" $localFile
-  if ($LASTEXITCODE -ne 0) { throw "Falló 'docker cp' del dump (código $LASTEXITCODE)." }
-  & docker exec $Contenedor rm -f /tmp/cal.dump | Out-Null
+  # 2) TODAS las bases del contenedor, no solo una.
+  #
+  # Antes se dumpeaba la base de la variable POSTGRES_DB del contenedor, que es
+  # una sola. Con dos marcas conviviendo en el mismo Postgres (calidad_ford y
+  # calidad_vw), eso respaldaba Ford y dejaba Volkswagen afuera SIN AVISAR: el
+  # respaldo seguía diciendo "ok" todas las noches. Ahora se pregunta la lista y
+  # se dumpea cada una, así una marca nueva queda cubierta sola.
+  # Se usa "psql -lqtA" (listar bases, sin encabezados, separado por "|") y NO una
+  # consulta SQL: PowerShell rompe los argumentos que llevan espacios dentro de
+  # comillas al pasárselos a docker.exe, y un "SELECT ... FROM ..." llegaba partido
+  # al contenedor. Sin SQL no hay nada que romper.
+  $listado = & docker exec $Contenedor sh -c 'psql -U "$POSTGRES_USER" -lqtA'
+  if ($LASTEXITCODE -ne 0) { throw "No pude listar las bases del contenedor (código $LASTEXITCODE)." }
+  # Solo las líneas que TIENEN "|" son una base: las plantillas imprimen una
+  # segunda línea con sus permisos (ej. "calidad=CTc/calidad") que, sin este
+  # filtro, se tomaría como el nombre de una base inexistente.
+  $bases = @(
+    $listado |
+      Where-Object { $_ -match '\|' } |
+      ForEach-Object { ($_ -split '\|')[0].Trim() } |
+      Where-Object { $_ -and $_ -ne "postgres" -and $_ -notlike "template*" }
+  )
+  if ($bases.Count -eq 0) { throw "El contenedor no tiene ninguna base de datos para respaldar." }
+  Log ("Bases a respaldar: {0}" -f ($bases -join ", "))
 
-  # 3) Verificación de integridad mínima: que exista y no esté vacío.
-  if (-not (Test-Path $localFile)) { throw "El dump no se generó." }
-  $bytes = (Get-Item $localFile).Length
-  if ($bytes -lt 1024) { throw "El dump quedó vacío o demasiado chico ($bytes bytes): algo falló." }
-  Log ("Dump local OK: {0} ({1:N0} bytes)" -f $nombre, $bytes)
+  foreach ($base in $bases) {
+    $nombreBase = "${base}_$fecha.dump"
+    $archivoBase = Join-Path $localDir $nombreBase
+
+    # El nombre de la base viaja como variable de entorno del contenedor: así no
+    # hay que pelear con el escapado de comillas entre PowerShell y sh.
+    & docker exec -e BASE_A_RESPALDAR=$base $Contenedor sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$BASE_A_RESPALDAR" -f /tmp/cal.dump'
+    if ($LASTEXITCODE -ne 0) { throw "Falló pg_dump de '$base' (código $LASTEXITCODE)." }
+    & docker cp "${Contenedor}:/tmp/cal.dump" $archivoBase
+    if ($LASTEXITCODE -ne 0) { throw "Falló 'docker cp' del dump de '$base' (código $LASTEXITCODE)." }
+    & docker exec $Contenedor rm -f /tmp/cal.dump | Out-Null
+
+    # 3) Verificación mínima por base: que exista y no esté vacío.
+    if (-not (Test-Path $archivoBase)) { throw "El dump de '$base' no se generó." }
+    $bytesBase = (Get-Item $archivoBase).Length
+    if ($bytesBase -lt 1024) { throw "El dump de '$base' quedó vacío o demasiado chico ($bytesBase bytes)." }
+    Log ("Dump local OK: {0} ({1:N0} bytes)" -f $nombreBase, $bytesBase)
+    # PSCustomObject y no una tabla hash: en PowerShell 5.1 Measure-Object no ve
+    # las claves de un hashtable como propiedades y la suma de bytes falla.
+    $archivosHechos += [PSCustomObject]@{
+      base = $base; nombre = $nombreBase; ruta = $archivoBase; bytes = $bytesBase
+    }
+  }
+
+  $bytes = ($archivosHechos | Measure-Object -Property bytes -Sum).Sum
+  $nombre = ($archivosHechos | ForEach-Object { $_.nombre }) -join ", "
 
   # 4) Copias offsite (nube M365 y/o red). Cada destino falla de forma aislada.
   $destinos = @()
@@ -93,9 +131,11 @@ try {
     $etiqueta = $d[0]; $ruta = $d[1]
     try {
       if (-not (Test-Path $ruta)) { New-Item -ItemType Directory -Force $ruta | Out-Null }
-      Copy-Item $localFile (Join-Path $ruta $nombre) -Force
+      foreach ($a in $archivosHechos) {
+        Copy-Item $a.ruta (Join-Path $ruta $a.nombre) -Force
+      }
       $destinosOk += $etiqueta
-      Log "Copia offsite OK -> $etiqueta : $ruta"
+      Log ("Copia offsite OK -> {0} : {1} ({2} archivo/s)" -f $etiqueta, $ruta, $archivosHechos.Count)
 
       # Clave para restaurar: el .env.prod tiene CONFIG_ENCRYPTION_KEY, sin la
       # cual el token de Meta guardado en la base no se puede descifrar. Va a una
@@ -106,23 +146,37 @@ try {
         Copy-Item $EnvFile (Join-Path $restaurarDir "env.prod.copia") -Force
       }
 
-      # Rotación en el destino: conservar solo las últimas N copias.
-      Get-ChildItem $ruta -Filter "calidad_*.dump" -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending | Select-Object -Skip $Retencion |
-        Remove-Item -Force -ErrorAction SilentlyContinue
+      # Rotación en el destino: N copias POR BASE, no N en total. Si se contaran
+      # todas juntas, con dos marcas cada una conservaría la mitad de los días.
+      foreach ($base in $bases) {
+        Get-ChildItem $ruta -Filter "$base`_*.dump" -ErrorAction SilentlyContinue |
+          Sort-Object LastWriteTime -Descending | Select-Object -Skip $Retencion |
+          Remove-Item -Force -ErrorAction SilentlyContinue
+      }
     } catch {
       Log "ERROR copiando a $etiqueta ($ruta): $($_.Exception.Message)"
     }
   }
 
-  # 5) Rotación local.
-  Get-ChildItem $localDir -Filter "calidad_*.dump" -ErrorAction SilentlyContinue |
+  # 5) Rotación local, también por base.
+  foreach ($base in $bases) {
+    Get-ChildItem $localDir -Filter "$base`_*.dump" -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime -Descending | Select-Object -Skip $Retencion |
+      Remove-Item -Force -ErrorAction SilentlyContinue
+  }
+  # Dumps con el nombre VIEJO (calidad_<fecha>.dump, de una sola base): ya no se
+  # generan, pero los que quedaron de antes hay que seguir rotándolos o se
+  # acumulan para siempre.
+  Get-ChildItem $localDir -Filter "calidad_20*.dump" -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending | Select-Object -Skip $Retencion |
     Remove-Item -Force -ErrorAction SilentlyContinue
 
   # 6) Estado OK (lo puede leer un monitoreo o una alerta por mail).
   $estado = [ordered]@{
     fecha = (Get-Date -Format "s"); ok = $true; archivo = $nombre; bytes = $bytes
+    # Qué bases se respaldaron y cuánto pesó cada una. Sirve para darse cuenta de
+    # que falta una: si un día aparece solo calidad_ford, algo pasó con la otra.
+    bases = @($archivosHechos | ForEach-Object { [PSCustomObject]@{ base = $_.base; archivo = $_.nombre; bytes = $_.bytes } })
     destinosOffsite = $destinosOk; contenedor = $Contenedor; error = $null
   }
   $estado | ConvertTo-Json | Set-Content -Path $statusFile -Encoding UTF8
