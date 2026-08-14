@@ -4,20 +4,30 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Azul marino: color de marca, evoca precisión técnica de taller sin copiar
-        // la identidad visual de Ford.
+        // ---------------------------------------------------------------------
+        // COLORES DE MARCA — se resuelven en tiempo de ejecución
+        // ---------------------------------------------------------------------
+        // Cada marca corre su propia copia del sistema y tiene que verse distinta,
+        // pero Tailwind compila las clases UNA sola vez en el build. Por eso el
+        // valor no se escribe acá sino que sale de una variable CSS que se define
+        // en index.css según la marca (atributo data-marca en <html>).
+        //
+        // El formato `rgb(var(--x) / <alpha-value>)` NO es capricho: es lo que
+        // permite que sigan funcionando los modificadores de opacidad que ya usa
+        // el código (bg-navy/50 en los modales, border-accent/30 en los avisos).
+        // Con un `var(--x)` pelado, esas clases dejarían de aplicar el color.
         navy: {
-          DEFAULT: "#0B2545",
-          dark: "#071A33",
-          light: "#173867",
+          DEFAULT: "rgb(var(--color-navy) / <alpha-value>)",
+          dark: "rgb(var(--color-navy-dark) / <alpha-value>)",
+          light: "rgb(var(--color-navy-light) / <alpha-value>)",
         },
-        // Celeste: acento interactivo (botones, links, foco). "accent-dark" es la
-        // variante con contraste suficiente para texto de cuerpo (AA); "accent" se
-        // usa para fondos, íconos y elementos grandes.
+        // Acento interactivo (botones, links, foco). "accent-dark" es la variante
+        // con contraste suficiente para texto de cuerpo (AA); "accent" se usa para
+        // fondos, íconos y elementos grandes.
         accent: {
-          DEFAULT: "#3E7CB1",
-          dark: "#2F6690",
-          light: "#EAF2F8",
+          DEFAULT: "rgb(var(--color-accent) / <alpha-value>)",
+          dark: "rgb(var(--color-accent-dark) / <alpha-value>)",
+          light: "rgb(var(--color-accent-light) / <alpha-value>)",
         },
         canvas: "#F7F8FA",
         ink: {

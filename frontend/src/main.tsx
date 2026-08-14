@@ -10,6 +10,9 @@ import "./index.css";
 // rápido, y si falla `cargarMarca` cae al default (Ford) sin romper nada.
 cargarMarca().then((marca) => {
   document.title = `Calidad | ${marca.nombre}`;
+  // Dispara la paleta de la marca (ver index.css). Va ANTES de dibujar para que
+  // no se vea un parpadeo con los colores de la otra marca.
+  document.documentElement.dataset.marca = marca.codigo;
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <App />

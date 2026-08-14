@@ -2,6 +2,42 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------------------------------------------------------------------------
+   PALETA POR MARCA
+   ---------------------------------------------------------------------------
+   Cada marca corre su propia copia del sistema y tiene que distinguirse a
+   simple vista, para que nadie confunda en cuál está trabajando. Los colores
+   viven acá como variables (en R G B, sin la función rgb) y Tailwind los
+   consume desde tailwind.config.js; así el mismo bundle sirve a las dos marcas
+   y el cambio es instantáneo, sin recompilar.
+
+   El atributo data-marca lo pone main.tsx antes de dibujar, con lo que informa
+   el backend en /api/marca. Sin ese atributo queda la paleta de Ford, que es la
+   que ya está en producción.
+   --------------------------------------------------------------------------- */
+:root {
+  /* Ford: azul marino sobrio */
+  --color-navy: 11 37 69; /* #0B2545 */
+  --color-navy-dark: 7 26 51; /* #071A33 */
+  --color-navy-light: 23 56 103; /* #173867 */
+  --color-accent: 62 124 177; /* #3E7CB1 */
+  --color-accent-dark: 47 102 144; /* #2F6690 - contraste AA sobre blanco */
+  --color-accent-light: 234 242 248; /* #EAF2F8 */
+}
+
+[data-marca="VOLKSWAGEN"] {
+  /* Volkswagen: el azul oscuro de la marca + su celeste característico.
+     El "accent-dark" NO es el celeste de marca (#00B0F0): sobre blanco da
+     ~2,5:1 y no llega al mínimo AA para texto. Se usa una variante más profunda
+     para lo que sea texto o ícono chico, y el celeste queda para fondos. */
+  --color-navy: 0 30 80; /* #001E50 */
+  --color-navy-dark: 0 20 58; /* #00143A */
+  --color-navy-light: 0 43 107; /* #002B6B */
+  --color-accent: 0 176 240; /* #00B0F0 */
+  --color-accent-dark: 0 105 168; /* #0069A8 - contraste AA sobre blanco */
+  --color-accent-light: 229 244 252; /* #E5F4FC */
+}
+
 @layer base {
   body {
     @apply bg-canvas text-ink font-sans antialiased;
@@ -17,9 +53,11 @@
     @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-canvas;
   }
 
+  /* Se usan las variables directo: theme() devolvería el string
+     "rgb(var(--x) / <alpha-value>)", que no es un color válido acá. */
   ::selection {
-    background-color: theme("colors.accent.light");
-    color: theme("colors.navy.DEFAULT");
+    background-color: rgb(var(--color-accent-light));
+    color: rgb(var(--color-navy));
   }
 }
 
