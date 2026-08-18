@@ -14,6 +14,7 @@ enum TipoUpload {
   CONTACTO_VENTAS
   ENCUESTA_FORD
   FIDELIZACION
+  ENCUESTA_FABRICA_VW // Excel de "pendientes" que baja de la plataforma de VW
 }
 
 // De qué planilla salió el destinatario de fidelización. Son dos circuitos con
@@ -32,9 +33,9 @@ enum OrigenFidelizacion {
 // service pendiente). No se clasifica la respuesta: es solo un recordatorio.
 enum EstadoFidelizacion {
   PENDIENTE // detectado, todavía no se envió el recordatorio
-  ENVIADO   // recordatorio enviado por WhatsApp
-  ERROR     // falló el envío (número inválido, template, etc.)
-  OMITIDO   // no se envió a propósito (opt-out / teléfono suprimido / sin teléfono)
+  ENVIADO // recordatorio enviado por WhatsApp
+  ERROR // falló el envío (número inválido, template, etc.)
+  OMITIDO // no se envió a propósito (opt-out / teléfono suprimido / sin teléfono)
 }
 
 // Estado de la encuesta oficial de Ford para un caso (Parte B)
@@ -169,6 +170,7 @@ model ExcelUpload {
   casos                Caso[]
   tareasRefuerzo       TareaRefuerzo[]
   clientesFidelizacion ClienteFidelizacion[]
+  encuestasFabricaVW   EncuestaFabricaVW[]
 
   @@index([sucursal, periodo])
   @@index([eliminadoEn])
@@ -193,21 +195,21 @@ model ClienteFidelizacion {
   // El service pendiente detectado (1 a 5). NULL en los de origen VENTAS: esa
   // planilla no dice qué service le toca al cliente.
   numeroServicio   Int?
-  comentarioAsesor String? @db.Text // el texto original de donde se detectó (solo TURNOS)
+  comentarioAsesor String?            @db.Text // el texto original de donde se detectó (solo TURNOS)
   // Fecha de entrega del vehículo (solo VENTAS): es el único dato temporal que
   // trae esa planilla y sirve para ordenar y para entender a quién se contactó.
   fechaEntrega     DateTime?
   sucursal         String?
 
-  estado      EstadoFidelizacion @default(PENDIENTE)
-  waMessageId String? // id del mensaje en Meta (si se envió)
-  error       String? // motivo del fallo/omisión (si ERROR/OMITIDO)
-  enviadoEn   DateTime?
+  estado         EstadoFidelizacion @default(PENDIENTE)
+  waMessageId    String? // id del mensaje en Meta (si se envió)
+  error          String? // motivo del fallo/omisión (si ERROR/OMITIDO)
+  enviadoEn      DateTime?
   // El cliente apretó el botón "Agendar mi Turno con un Asesor": queda pendiente
   // de que un asesor lo llame. Se resalta en Seguimiento. null = no lo pidió.
   quiereAsesorEn DateTime?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 
   // Borrado lógico (solo ADMIN); los listados excluyen los eliminados.
   eliminadoEn    DateTime?
@@ -216,7 +218,7 @@ model ClienteFidelizacion {
 
   // Conversación: recordatorio saliente + respuestas del cliente (se ven en
   // Seguimiento igual que las de un Caso).
-  mensajes    WhatsappMessage[]
+  mensajes WhatsappMessage[]
 
   @@index([uploadId])
   @@index([estado])
@@ -292,7 +294,7 @@ model Caso {
 }
 
 model WhatsappMessage {
-  id               String           @id @default(cuid())
+  id                    String               @id @default(cuid())
   // Un mensaje pertenece a un Caso (Contacto Posventa/Ventas) O a un
   // ClienteFidelizacion (recordatorio de Fidelización): exactamente uno de los
   // dos. Por eso ambos son opcionales (antes casoId era obligatorio).
@@ -300,38 +302,38 @@ model WhatsappMessage {
   caso                  Caso?                @relation(fields: [casoId], references: [id], onDelete: Cascade)
   clienteFidelizacionId String?
   clienteFidelizacion   ClienteFidelizacion? @relation(fields: [clienteFidelizacionId], references: [id], onDelete: Cascade)
-  direction        MessageDirection
-  content          String           @db.Text
-  templateName     String?
-  waMessageId      String?
-  status           String
+  direction             MessageDirection
+  content               String               @db.Text
+  templateName          String?
+  waMessageId           String?
+  status                String
   // true = mensaje de agradecimiento/recordatorio automático (Parte A),
   // para distinguirlo del template inicial en reportes y en el detalle del caso
-  esAgradecimiento Boolean          @default(false)
+  esAgradecimiento      Boolean              @default(false)
   // Media entrante (nota de voz, imagen, etc.): el id del archivo en Meta, su
   // mime y el tipo. Se guarda porque el análisis corre async (separado del
   // webhook) y necesita bajar el audio de Meta para que Gemini lo transcriba.
   // Para audio, el `content` arranca como "[audio]" y se reemplaza por la
   // transcripción cuando el worker la obtiene.
-  mediaId          String?
-  mediaMimeType    String?
-  mediaTipo        String? // "audio" | "image" | "document" | "video" (el type de Meta)
+  mediaId               String?
+  mediaMimeType         String?
+  mediaTipo             String? // "audio" | "image" | "document" | "video" (el type de Meta)
   // Marca que este mensaje ENTRANTE ya fue cubierto por un análisis. Una misma
   // tanda de mensajes del cliente se analiza JUNTA y en una sola llamada a la
   // IA, así que varios mensajes pueden compartir un único SentimentAnalysis:
   // esta fecha es lo que evita volver a analizarlos.
-  analizadoEn      DateTime?
-  createdAt        DateTime         @default(now())
+  analizadoEn           DateTime?
+  createdAt             DateTime             @default(now())
 
   analisis SentimentAnalysis[]
 
-  @@index([casoId])
-  @@index([clienteFidelizacionId])
   // Único: el id de Meta identifica la entrega; ante un reintento del webhook
   // (Meta reenvía la misma notificación) esto impide duplicar el mensaje
   // entrante y volver a disparar el análisis. Los salientes con waMessageId
   // NULL no colisionan (en Postgres los NULL son distintos entre sí).
   @@unique([waMessageId])
+  @@index([casoId])
+  @@index([clienteFidelizacionId])
 }
 
 model SentimentAnalysis {
@@ -449,9 +451,9 @@ model RQR {
   // Quién cargó el RQR (sobre todo para los manuales). Es dato del formulario,
   // distinto de la auditoría: acá se ve en el documento que se imprime.
   creadoPorId         String?
-  creadoPor           Usuario?           @relation("RQRCreadoPor", fields: [creadoPorId], references: [id])
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
+  creadoPor           Usuario? @relation("RQRCreadoPor", fields: [creadoPorId], references: [id])
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   // Borrado lógico (solo ADMIN); los listados excluyen los eliminados.
   eliminadoEn    DateTime?
@@ -484,16 +486,16 @@ model Usuario {
   participaEnRefuerzos Boolean     @default(true)
   createdAt            DateTime    @default(now())
 
-  auditLogs          AuditLog[]
-  casosEliminados    Caso[]               @relation("CasoEliminadoPor")
+  auditLogs                AuditLog[]
+  casosEliminados          Caso[]                @relation("CasoEliminadoPor")
   fidelizacionesEliminadas ClienteFidelizacion[] @relation("ClienteFidelizacionEliminadoPor")
-  rqrsEliminados     RQR[]                @relation("RQREliminadoPor")
-  rqrsCreados        RQR[]                @relation("RQRCreadoPor")
-  uploadsEliminados  ExcelUpload[]        @relation("ExcelUploadEliminadoPor")
-  tareasAsignadas    TareaRefuerzo[]      @relation("TareaAsignada")
-  supresionesCreadas SupresionContacto[]  @relation("SupresionCreadaPor")
-  aliasCreados       AliasNormalizacion[] @relation("AliasCreadoPor")
-  avisosVistos       Aviso[]              @relation("AvisoVistoPor")
+  rqrsEliminados           RQR[]                 @relation("RQREliminadoPor")
+  rqrsCreados              RQR[]                 @relation("RQRCreadoPor")
+  uploadsEliminados        ExcelUpload[]         @relation("ExcelUploadEliminadoPor")
+  tareasAsignadas          TareaRefuerzo[]       @relation("TareaAsignada")
+  supresionesCreadas       SupresionContacto[]   @relation("SupresionCreadaPor")
+  aliasCreados             AliasNormalizacion[]  @relation("AliasCreadoPor")
+  avisosVistos             Aviso[]               @relation("AvisoVistoPor")
 }
 
 // Lista de supresión POR TELÉFONO: quien está acá nunca recibe una campaña de
@@ -622,4 +624,90 @@ model Aviso {
   @@index([area, vistoEn])
   @@index([casoId])
   @@index([rqrId])
+}
+
+// ---------------------------------------------------------------------------
+// Encuestas de fábrica de Volkswagen
+// ---------------------------------------------------------------------------
+// Fábrica manda la encuesta (SSI / OSI / CEM) directo al cliente por mail y
+// publica un Excel de PENDIENTES: los que todavía no la contestaron. La agencia
+// no puede escribirle a esos clientes —el archivo no trae teléfono, solo mail—
+// así que el recordatorio va al VENDEDOR que hizo la entrega, para que él los
+// llame. Por eso esto NO crea Casos: un Caso vive del circuito de WhatsApp y
+// estos clientes nunca van a poder entrar ahí. Es una lista aparte.
+
+enum EstadoEncuestaFabrica {
+  PENDIENTE // vino en el último archivo: todavía no contestó
+  RESPONDIO // dejó de venir en el archivo, así que ya contestó
+}
+
+// Vendedor de VW. NO es un usuario del sistema: no entra, no tiene contraseña.
+// Solo existe para saber a qué correo mandarle sus clientes pendientes.
+// El código son 7 dígitos: 4 de sucursal (1035 Mendoza, 1036 San Juan) + 3 del
+// vendedor. La hoja "Codigos Vendedores" del Excel trae solo los 3 últimos.
+model VendedorVW {
+  id             String  @id @default(cuid())
+  codigo         String  @unique // "1035017"
+  codigoSucursal String // "1035"
+  numero         Int // 17
+  sucursal       String // "MENDOZA"
+  // Sale de la hoja de nombres del Excel. Puede faltar: hay códigos que se usan
+  // como mostrador (el 002 de cada sucursal vende todos los planes de ahorro) y
+  // no figuran en esa hoja. En ese caso lo completa Calidad a mano.
+  nombre         String?
+  // A dónde se le manda el recordatorio. Sin esto no se le puede avisar.
+  email          String?
+  // Se apaga en vez de borrarse: si el vendedor se va, sus clientes históricos
+  // tienen que seguir teniendo a quién estar asociados.
+  activo         Boolean @default(true)
+
+  creadoEn      DateTime  @default(now())
+  actualizadoEn DateTime  @updatedAt
+  ultimoAvisoEn DateTime? // última vez que se le mandó el mail con su lista
+
+  pendientes EncuestaFabricaVW[]
+
+  @@index([codigoSucursal])
+  @@index([activo])
+}
+
+// Un cliente que le debe la encuesta a fábrica.
+model EncuestaFabricaVW {
+  id String @id @default(cuid())
+
+  // El chasis identifica la unidad y no se repite: es la clave para saber si una
+  // fila del archivo nuevo es la misma de antes o una entrega distinta.
+  chasis  String                @unique
+  dominio String?
+  estado  EstadoEncuestaFabrica @default(PENDIENTE)
+
+  nombreCliente String
+  email         String
+  fechaEntrega  DateTime?
+
+  // "TRADICIONAL" / "AUTOAHORRO" tal como vienen, más el área que se deduce de
+  // ahí. Se guarda el texto original por si fábrica agrega un canal nuevo.
+  canalVentas String?
+  area        String? // VENTAS | PLAN_DE_AHORRO (catálogo de VW)
+
+  vendedorId String
+  vendedor   VendedorVW @relation(fields: [vendedorId], references: [id])
+  sucursal   String
+
+  // Columnas de control de fábrica que vinieron completas: si hay algo acá, esa
+  // fila fábrica la observó (mail inválido, chasis repetido, etc.).
+  observacionesFabrica String[]
+
+  // De qué carga salió y en cuál se la vio por última vez. La segunda es la que
+  // decide: si una carga nueva no la trae, es que el cliente ya contestó.
+  origenUploadId  String
+  origenUpload    ExcelUpload @relation(fields: [origenUploadId], references: [id])
+  vistaEnUploadId String?
+
+  detectadaEn DateTime  @default(now())
+  respondioEn DateTime?
+
+  @@index([estado, vendedorId])
+  @@index([sucursal, estado])
+  @@index([vistaEnUploadId])
 }

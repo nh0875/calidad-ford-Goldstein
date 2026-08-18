@@ -48,6 +48,16 @@ export interface PerfilMarca {
   refuerzo: {
     habilitado: boolean;
     notificarPorMail: boolean;
+    /**
+     * Formato del Excel de la encuesta que baja de fábrica. Son dos archivos
+     * distintos y se leen con lectores distintos:
+     *  - "FORD": un export con "ID encuesta" y "Estado de la invitación". Trae
+     *    teléfono, así que se cruza contra los Casos que ya existen.
+     *  - "VW": una hoja por sucursal con los PENDIENTES, más una hoja con los
+     *    nombres de los vendedores. NO trae teléfono: esos clientes no pueden
+     *    entrar al circuito de WhatsApp y viven en una lista aparte.
+     */
+    formatoExcel: "FORD" | "VW";
   };
   /** Color institucional para los títulos de los documentos que se exportan. */
   colorDocumento: string;
@@ -63,7 +73,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     estrellasSinRqr: null,
     fidelizacion: true,
     rqrConSubareas: false,
-    refuerzo: { habilitado: true, notificarPorMail: false },
+    refuerzo: { habilitado: true, notificarPorMail: false, formatoExcel: "FORD" },
     colorDocumento: "003478", // azul Ford
     logoArchivo: "logo-ford.png",
   },
@@ -77,7 +87,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     // endpoints responden 404 (ver requireModulo en middlewares/marca.ts).
     fidelizacion: false,
     rqrConSubareas: true,
-    refuerzo: { habilitado: true, notificarPorMail: true },
+    refuerzo: { habilitado: true, notificarPorMail: true, formatoExcel: "VW" },
     colorDocumento: "001E50", // azul Volkswagen
     logoArchivo: "logo-volkswagen.png",
   },

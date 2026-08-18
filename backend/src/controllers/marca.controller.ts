@@ -19,6 +19,10 @@ export function infoMarca(_req: Request, res: Response) {
     modulos: {
       fidelizacion: marca.fidelizacion,
       refuerzo: marca.refuerzo.habilitado,
+      // Pantalla propia de encuestas de fábrica: solo donde el Excel viene en el
+      // formato de VW (una hoja por sucursal, sin teléfono, con vendedores a los
+      // que se les avisa por correo).
+      encuestaFabrica: marca.refuerzo.formatoExcel === "VW",
     },
     // Catálogo de áreas/subáreas del RQR, solo en las marcas que lo usan. Va
     // acá para que el formulario lo tenga sin una consulta aparte: son datos

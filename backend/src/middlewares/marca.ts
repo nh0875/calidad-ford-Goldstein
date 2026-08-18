@@ -25,3 +25,17 @@ export function requireRefuerzo(_req: Request, res: Response, next: NextFunction
   }
   next();
 }
+
+/**
+ * Encuestas de fábrica de Volkswagen. Ford tiene su propio circuito (cruza el
+ * export contra los Casos que ya existen), así que este módulo no aplica y sus
+ * endpoints no tienen que contestar.
+ */
+export function requireEncuestaVW(_req: Request, res: Response, next: NextFunction) {
+  if (marca.refuerzo.formatoExcel !== "VW") {
+    return res.status(404).json({
+      message: `Las encuestas de fábrica de ${marca.nombre} se cargan desde la pantalla de Refuerzo.`,
+    });
+  }
+  next();
+}

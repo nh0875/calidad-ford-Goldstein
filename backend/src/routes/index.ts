@@ -20,11 +20,12 @@ import adminRoutes from "./admin.routes";
 import demoRoutes from "./demo.routes";
 import configuracionRoutes from "./configuracion.routes";
 import refuerzoRoutes from "./refuerzo.routes";
+import encuestaVwRoutes from "./encuesta-vw.routes";
 import supresionRoutes from "./supresion.routes";
 import normalizacionRoutes from "./normalizacion.routes";
 import avisoRoutes from "./aviso.routes";
 import fidelizacionRoutes from "./fidelizacion.routes";
-import { requireFidelizacion, requireRefuerzo } from "../middlewares/marca";
+import { requireEncuestaVW, requireFidelizacion, requireRefuerzo } from "../middlewares/marca";
 import seguimientoRoutes from "./seguimiento.routes";
 
 const router = Router();
@@ -66,6 +67,9 @@ router.use("/admin", adminRoutes); // solo ADMIN adentro (restaurar borrados)
 router.use("/demo", demoRoutes); // simulación para demostraciones (MODO_DEMO)
 router.use("/configuracion", configuracionRoutes); // textos de mensajes automáticos
 router.use("/refuerzos", requireRefuerzo, refuerzoRoutes); // tareas de refuerzo de la encuesta de fábrica
+// Encuestas de fábrica de Volkswagen: lista aparte de Caso (esos clientes no
+// traen teléfono) más el ABM de vendedores y el aviso por correo.
+router.use("/encuesta-vw", requireEncuestaVW, encuestaVwRoutes);
 router.use("/supresion", supresionRoutes); // lista de supresión por teléfono (solo ADMIN)
 router.use("/normalizacion", normalizacionRoutes); // normalización de asesores/sucursales (solo ADMIN)
 router.use("/avisos", avisoRoutes); // cartel rojo en pantalla (RQR abierto, escaladas, amarillos)

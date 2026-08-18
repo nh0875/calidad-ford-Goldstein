@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   LucideIcon,
+  MailCheck,
   GitMerge,
   MessageSquareWarning,
   MessagesSquare,
@@ -43,7 +44,7 @@ const navItems: Array<{
   label: string;
   icono: LucideIcon;
   exacto?: boolean;
-  modulo?: "fidelizacion" | "refuerzo";
+  modulo?: "fidelizacion" | "refuerzo" | "encuestaFabrica";
 }> = [
   { to: "/dashboard", label: "Dashboard", icono: LayoutDashboard },
   { to: "/upload", label: "Carga de Excel", icono: UploadCloud },
@@ -53,6 +54,7 @@ const navItems: Array<{
   { to: "/rqr", label: "RQR", icono: MessageSquareWarning },
   { to: "/seguimiento", label: "Seguimiento", icono: MessagesSquare },
   { to: "/refuerzos", label: "Refuerzo de encuesta", icono: ClipboardCheck, modulo: "refuerzo" },
+  { to: "/encuestas-fabrica", label: "Encuestas de fábrica", icono: MailCheck, modulo: "encuestaFabrica" },
   // Fidelización solo existe en las marcas que la usan (ver modulo abajo).
   { to: "/fidelizacion", label: "Fidelización", icono: Gift, exacto: true, modulo: "fidelizacion" },
   { to: "/fidelizacion/clientes", label: "Clientes de fidelización", icono: HeartHandshake, modulo: "fidelizacion" },
@@ -72,6 +74,7 @@ const pageTitles: Record<string, string> = {
   "/auditoria": "Auditoría del sistema",
   "/configuracion": "Configuración",
   "/refuerzos": "Refuerzo de la encuesta de fábrica",
+  "/encuestas-fabrica": "Encuestas de fábrica — pendientes por vendedor",
   "/fidelizacion": "Fidelización — carga de planillas",
   "/fidelizacion/clientes": "Clientes de fidelización",
   "/cambiar-password": "Cambiar mi contraseña",

@@ -22,6 +22,8 @@ export interface InfoMarca {
   modulos: {
     fidelizacion: boolean;
     refuerzo: boolean;
+    // Pantalla propia de encuestas de fábrica (Volkswagen).
+    encuestaFabrica: boolean;
   };
   // Catálogo del RQR de las marcas que clasifican por área + subárea (VW).
   // En las demás viene con porSubareas=false y las listas vacías.
@@ -43,7 +45,7 @@ const POR_DEFECTO: InfoMarca = {
   nombre: "Ford",
   escala: "SEMAFORO",
   estrellasSinRqr: null,
-  modulos: { fidelizacion: true, refuerzo: true },
+  modulos: { fidelizacion: true, refuerzo: true, encuestaFabrica: false },
   rqr: { porSubareas: false, areas: [], origenes: [] },
 };
 
