@@ -51,6 +51,23 @@ $SegundosGraciaSaludFrio = 240
 $ServiciosEsperados = @("postgres", "redis", "backend", "web", "backup")
 
 # ---------- Nada que tocar de aca para abajo ----------
+
+# La segunda marca (Volkswagen) se prende con COMPOSE_PROFILES=vw en .env.prod.
+# El vigilante lo LEE de ahi en vez de tener su propio interruptor: si tuviera uno
+# propio, prender VW y olvidarse de este archivo dejaria a VW sin nadie que la
+# levante, que es justo la falla que este script existe para evitar.
+function Leer-EnvProd([string]$clave) {
+    $ruta = Join-Path $ProjectDir $EnvFile
+    if (-not (Test-Path $ruta)) { return "" }
+    foreach ($linea in (Get-Content $ruta -ErrorAction SilentlyContinue)) {
+        $t = "$linea".Trim()
+        if ($t -eq "" -or $t.StartsWith("#")) { continue }
+        $i = $t.IndexOf("=")
+        if ($i -lt 1) { continue }
+        if ($t.Substring(0, $i).Trim() -eq $clave) { return $t.Substring($i + 1).Trim() }
+    }
+    return ""
+}
 $ErrorActionPreference = "Continue"
 $ProgressPreference    = "SilentlyContinue"   # sin barras de progreso
 $huboAccion = $false
@@ -131,6 +148,16 @@ function Backend-Arrancando {
     return $false
 }
 
+# ¿Responde la API de Volkswagen? Se consulta por su propio puerto, porque la
+# salud de Ford no dice NADA de VW: son dos backends y dos bases distintas.
+function Salud-VW-Ok {
+    try {
+        $r = Invoke-WebRequest -Uri "http://localhost:$PuertoVW/api/health" -TimeoutSec 10 -UseBasicParsing
+        if ($r.StatusCode -ne 200) { return $false }
+        return ((($r.Content | ConvertFrom-Json).status) -eq "ok")
+    } catch { return $false }
+}
+
 function Tunel-Ok {
     # Se consulta la API local de ngrok: es fiable y no depende de internet.
     try {
@@ -155,6 +182,14 @@ try {
     if (-not (Test-Path $ProjectDir)) { Log-Error "No existe la carpeta del proyecto: $ProjectDir"; exit 1 }
     Push-Location $ProjectDir
     if (-not (Test-Path $EnvFile))    { Log-Error "Falta $EnvFile en $ProjectDir"; Pop-Location; exit 1 }
+
+    # ¿Está prendida la segunda marca? Si sí, sus contenedores pasan a ser
+    # obligatorios: sin esto el vigilante los ve caer y no hace nada, porque la
+    # salud de Ford sigue dando OK.
+    $VWPrendida = ((Leer-EnvProd "COMPOSE_PROFILES") -match "\bvw\b")
+    $PuertoVW = Leer-EnvProd "HTTP_PORT_VW"
+    if (-not $PuertoVW) { $PuertoVW = "8080" }
+    if ($VWPrendida) { $ServiciosEsperados = $ServiciosEsperados + @("backend-vw", "web-vw") }
 
     # ---------- 1) Docker Desktop ----------
     if (-not (Engine-Listo)) {
@@ -259,6 +294,46 @@ try {
 
         if ($ok) { Log-Accion "El sistema volvio a responder OK." }
         else { Log-Error "El sistema sigue sin responder. Requiere revision manual." }
+    }
+
+    # ---------- 3 bis) Salud de Volkswagen ----------
+    # Se revisa APARTE: son dos backends contra dos bases, y el /api/health de Ford
+    # da OK aunque el de VW este muerto. Sin esto, VW se puede caer y quedarse
+    # caida hasta que alguien note que no llegan los WhatsApp de esa marca.
+    if ($VWPrendida) {
+        $okVW = $false
+        $limiteVW = (Get-Date).AddSeconds($graciaSeg)
+        while ($true) {
+            if (Salud-VW-Ok) { $okVW = $true; break }
+            if ((Get-Date) -ge $limiteVW) { break }
+            Start-Sleep -Seconds $EsperaSaludSeg
+        }
+
+        if (-not $okVW) {
+            Log-Accion "La API de Volkswagen (puerto $PuertoVW) no respondio: reiniciando 'backend-vw'."
+            $rsVW = Compose @("restart", "backend-vw")
+            if ($rsVW.Codigo -ne 0) { Log-Error ("Fallo el reinicio de backend-vw: " + $rsVW.Texto) }
+
+            $limiteVW2 = (Get-Date).AddSeconds(180)
+            while ((Get-Date) -lt $limiteVW2) {
+                Start-Sleep -Seconds $EsperaSaludSeg
+                if (Salud-VW-Ok) { $okVW = $true; break }
+            }
+            # Si el backend responde pero el puerto no, el que hay que reiniciar es
+            # el que publica el puerto (mismo caso que en Ford con 'web').
+            if (-not $okVW) {
+                Log-Accion "Volkswagen sigue sin responder: reiniciando 'web-vw'."
+                Compose @("restart", "web-vw") | Out-Null
+                $limiteVW3 = (Get-Date).AddSeconds(180)
+                while ((Get-Date) -lt $limiteVW3) {
+                    Start-Sleep -Seconds $EsperaSaludSeg
+                    if (Salud-VW-Ok) { $okVW = $true; break }
+                }
+            }
+
+            if ($okVW) { Log-Accion "Volkswagen volvio a responder OK." }
+            else { Log-Error "Volkswagen sigue sin responder. Requiere revision manual." }
+        }
     }
 
     # ---------- 4) ngrok ----------

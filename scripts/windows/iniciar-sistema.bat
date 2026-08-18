@@ -39,6 +39,12 @@ cd /d "%PROJECT_DIR%"
 REM Stack de produccion: frontend compilado servido por nginx (sin dev server),
 REM migraciones automaticas al arrancar. La PRIMERA vez correr a mano con --build
 REM (ver PRODUCCION.md); en los arranques siguientes alcanza con up -d.
+REM
+REM SEGUNDA MARCA (Volkswagen): NO se agrega un --profile vw aca. Se prende con
+REM COMPOSE_PROFILES=vw dentro de .env.prod, que docker compose lee solo. Asi
+REM levanta igual desde este .bat, desde el vigilante y a mano, sin que haya que
+REM acordarse de escribir el perfil en cada lugar (si falta en uno, despues de un
+REM reinicio VW no vuelve y nadie se entera).
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 
 echo [%date% %time%] Lanzando ngrok: https://%NGROK_DOMAIN%  ->  localhost:%PORT%
