@@ -98,7 +98,12 @@ export function normalizarTexto(valor: unknown): string {
 // ---------- Detección de la fila de encabezados ----------
 
 // La tabla real no arranca en la fila 1: arriba hay filas de resumen/KPIs.
+// Palabras que delatan una fila de títulos. La lista es a propósito GENÉRICA y no
+// del export de una marca puntual: cada marca nombra sus columnas distinto y el
+// operador igual mapea a mano en la pantalla siguiente. Lo único que se necesita
+// acá es ENCONTRAR la fila de títulos; qué significa cada columna se decide después.
 const KEYWORDS_ENCABEZADO = [
+  // Del export de Ford (las que ya se venían usando)
   "fecha de programacion",
   "asesor",
   "modelo",
@@ -108,6 +113,25 @@ const KEYWORDS_ENCABEZADO = [
   "nombre propietario",
   "celular",
   "whatsapp",
+  // Genéricas: cualquier planilla de clientes de cualquier marca trae varias
+  "cliente",
+  "nombre",
+  "apellido",
+  "telefono",
+  "email",
+  "e-mail",
+  "correo",
+  "dominio",
+  "chasis",
+  "vin",
+  "fecha",
+  "vehiculo",
+  "sucursal",
+  "vendedor",
+  "servicio",
+  "documento",
+  "dni",
+  "cuit",
 ];
 
 const MAX_FILAS_BUSQUEDA_ENCABEZADO = 10;
@@ -119,11 +143,24 @@ export function detectarFilaEncabezado(filas: unknown[][]): number {
     const coincidencias = celdas.filter((c) =>
       KEYWORDS_ENCABEZADO.some((k) => c === k || c.includes(k))
     ).length;
-    // Ancla laxa (coherente con el matching por inclusión): "fecha programacion"
-    // y "asesor de servicio" también cuentan. El requisito de >=2 coincidencias
-    // evita falsos positivos.
+
+    // Regla 1 (la de siempre): 2 coincidencias + una columna con "programacion"
+    // o "asesor". Es la que reconoce el export de Ford.
     const tieneAncla = celdas.some((c) => c.includes("programacion") || c.includes("asesor"));
     if (coincidencias >= 2 && tieneAncla) return i;
+
+    // Regla 2: para las planillas de OTRAS marcas, que no tienen por qué llamar
+    // a sus columnas "asesor" ni "fecha de programación". Sin esto, la carga
+    // fallaba ANTES de mostrar la pantalla de mapeo y el operador no llegaba
+    // nunca a poder asignar las columnas a mano.
+    //
+    // Se pide más evidencia para compensar la falta del ancla:
+    //  - al menos 3 palabras conocidas, y
+    //  - al menos 4 celdas con texto.
+    // Lo segundo es lo que descarta las filas de resumen/KPI de arriba de la
+    // tabla, que son angostas (una etiqueta y un número) mientras que una fila
+    // de títulos es ancha.
+    if (coincidencias >= 3 && celdas.length >= 4) return i;
   }
   return -1;
 }
