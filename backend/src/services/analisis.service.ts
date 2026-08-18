@@ -176,6 +176,67 @@ export function sentimientoSoloEmoji(contenidos: string[]): Semaforo | null {
   return null; // negativo, ambiguo o mezclado → sin decisión determinista
 }
 
+// ---------- Qué hacer con una tanda de mensajes ----------
+//
+// Antes esta decisión vivía suelta en el worker, como tres banderas encadenadas
+// en un `if`. Se rompió DOS VECES por el orden entre ellas (la última: un 👍
+// caía en "solo cortesía" y el cliente se quedaba sin el agradecimiento, porque
+// 👍 está en la lista de cortesías para otro uso). Vive acá y se prueba sola.
+
+export type MotivoRevisionManual =
+  | "no-textual" // audio/imagen que no se pudo leer
+  | "reaccion-ambigua" // emoji solo, sin sentimiento claro (👎, 😮)
+  | "solo-cortesia"; // primera respuesta que es puro saludo ("buen día")
+
+export interface DecisionClasificacion {
+  /** Motivo por el que va a revisión manual, o null si se puede clasificar. */
+  revisionManual: MotivoRevisionManual | null;
+  /** VERDE si los emojis alcanzan para clasificar sin IA; null si decide la IA. */
+  semaforoEmoji: Semaforo | null;
+}
+
+/**
+ * Decide si una tanda de mensajes se clasifica sola, la analiza la IA, o va a
+ * revisión manual.
+ *
+ * `contenidos` son los textos ORIGINALES, uno por mensaje: el consolidado los
+ * numera ("(1) buen día") y no matchearía contra la lista de cortesías.
+ */
+export function decidirClasificacion(opciones: {
+  contenidos: string[];
+  textoConsolidado: string;
+  esSeguimiento: boolean;
+}): DecisionClasificacion {
+  const { contenidos, textoConsolidado, esSeguimiento } = opciones;
+
+  // Lo que no se pudo pasar a texto: media sin soportar o audio ilegible.
+  if (/^\[(mensaje de tipo .+|audio.*)\]$/.test(textoConsolidado.trim())) {
+    return { revisionManual: "no-textual", semaforoEmoji: null };
+  }
+
+  // SOLO emojis: los deciden las reglas de emoji y NADIE MÁS. Es importante que
+  // corten acá: 👍 también figura en la lista de cortesías (para poder ignorar
+  // el 👍 con el que el cliente contesta nuestro agradecimiento), y si la regla
+  // de cortesía llegara a mirarlo, un pulgar arriba terminaría en revisión
+  // manual en vez de VERDE.
+  const soloEmoji = contenidos.length > 0 && contenidos.every((c) => esSoloEmoji(c));
+  if (soloEmoji) {
+    const semaforoEmoji = sentimientoSoloEmoji(contenidos);
+    return semaforoEmoji === null
+      ? { revisionManual: "reaccion-ambigua", semaforoEmoji: null }
+      : { revisionManual: null, semaforoEmoji };
+  }
+
+  // PRIMERA respuesta que es puro saludo. No es una opinión y no se puede
+  // puntuar: mandada a la IA vuelve como positiva (pasó de verdad, un "Buen día"
+  // quedó VERDE) y el cliente queda contado como conforme sin haber dicho nada.
+  if (!esSeguimiento && contenidos.length > 0 && contenidos.every((c) => esSoloCortesia(c))) {
+    return { revisionManual: "solo-cortesia", semaforoEmoji: null };
+  }
+
+  return { revisionManual: null, semaforoEmoji: null };
+}
+
 // ---------- Gravedad comparable ----------
 // Para decidir si una respuesta posterior EMPEORA lo que ya sabíamos del caso.
 

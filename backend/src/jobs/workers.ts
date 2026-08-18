@@ -12,12 +12,11 @@ import { programarAgradecimiento, reemplazarPlaceholders } from "../services/agr
 import {
   analisisPrincipal,
   consolidarTexto,
+  decidirClasificacion,
   esSoloCortesia,
-  esSoloEmoji,
   mensajesSinAnalizar,
   programarAnalisis,
   rangoSemaforo,
-  sentimientoSoloEmoji,
 } from "../services/analisis.service";
 import { crearAviso } from "../services/aviso.service";
 import { etiquetaFidelizacion } from "../services/fidelizacion.service";
@@ -254,37 +253,18 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
     return { omitido: true, motivo: "cortesía posterior" };
   }
 
-  // Respuestas de SOLO emojis (típicamente una reacción 👍 a nuestro mensaje):
-  // se clasifican sin IA. Un pulgar arriba es VERDE; un emoji ambiguo/negativo
-  // (👎, 😮) es demasiado poco para clasificar solo y va a revisión manual.
+  // Qué se puede hacer con esta tanda: clasificarla sola (👍 = VERDE, sin IA),
+  // mandarla a la IA, o dejarla para que la mire una persona. La decisión vive
+  // en decidirClasificacion() y se prueba aparte: el orden entre estas reglas ya
+  // rompió dos veces y no se puede verificar leyendo un if encadenado.
   const contenidos = mensajes.map((m) => m.content);
-  const soloEmoji = contenidos.every((c) => esSoloEmoji(c));
-  const semaforoEmoji = soloEmoji ? sentimientoSoloEmoji(contenidos) : null;
+  const decision = decidirClasificacion({ contenidos, textoConsolidado: texto, esSeguimiento });
+  const semaforoEmoji = decision.semaforoEmoji;
+  const esNoTextual = decision.revisionManual === "no-textual";
+  const soloCortesiaPrimera = decision.revisionManual === "solo-cortesia";
 
-  // No textual = lo que no se pudo convertir a texto: media sin soportar
-  // ("[mensaje de tipo image]"), o un audio que no se pudo transcribir ("[audio]"
-  // / "[audio sin voz reconocible]"). Va a revisión manual.
-  const esNoTextual = /^\[(mensaje de tipo .+|audio.*)\]$/.test(texto.trim());
-  // Emoji-solo que no se pudo clasificar de forma clara (negativo o ambiguo).
-  const emojiSinClasificar = soloEmoji && semaforoEmoji === null;
-
-  // PRIMERA respuesta que es SOLO un saludo o una cortesía ("buen día", "hola",
-  // "gracias"). NO es una opinión sobre el servicio y no se puede puntuar: si se
-  // manda a la IA, vuelve clasificada como positiva (pasó de verdad — un "Buen
-  // día" quedó VERDE) y el cliente termina contado como conforme sin haber dicho
-  // nada. Va a revisión manual, igual que un audio ilegible, y sin gastar IA.
-  //
-  // Ojo: se evalúa mensaje por mensaje sobre el texto ORIGINAL, no sobre el
-  // consolidado, porque consolidarTexto() los numera ("(1) buen día") y eso no
-  // matchearía nunca contra la lista de cortesías.
-  const soloCortesiaPrimera = !esSeguimiento && mensajes.every((m) => esSoloCortesia(m.content));
-
-  if (esNoTextual || emojiSinClasificar || soloCortesiaPrimera) {
-    const motivo = esNoTextual
-      ? "no-textual"
-      : emojiSinClasificar
-        ? "reaccion-ambigua"
-        : "solo-cortesia";
+  if (decision.revisionManual) {
+    const motivo = decision.revisionManual;
     await prisma.sentimentAnalysis.create({
       data: {
         casoId,
