@@ -439,7 +439,7 @@ export async function wordRqr(rqr: RqrCompleto): Promise<Buffer> {
 
           // Clasificación de la marca (Volkswagen). Va primero porque es lo que
           // define de qué se trata el reclamo; en Ford la sección no existe.
-          ...(rqr.tipoContacto || rqr.origenRqr || rqr.codigoSucursal || rqr.razonSocial
+          ...(rqr.tipoContacto || rqr.areaPrincipal || rqr.origenRqr || rqr.codigoSucursal || rqr.razonSocial
             ? [
                 tituloSeccion("Clasificación y concesionario"),
                 new Table({
@@ -448,6 +448,12 @@ export async function wordRqr(rqr: RqrCompleto): Promise<Buffer> {
                     filaDato(
                       "Tipo de contacto",
                       rqr.tipoContacto ? (NOMBRE_AREA_VW[rqr.tipoContacto as AreaVW] ?? rqr.tipoContacto) : "-"
+                    ),
+                    // El sector RESPONSABLE, que puede no ser el mismo por el que
+                    // el cliente se contactó.
+                    filaDato(
+                      "Área principal",
+                      rqr.areaPrincipal ? (NOMBRE_AREA_VW[rqr.areaPrincipal as AreaVW] ?? rqr.areaPrincipal) : "-"
                     ),
                     filaDato("Subárea", etiquetaSubareaVW(rqr.subarea)),
                     filaDato("Origen del reclamo", etiquetaOrigenRqr(rqr.origenRqr)),

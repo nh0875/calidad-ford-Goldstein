@@ -68,13 +68,16 @@ export default function RqrNuevo() {
   const marca = getMarca();
   const rqrVW = marca.rqr?.porSubareas ?? false;
   const [tipoContacto, setTipoContacto] = useState("");
+  // Sector responsable del reclamo. Es OTRO dato que el tipo de contacto: ese
+  // dice por qué tema llamó el cliente, este de quién es el problema.
+  const [areaPrincipal, setAreaPrincipal] = useState("");
   const [subarea, setSubarea] = useState("");
   const [origenRqr, setOrigenRqr] = useState("");
   const [codigoSucursal, setCodigoSucursal] = useState("");
   const [razonSocial, setRazonSocial] = useState("");
   const [tratamientoDadoPor2, setTratamientoDadoPor2] = useState("");
   // Las subáreas dependen del tipo de contacto elegido.
-  const subareasDisponibles = marca.rqr?.areas.find((a) => a.valor === tipoContacto)?.subareas ?? [];
+  const subareasDisponibles = marca.rqr?.areas.find((a) => a.valor === areaPrincipal)?.subareas ?? [];
 
   // Autocompletado con debounce
   useEffect(() => {
@@ -137,6 +140,7 @@ export default function RqrNuevo() {
         ...(rqrVW
           ? {
               tipoContacto: tipoContacto || undefined,
+              areaPrincipal: areaPrincipal || undefined,
               subarea: subarea || undefined,
               origenRqr: origenRqr || undefined,
               codigoSucursal: codigoSucursal.trim() || undefined,
@@ -278,11 +282,21 @@ export default function RqrNuevo() {
             Clasificación y concesionario
           </h3>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <Campo etiqueta="Tipo de contacto">
+            <Campo etiqueta="Tipo de contacto" hint="Por qué tema se contactó">
+              <Select value={tipoContacto} onChange={(e) => setTipoContacto(e.target.value)}>
+                <option value="">(elegir)</option>
+                {marca.rqr?.areas.map((a) => (
+                  <option key={a.valor} value={a.valor}>
+                    {a.etiqueta}
+                  </option>
+                ))}
+              </Select>
+            </Campo>
+            <Campo etiqueta="Área principal" hint="Sector responsable del reclamo">
               <Select
-                value={tipoContacto}
+                value={areaPrincipal}
                 onChange={(e) => {
-                  setTipoContacto(e.target.value);
+                  setAreaPrincipal(e.target.value);
                   // La subárea elegida puede no existir en el área nueva.
                   setSubarea("");
                 }}
@@ -297,12 +311,12 @@ export default function RqrNuevo() {
             </Campo>
             <Campo
               etiqueta="Subárea"
-              hint={tipoContacto ? undefined : "Elegí primero el tipo de contacto"}
+              hint={areaPrincipal ? undefined : "Elegí primero el área principal"}
             >
               <Select
                 value={subarea}
                 onChange={(e) => setSubarea(e.target.value)}
-                disabled={!tipoContacto}
+                disabled={!areaPrincipal}
               >
                 <option value="">(elegir)</option>
                 {subareasDisponibles.map((s) => (
@@ -351,12 +365,19 @@ export default function RqrNuevo() {
               <option>Otro</option>
             </Select>
           </Campo>
-          <Campo etiqueta="Área de origen">
-            <Input type="text" value={areaOrigen} onChange={(e) => setAreaOrigen(e.target.value)} />
-          </Campo>
-          <Campo etiqueta="Área afectada">
-            <Input type="text" value={areaAfectada} onChange={(e) => setAreaAfectada(e.target.value)} />
-          </Campo>
+          {/* En las marcas que clasifican por área + subárea estos dos no van:
+              el área principal ya dice el sector, y "área afectada" quedaba
+              duplicando la subárea. En Ford siguen igual que siempre. */}
+          {!rqrVW && (
+            <>
+              <Campo etiqueta="Área de origen">
+                <Input type="text" value={areaOrigen} onChange={(e) => setAreaOrigen(e.target.value)} />
+              </Campo>
+              <Campo etiqueta="Área afectada">
+                <Input type="text" value={areaAfectada} onChange={(e) => setAreaAfectada(e.target.value)} />
+              </Campo>
+            </>
+          )}
           <Campo etiqueta="Asesor *">
             <Input type="text" value={asesor} onChange={(e) => setAsesor(e.target.value)} />
           </Campo>

@@ -432,8 +432,14 @@ model RQR {
   // QUIÉN puede ver el RQR y solo tiene VENTAS/POSVENTA, así que se sigue
   // usando para eso. `tipoContacto` es el dato de negocio de VW y suma
   // PLAN_DE_AHORRO, que no existe como área de usuario.
+  // POR QUÉ SON DOS COSAS DISTINTAS (decisión de Calidad de VW):
+  //  - tipoContacto: por qué TEMA se contactó el cliente.
+  //  - areaPrincipal + subarea: qué SECTOR es responsable del reclamo.
+  // Pueden no coincidir: el cliente llama por un tema de posventa y el problema
+  // termina siendo de Plan de Ahorro.
   tipoContacto        String? // VENTAS | POSVENTA | PLAN_DE_AHORRO (ver config/areas-vw.ts)
-  subarea             String? // código de subárea dentro del tipo de contacto
+  areaPrincipal       String? // VENTAS | POSVENTA | PLAN_DE_AHORRO — el sector responsable
+  subarea             String? // código de subárea DENTRO de areaPrincipal
   origenRqr           String? // EMAIL | TELEFONO | WHATSAPP | PERSONALMENTE
   // Datos del concesionario donde ocurrió el hecho.
   codigoSucursal      String? // 4 caracteres, viene de la carga de casos

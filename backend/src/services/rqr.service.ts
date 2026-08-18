@@ -164,6 +164,7 @@ export interface DatosRqrManual {
   creadoPorId?: string;
   // --- Campos de Volkswagen (quedan null en Ford) ---
   tipoContacto?: string;
+  areaPrincipal?: string;
   subarea?: string;
   origenRqr?: string;
   codigoSucursal?: string;
@@ -194,6 +195,7 @@ export async function crearRqrManual(datos: DatosRqrManual) {
             observaciones: datos.observaciones ?? null,
             creadoPorId: datos.creadoPorId ?? null,
             tipoContacto: datos.tipoContacto ?? null,
+            areaPrincipal: datos.areaPrincipal ?? null,
             subarea: datos.subarea ?? null,
             origenRqr: datos.origenRqr ?? null,
             codigoSucursal: datos.codigoSucursal ?? null,

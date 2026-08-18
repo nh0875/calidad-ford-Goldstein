@@ -1,9 +1,11 @@
 import { Request, Response } from "express";
 import { AreaTrabajo, EstadoRQR, Prisma } from "@prisma/client";
 import { z } from "zod";
+import { marca } from "../config/marca";
 import {
   AREAS_VW,
   AreaVW,
+  NOMBRE_AREA_VW,
   LARGO_CODIGO_SUCURSAL,
   ORIGENES_RQR_VALIDOS,
   SUBAREAS_VW_VALIDAS,
@@ -98,6 +100,10 @@ export async function listRqr(req: Request, res: Response) {
 // alta y en la edición. En Ford no vienen y quedan en null.
 const camposVW = {
   tipoContacto: z.enum(AREAS_VW).optional(),
+  // Sector responsable del reclamo. Es OTRA cosa que tipoContacto: ese dice por
+  // qué tema llamó el cliente, este dice de quién es el problema. La subárea
+  // cuelga de ESTE, no del tipo de contacto.
+  areaPrincipal: z.enum(AREAS_VW).optional(),
   subarea: z.string().trim().min(1).optional(),
   origenRqr: z.string().trim().min(1).optional(),
   codigoSucursal: z
@@ -119,7 +125,7 @@ const camposVW = {
  * mirar también lo que ya estaba guardado).
  */
 function validarCamposVW(datos: {
-  tipoContacto?: string | null;
+  areaPrincipal?: string | null;
   subarea?: string | null;
   origenRqr?: string | null;
 }): string | null {
@@ -128,8 +134,8 @@ function validarCamposVW(datos: {
   }
   if (datos.subarea) {
     if (!SUBAREAS_VW_VALIDAS.has(datos.subarea)) return "La subárea no es válida.";
-    if (datos.tipoContacto && !subareaPerteneceAlArea(datos.tipoContacto as AreaVW, datos.subarea)) {
-      return "Esa subárea no pertenece al tipo de contacto elegido.";
+    if (datos.areaPrincipal && !subareaPerteneceAlArea(datos.areaPrincipal as AreaVW, datos.subarea)) {
+      return "Esa subárea no pertenece al área principal elegida.";
     }
   }
   return null;
@@ -187,8 +193,17 @@ export async function createRqr(req: Request, res: Response) {
     area = restringido ?? datos.area ?? AreaTrabajo.POSVENTA;
   }
 
+  // En las marcas que clasifican por área+subárea, el campo libre "areaOrigen"
+  // no se muestra en el formulario: se completa con la etiqueta del área
+  // principal, para que todo lo que ya lo lee (Word, exportaciones, listados)
+  // siga mostrando algo con sentido sin tener que tocarlo.
+  const areaOrigen =
+    marca.rqrConSubareas && datos.areaPrincipal
+      ? NOMBRE_AREA_VW[datos.areaPrincipal as AreaVW]
+      : datos.areaOrigen;
+
   // Queda registrado quién lo cargó: se imprime en el documento del RQR.
-  const rqr = await crearRqrManual({ ...datos, area, creadoPorId: req.usuario!.id });
+  const rqr = await crearRqrManual({ ...datos, areaOrigen, area, creadoPorId: req.usuario!.id });
 
   await auditar(req, {
     accion: ACCIONES.RQR_CREADO,
@@ -340,7 +355,7 @@ export async function patchRqr(req: Request, res: Response) {
   // La subárea depende del tipo de contacto, y en una edición puede venir solo
   // uno de los dos: se valida contra la mezcla de lo nuevo y lo ya guardado.
   const errorVW = validarCamposVW({
-    tipoContacto: parsed.data.tipoContacto ?? existente.tipoContacto,
+    areaPrincipal: parsed.data.areaPrincipal ?? existente.areaPrincipal,
     subarea: parsed.data.subarea ?? existente.subarea,
     origenRqr: parsed.data.origenRqr ?? existente.origenRqr,
   });

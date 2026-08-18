@@ -19,6 +19,7 @@ import { ConfirmarEliminacion } from "../components/ui/ConfirmarEliminacion";
 interface RqrDetalleData {
   // --- Campos de Volkswagen (null en Ford) ---
   tipoContacto: string | null;
+  areaPrincipal: string | null;
   subarea: string | null;
   origenRqr: string | null;
   codigoSucursal: string | null;
@@ -77,12 +78,15 @@ interface Formulario {
   tratamientoBitacora: string;
   solucionPropuesta: string;
   tratamientoDadoPor: string;
+  tratamientoDadoPor2: string;
   causaRaiz: string;
   estado: string;
   responsableCierre: string;
   observaciones: string;
   areaOrigen: string;
   areaAfectada: string;
+  areaPrincipal: string;
+  subarea: string;
   fechaCierre: string; // AAAA-MM-DD o ""
 }
 
@@ -126,12 +130,15 @@ export default function RqrDetalle() {
         tratamientoBitacora: data.tratamientoBitacora ?? "",
         solucionPropuesta: data.solucionPropuesta ?? "",
         tratamientoDadoPor: data.tratamientoDadoPor ?? "",
+        tratamientoDadoPor2: data.tratamientoDadoPor2 ?? "",
         causaRaiz: data.causaRaiz ?? "",
         estado: data.estado,
         responsableCierre: data.responsableCierre ?? "",
         observaciones: data.observaciones ?? "",
         areaOrigen: data.areaOrigen,
         areaAfectada: data.areaAfectada ?? "",
+        areaPrincipal: data.areaPrincipal ?? "",
+        subarea: data.subarea ?? "",
         fechaCierre: data.fechaCierre ? data.fechaCierre.slice(0, 10) : "",
       });
     } catch (err) {
@@ -154,11 +161,13 @@ export default function RqrDetalle() {
         tratamientoBitacora: form.tratamientoBitacora || null,
         solucionPropuesta: form.solucionPropuesta || null,
         tratamientoDadoPor: form.tratamientoDadoPor || null,
+        tratamientoDadoPor2: form.tratamientoDadoPor2 || null,
         causaRaiz: form.causaRaiz || null,
         estado: form.estado,
         responsableCierre: form.responsableCierre || null,
         observaciones: form.observaciones || null,
         areaOrigen: form.areaOrigen,
+        ...(rqrVW ? { areaPrincipal: form.areaPrincipal || undefined, subarea: form.subarea || undefined } : {}),
         areaAfectada: form.areaAfectada || null,
         // Al reabrir (estado != CERRADO) se limpia la fecha de cierre de forma
         // explícita: si no, el form conserva la fecha vieja y el RQR quedaría
@@ -213,6 +222,8 @@ export default function RqrDetalle() {
   }
 
   const set = (campo: keyof Formulario) => (v: string) => setForm({ ...form, [campo]: v });
+  // Esta marca clasifica el RQR por área + subárea (Volkswagen).
+  const rqrVW = getMarca().rqr.porSubareas;
   const semaforo = rqr.sentimentAnalysis?.semaforo ?? null;
   const pulsar = semaforo === "ROJO" && rqr.estado !== "CERRADO" && diasDesde(rqr.fechaApertura) > 3;
 
@@ -290,9 +301,10 @@ export default function RqrDetalle() {
         )}
         {/* Clasificación de Volkswagen. Se muestra solo si el RQR la tiene
             cargada: en Ford estos campos vienen vacíos y la fila no aparece. */}
-        {(rqr.tipoContacto || rqr.origenRqr || rqr.codigoSucursal || rqr.razonSocial) && (
+        {(rqr.tipoContacto || rqr.areaPrincipal || rqr.origenRqr || rqr.codigoSucursal || rqr.razonSocial) && (
           <div className="mt-3 grid gap-x-6 gap-y-2 border-t border-gray-100 pt-3 text-sm sm:grid-cols-3">
             <Dato etiqueta="Tipo de contacto" valor={etiquetaCatalogo(rqr.tipoContacto, "area")} />
+            <Dato etiqueta="Área principal" valor={etiquetaCatalogo(rqr.areaPrincipal, "area")} />
             <Dato etiqueta="Subárea" valor={etiquetaCatalogo(rqr.subarea, "subarea")} />
             <Dato etiqueta="Origen del reclamo" valor={etiquetaCatalogo(rqr.origenRqr, "origen")} />
             <Dato etiqueta="Código de sucursal" valor={rqr.codigoSucursal ?? "—"} />
@@ -338,12 +350,50 @@ export default function RqrDetalle() {
               ))}
             </Select>
           </Campo>
-          <Campo etiqueta="Área de origen">
-            <Input type="text" value={form.areaOrigen} onChange={(e) => set("areaOrigen")(e.target.value)} />
-          </Campo>
-          <Campo etiqueta="Área afectada">
-            <Input type="text" value={form.areaAfectada} onChange={(e) => set("areaAfectada")(e.target.value)} />
-          </Campo>
+          {rqrVW ? (
+            <>
+              {/* El sector RESPONSABLE del reclamo. La subárea cuelga de acá, no
+                  del tipo de contacto (que dice por qué tema llamó el cliente). */}
+              <Campo etiqueta="Área principal" hint="Sector responsable del reclamo">
+                <Select
+                  value={form.areaPrincipal}
+                  onChange={(e) => {
+                    set("areaPrincipal")(e.target.value);
+                    set("subarea")(""); // la subárea puede no existir en el área nueva
+                  }}
+                >
+                  <option value="">(elegir)</option>
+                  {getMarca().rqr.areas.map((a) => (
+                    <option key={a.valor} value={a.valor}>{a.etiqueta}</option>
+                  ))}
+                </Select>
+              </Campo>
+              <Campo
+                etiqueta="Subárea"
+                hint={form.areaPrincipal ? undefined : "Elegí primero el área principal"}
+              >
+                <Select
+                  value={form.subarea}
+                  onChange={(e) => set("subarea")(e.target.value)}
+                  disabled={!form.areaPrincipal}
+                >
+                  <option value="">(elegir)</option>
+                  {(getMarca().rqr.areas.find((a) => a.valor === form.areaPrincipal)?.subareas ?? []).map((s) => (
+                    <option key={s.valor} value={s.valor}>{s.etiqueta}</option>
+                  ))}
+                </Select>
+              </Campo>
+            </>
+          ) : (
+            <>
+              <Campo etiqueta="Área de origen">
+                <Input type="text" value={form.areaOrigen} onChange={(e) => set("areaOrigen")(e.target.value)} />
+              </Campo>
+              <Campo etiqueta="Área afectada">
+                <Input type="text" value={form.areaAfectada} onChange={(e) => set("areaAfectada")(e.target.value)} />
+              </Campo>
+            </>
+          )}
         </div>
       </Seccion>
 
@@ -355,9 +405,13 @@ export default function RqrDetalle() {
           rows={5}
           placeholder="Registro cronológico del tratamiento del reclamo…"
         />
-        <div className="mt-3 sm:w-1/2">
+        {/* Dos casilleros: el tratamiento puede quedar a cargo de dos personas. */}
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <Campo etiqueta="Tratamiento dado por">
             <Input type="text" value={form.tratamientoDadoPor} onChange={(e) => set("tratamientoDadoPor")(e.target.value)} />
+          </Campo>
+          <Campo etiqueta="Tratamiento dado por (2)" hint="Si intervino una segunda persona">
+            <Input type="text" value={form.tratamientoDadoPor2} onChange={(e) => set("tratamientoDadoPor2")(e.target.value)} />
           </Campo>
         </div>
       </Seccion>
