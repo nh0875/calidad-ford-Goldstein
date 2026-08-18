@@ -62,6 +62,12 @@ interface VistaPrevia {
   avisos: string[];
 }
 
+interface EstadoMail {
+  notificaPorMail: boolean;
+  configurado: boolean;
+  casilla: string | null;
+}
+
 interface ResultadoAviso {
   codigo: string;
   vendedor: string;
@@ -85,12 +91,19 @@ export default function EncuestasFabrica() {
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [abiertos, setAbiertos] = useState<Set<string>>(new Set());
+  // Casilla del sistema. Sin esto no sale ningún correo, así que se avisa ANTES
+  // de que alguien apriete el botón y le vuelvan 18 errores iguales.
+  const [estadoMail, setEstadoMail] = useState<EstadoMail | null>(null);
 
   const cargar = useCallback(async () => {
     try {
-      const r = await apiGet<{ data: Vendedor[]; resumen: Resumen }>("/api/encuesta-vw");
+      const [r, m] = await Promise.all([
+        apiGet<{ data: Vendedor[]; resumen: Resumen }>("/api/encuesta-vw"),
+        apiGet<EstadoMail>("/api/refuerzos/estado-mail").catch(() => null),
+      ]);
       setVendedores(r.data);
       setResumen(r.resumen);
+      setEstadoMail(m);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos cargar las encuestas pendientes.");
@@ -258,14 +271,28 @@ export default function EncuestasFabrica() {
             </label>
             <button
               onClick={() => avisar()}
-              disabled={avisando || conPendientes.length === 0}
+              disabled={avisando || conPendientes.length === 0 || estadoMail?.configurado === false}
               className={claseBoton("primario", "!py-1.5")}
-              title="Mandarle a cada vendedor la lista de sus clientes pendientes"
+              title={
+                estadoMail?.configurado === false
+                  ? "Falta configurar la casilla de correo del sistema"
+                  : "Mandarle a cada vendedor la lista de sus clientes pendientes"
+              }
             >
               <Mail className="h-4 w-4" /> {avisando ? "Enviando…" : "Avisar a los vendedores"}
             </button>
           </div>
         </div>
+
+        {estadoMail?.configurado === false && (
+          <div className="mt-3">
+            <Alert tono="advertencia">
+              El sistema todavía no tiene una casilla de correo configurada, así que no puede avisarle a nadie. Hay que
+              cargar MAIL_USUARIO y MAIL_PASSWORD (una contraseña de aplicación de Google) en el archivo de entorno del
+              servidor.
+            </Alert>
+          </div>
+        )}
 
         {sinCorreo.length > 0 && (
           <div className="mt-3"><Alert tono="advertencia">
@@ -477,7 +504,7 @@ export default function EncuestasFabrica() {
                         {pendientes.length > 0 && v.email && (
                           <button
                             onClick={() => avisar([v.codigo])}
-                            disabled={avisando}
+                            disabled={avisando || estadoMail?.configurado === false}
                             className={claseBoton("secundario", "!py-1 !px-2")}
                             title="Avisarle solo a este vendedor"
                           >
