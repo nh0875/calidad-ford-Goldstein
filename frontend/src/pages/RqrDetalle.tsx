@@ -167,7 +167,10 @@ export default function RqrDetalle() {
         responsableCierre: form.responsableCierre || null,
         observaciones: form.observaciones || null,
         areaOrigen: form.areaOrigen,
-        ...(rqrVW ? { areaPrincipal: form.areaPrincipal || undefined, subarea: form.subarea || undefined } : {}),
+        // null y NO undefined: undefined se cae del JSON y el backend lo lee
+        // como "no lo toques", así que al cambiar el área principal la subárea
+        // vieja seguía guardada aunque en pantalla el casillero quedara vacío.
+        ...(rqrVW ? { areaPrincipal: form.areaPrincipal || null, subarea: form.subarea || null } : {}),
         areaAfectada: form.areaAfectada || null,
         // Al reabrir (estado != CERRADO) se limpia la fecha de cierre de forma
         // explícita: si no, el form conserva la fecha vieja y el RQR quedaría
@@ -221,7 +224,13 @@ export default function RqrDetalle() {
     );
   }
 
-  const set = (campo: keyof Formulario) => (v: string) => setForm({ ...form, [campo]: v });
+  // OJO: tiene que ser la forma funcional (f) => ... y NO { ...form }. Con la
+  // copia directa, dos cambios en el mismo evento se pisan: los dos parten del
+  // MISMO form viejo y React se queda con el último. Es lo que rompía "Área
+  // principal", que al cambiar también limpia la subárea: el limpiado de subárea
+  // devolvía un form con el área vieja adentro y el desplegable no se movía.
+  const set = (campo: keyof Formulario) => (v: string) =>
+    setForm((f) => (f ? { ...f, [campo]: v } : f));
   // Esta marca clasifica el RQR por área + subárea (Volkswagen).
   const rqrVW = getMarca().rqr.porSubareas;
   const semaforo = rqr.sentimentAnalysis?.semaforo ?? null;

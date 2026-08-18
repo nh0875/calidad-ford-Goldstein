@@ -163,13 +163,15 @@ export interface DatosRqrManual {
   // Quién lo cargó: se imprime en el documento del RQR.
   creadoPorId?: string;
   // --- Campos de Volkswagen (quedan null en Ford) ---
-  tipoContacto?: string;
-  areaPrincipal?: string;
-  subarea?: string;
-  origenRqr?: string;
-  codigoSucursal?: string;
-  razonSocial?: string;
-  tratamientoDadoPor2?: string;
+  // Aceptan null además de undefined: el formulario puede mandar un casillero
+  // vacío a propósito, y las dos cosas terminan guardándose como null.
+  tipoContacto?: string | null;
+  areaPrincipal?: string | null;
+  subarea?: string | null;
+  origenRqr?: string | null;
+  codigoSucursal?: string | null;
+  razonSocial?: string | null;
+  tratamientoDadoPor2?: string | null;
 }
 
 export async function crearRqrManual(datos: DatosRqrManual) {

@@ -9,6 +9,7 @@ import {
   LARGO_CODIGO_SUCURSAL,
   ORIGENES_RQR_VALIDOS,
   SUBAREAS_VW_VALIDAS,
+  etiquetaSubareaVW,
   subareaPerteneceAlArea,
 } from "../config/areas-vw";
 import { prisma } from "../config/prisma";
@@ -96,23 +97,48 @@ export async function listRqr(req: Request, res: Response) {
 // teléfono, en persona u otro canal. Con Caso vinculado o con datos manuales.
 
 
+/**
+ * Campo opcional que la pantalla PUEDE dejar vacío. Distingue tres situaciones
+ * que antes se confundían entre sí:
+ *
+ *   no vino en el pedido -> undefined -> no se toca lo que ya estaba guardado
+ *   vino "" o null       -> null      -> se borra
+ *   vino con texto       -> el valor
+ *
+ * Sin esto, un casillero vacío rompía el guardado ("Expected string, received
+ * null") o —peor— se leía como "no lo toques" y dejaba adentro un dato viejo que
+ * ya no correspondía: una subárea de Ventas colgando de un RQR de Posventa.
+ */
+function vaciable<T extends z.ZodTypeAny>(schema: T) {
+  // preprocess y no union+transform: así el tipo del schema de adentro sobrevive
+  // y el resto del archivo sigue viendo `string | null | undefined` en vez de
+  // `unknown`. El "" se cambia por null ANTES de validar; el undefined pasa
+  // derecho y lo toma el .optional().
+  return z.preprocess((v) => (v === "" ? null : v), schema.nullable().optional());
+}
+
+/** Lo que va a quedar guardado: si el campo no vino, sigue lo que ya estaba. */
+function alFinal<T>(nuevo: T | null | undefined, guardado: T | null): T | null {
+  return nuevo === undefined ? guardado : nuevo;
+}
+
 // Campos que solo usa el RQR de Volkswagen. Se definen una vez y se reusan en el
 // alta y en la edición. En Ford no vienen y quedan en null.
+// Todos son vaciables: Calidad tiene que poder corregir un RQR mal clasificado
+// dejando un casillero en blanco, no solo cambiándole el texto.
 const camposVW = {
-  tipoContacto: z.enum(AREAS_VW).optional(),
+  tipoContacto: vaciable(z.enum(AREAS_VW)),
   // Sector responsable del reclamo. Es OTRA cosa que tipoContacto: ese dice por
   // qué tema llamó el cliente, este dice de quién es el problema. La subárea
   // cuelga de ESTE, no del tipo de contacto.
-  areaPrincipal: z.enum(AREAS_VW).optional(),
-  subarea: z.string().trim().min(1).optional(),
-  origenRqr: z.string().trim().min(1).optional(),
-  codigoSucursal: z
-    .string()
-    .trim()
-    .length(LARGO_CODIGO_SUCURSAL, `El código de sucursal tiene ${LARGO_CODIGO_SUCURSAL} caracteres.`)
-    .optional(),
-  razonSocial: z.string().trim().min(1).max(160).optional(),
-  tratamientoDadoPor2: z.string().trim().min(1).max(120).optional(),
+  areaPrincipal: vaciable(z.enum(AREAS_VW)),
+  subarea: vaciable(z.string().trim().min(1)),
+  origenRqr: vaciable(z.string().trim().min(1)),
+  codigoSucursal: vaciable(
+    z.string().trim().length(LARGO_CODIGO_SUCURSAL, `El código de sucursal tiene ${LARGO_CODIGO_SUCURSAL} caracteres.`)
+  ),
+  razonSocial: vaciable(z.string().trim().min(1).max(160)),
+  tratamientoDadoPor2: vaciable(z.string().trim().min(1).max(120)),
 };
 
 /**
@@ -135,7 +161,11 @@ function validarCamposVW(datos: {
   if (datos.subarea) {
     if (!SUBAREAS_VW_VALIDAS.has(datos.subarea)) return "La subárea no es válida.";
     if (datos.areaPrincipal && !subareaPerteneceAlArea(datos.areaPrincipal as AreaVW, datos.subarea)) {
-      return "Esa subárea no pertenece al área principal elegida.";
+      // El mensaje nombra las dos cosas y dice cómo salir del paso: el error se
+      // ve al cambiar de área principal, cuando la subárea que quedó adentro es
+      // la del área anterior y en pantalla el casillero puede verse vacío.
+      const area = NOMBRE_AREA_VW[datos.areaPrincipal as AreaVW];
+      return `La subárea "${etiquetaSubareaVW(datos.subarea)}" no corresponde a ${area}. Elegí una subárea de ${area}, o dejá el casillero vacío.`;
     }
   }
   return null;
@@ -314,9 +344,11 @@ export async function exportarRqrWord(req: Request, res: Response) {
 const patchSchema = z
   .object({
     estado: z.nativeEnum(EstadoRQR).optional(),
-    areaOrigen: z.string().trim().min(1).optional(),
+    // Con mensaje propio: si quedan sin texto, el usuario tiene que leer qué
+    // casillero corregir y no un "String must contain at least 1 character(s)".
+    areaOrigen: z.string().trim().min(1, "El área de origen no puede quedar vacía.").optional(),
     areaAfectada: z.string().trim().nullable().optional(),
-    descripcionReclamo: z.string().trim().min(1).optional(),
+    descripcionReclamo: z.string().trim().min(1, "La descripción del reclamo no puede estar vacía.").optional(),
     tratamientoBitacora: z.string().trim().nullable().optional(),
     solucionPropuesta: z.string().trim().nullable().optional(),
     tratamientoDadoPor: z.string().trim().nullable().optional(),
@@ -354,10 +386,13 @@ export async function patchRqr(req: Request, res: Response) {
 
   // La subárea depende del tipo de contacto, y en una edición puede venir solo
   // uno de los dos: se valida contra la mezcla de lo nuevo y lo ya guardado.
+  // OJO: acá va alFinal() y NO ??. Con ?? un campo borrado a propósito (null) se
+  // leía como "no vino" y revivía el valor guardado, así que la validación
+  // miraba una subárea que el usuario ya había sacado de la pantalla.
   const errorVW = validarCamposVW({
-    areaPrincipal: parsed.data.areaPrincipal ?? existente.areaPrincipal,
-    subarea: parsed.data.subarea ?? existente.subarea,
-    origenRqr: parsed.data.origenRqr ?? existente.origenRqr,
+    areaPrincipal: alFinal(parsed.data.areaPrincipal, existente.areaPrincipal),
+    subarea: alFinal(parsed.data.subarea, existente.subarea),
+    origenRqr: alFinal(parsed.data.origenRqr, existente.origenRqr),
   });
   if (errorVW) return res.status(400).json({ message: errorVW });
 
