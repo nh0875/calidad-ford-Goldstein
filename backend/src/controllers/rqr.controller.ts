@@ -397,6 +397,17 @@ export async function patchRqr(req: Request, res: Response) {
   if (errorVW) return res.status(400).json({ message: errorVW });
 
   const { fechaCierre: fechaCierreManual, ...cambios } = parsed.data;
+
+  // Al CREAR, "areaOrigen" se completa solo con la etiqueta del área principal
+  // (ver más arriba). Al editar hay que rehacerlo: si no, corregir un RQR mal
+  // clasificado le cambia el área principal pero deja el texto viejo, y el Word
+  // sale diciendo "Plan de Ahorro" en un RQR que ya es de Ventas.
+  if (marca.rqrConSubareas && parsed.data.areaPrincipal !== undefined) {
+    cambios.areaOrigen = parsed.data.areaPrincipal
+      ? NOMBRE_AREA_VW[parsed.data.areaPrincipal as AreaVW]
+      : existente.areaOrigen;
+  }
+
   const seCierra = cambios.estado === EstadoRQR.CERRADO && existente.estado !== EstadoRQR.CERRADO;
   const seReabre = cambios.estado && cambios.estado !== EstadoRQR.CERRADO && existente.fechaCierre;
 
