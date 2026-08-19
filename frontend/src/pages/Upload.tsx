@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { getMarca } from "../lib/marca";
 import { CheckCircle2, ClipboardList, FileSpreadsheet, ListChecks, UploadCloud } from "lucide-react";
 import { apiPostForm, apiPostJson } from "../lib/api";
@@ -102,23 +103,43 @@ type Paso = "formulario" | "mapeo" | "resultado";
 
 export default function Upload() {
   // Selector inicial de tipo de carga. "posventa" = flujo actual (intacto);
-  // "ford" = flujo nuevo de encuesta oficial de Ford (Parte B).
+  // "ford" = encuesta oficial en el formato de Ford (Parte B).
   const [tipoCarga, setTipoCarga] = useState<"posventa" | "ventas" | "ford">("posventa");
+  const marca = getMarca();
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-wrap gap-2">
         <SelectorTipo activo={tipoCarga === "posventa"} onClick={() => setTipoCarga("posventa")} icono={UploadCloud} titulo="Contacto Posventa" descripcion="El Excel mensual de seguimiento post-servicio (área Posventa)." />
         <SelectorTipo activo={tipoCarga === "ventas"} onClick={() => setTipoCarga("ventas")} icono={UploadCloud} titulo="Contacto Ventas" descripcion="Mismo formato que Posventa; los casos quedan en el área Ventas." />
-        <SelectorTipo
+        {/* La encuesta de fábrica se sube acá SOLO donde el archivo tiene el
+            formato de Ford. El de VW es otro (una hoja por sucursal, sin
+            teléfono) y se carga desde su propia pantalla: si se dejaba este
+            botón, era el lugar natural para intentarlo y el archivo bueno iba a
+            rebotar con un error que no explica nada. */}
+        {marca.modulos.refuerzo && (
+          <SelectorTipo
             activo={tipoCarga === "ford"}
             onClick={() => setTipoCarga("ford")}
             icono={ClipboardList}
-            titulo={`Encuesta ${getMarca().nombre}`}
-            descripcion={`El export de invitaciones de la plataforma de ${getMarca().nombre}.`}
+            titulo={`Encuesta ${marca.nombre}`}
+            descripcion={`El export de invitaciones de la plataforma de ${marca.nombre}.`}
           />
+        )}
       </div>
-      {tipoCarga === "ford" ? (
+
+      {/* Cartel que evita la búsqueda: dice dónde va el otro archivo. */}
+      {marca.modulos.encuestaFabrica && (
+        <Alert tono="info">
+          El Excel de <strong>encuestas pendientes</strong> de {marca.nombre} no se carga acá:{" "}
+          <Link to="/encuestas-fabrica" className="font-medium underline">
+            va en la pantalla de Encuestas de fábrica
+          </Link>
+          , que además agrupa los clientes por vendedor y les avisa por correo.
+        </Alert>
+      )}
+
+      {tipoCarga === "ford" && marca.modulos.refuerzo ? (
         <UploadFord />
       ) : (
         <UploadPosventa area={tipoCarga === "ventas" ? "VENTAS" : "POSVENTA"} />

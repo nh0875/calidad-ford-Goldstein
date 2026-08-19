@@ -70,6 +70,16 @@ interface Resumen {
     tasaRespuesta: number | null;
     tareasAbiertas: number;
   };
+  // Solo en las marcas cuya encuesta de fábrica vive en su propia lista (VW).
+  encuestaFabrica: null | {
+    pendientes: number;
+    respondieron: number;
+    tasaRespuesta: number | null;
+    vendedoresConPendientes: number;
+    vendedoresSinCorreo: number;
+    porSucursal: Array<{ sucursal: string; pendientes: number }>;
+    topVendedores: Array<{ codigo: string; nombre: string | null; sucursal: string; sinCorreo: boolean; pendientes: number }>;
+  };
   desgloseArea: null | Record<
     string,
     {
@@ -335,26 +345,87 @@ export default function Dashboard() {
             </Card>
           </div>
 
-          {/* Encuesta oficial de Ford (Parte B) */}
-          <Card>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-ink">Encuesta oficial de {getMarca().nombre}</h3>
-              <Link to="/refuerzos" className="text-xs font-medium text-accent-dark hover:underline">
-                Ir a los refuerzos →
-              </Link>
-            </div>
-            <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
-              <MiniKpi titulo="Tasa de respuesta" valor={resumen.encuestaFord.tasaRespuesta !== null ? `${resumen.encuestaFord.tasaRespuesta}%` : "—"} color="text-accent-dark" />
-              <MiniKpi titulo="Respondidas" valor={resumen.encuestaFord.respondidas} color="text-green-700" />
-              <MiniKpi titulo="Pendientes" valor={resumen.encuestaFord.pendientes} color="text-yellow-700" />
-              <MiniKpi titulo="Email inválido" valor={resumen.encuestaFord.emailInvalido} color="text-amber-700" />
-              <MiniKpi titulo="No elegibles" valor={resumen.encuestaFord.noElegible} color="text-ink-muted" />
-              <MiniKpi titulo="Tareas abiertas" valor={resumen.encuestaFord.tareasAbiertas} color="text-red-700" />
-            </div>
-            <p className="mt-2 text-xs text-ink-muted">
-              La tasa excluye los no elegibles (opt-out / cuarentena) y los que nunca tuvieron una invitación de {getMarca().nombre}.
-            </p>
-          </Card>
+          {/* Encuesta de fábrica. Son dos paneles distintos porque son dos
+              circuitos distintos, y cada marca ve SOLO el suyo: el de Ford se
+              calcula sobre los Casos, y en VW esos números daban siempre cero
+              porque sus clientes de encuesta no son Casos. */}
+          {getMarca().modulos.refuerzo && (
+            <Card>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-ink">Encuesta oficial de {getMarca().nombre}</h3>
+                <Link to="/refuerzos" className="text-xs font-medium text-accent-dark hover:underline">
+                  Ir a los refuerzos →
+                </Link>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
+                <MiniKpi titulo="Tasa de respuesta" valor={resumen.encuestaFord.tasaRespuesta !== null ? `${resumen.encuestaFord.tasaRespuesta}%` : "—"} color="text-accent-dark" />
+                <MiniKpi titulo="Respondidas" valor={resumen.encuestaFord.respondidas} color="text-green-700" />
+                <MiniKpi titulo="Pendientes" valor={resumen.encuestaFord.pendientes} color="text-yellow-700" />
+                <MiniKpi titulo="Email inválido" valor={resumen.encuestaFord.emailInvalido} color="text-amber-700" />
+                <MiniKpi titulo="No elegibles" valor={resumen.encuestaFord.noElegible} color="text-ink-muted" />
+                <MiniKpi titulo="Tareas abiertas" valor={resumen.encuestaFord.tareasAbiertas} color="text-red-700" />
+              </div>
+              <p className="mt-2 text-xs text-ink-muted">
+                La tasa excluye los no elegibles (opt-out / cuarentena) y los que nunca tuvieron una invitación de {getMarca().nombre}.
+              </p>
+            </Card>
+          )}
+
+          {resumen.encuestaFabrica && (
+            <Card>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-ink">Encuestas de fábrica sin responder</h3>
+                <Link to="/encuestas-fabrica" className="text-xs font-medium text-accent-dark hover:underline">
+                  Ver por vendedor →
+                </Link>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+                <MiniKpi titulo="Tasa de respuesta" valor={resumen.encuestaFabrica.tasaRespuesta !== null ? `${resumen.encuestaFabrica.tasaRespuesta}%` : "—"} color="text-accent-dark" />
+                <MiniKpi titulo="Respondieron" valor={resumen.encuestaFabrica.respondieron} color="text-green-700" />
+                <MiniKpi titulo="Pendientes" valor={resumen.encuestaFabrica.pendientes} color="text-yellow-700" />
+                <MiniKpi titulo="Vendedores con pendientes" valor={resumen.encuestaFabrica.vendedoresConPendientes} color="text-ink" />
+                <MiniKpi
+                  titulo="Sin correo cargado"
+                  valor={resumen.encuestaFabrica.vendedoresSinCorreo}
+                  color={resumen.encuestaFabrica.vendedoresSinCorreo > 0 ? "text-red-700" : "text-ink-muted"}
+                />
+              </div>
+
+              {resumen.encuestaFabrica.porSucursal.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {resumen.encuestaFabrica.porSucursal.map((s) => (
+                    <span key={s.sucursal} className="rounded-full bg-gray-100 px-3 py-1 text-xs text-ink">
+                      {s.sucursal}: <strong>{s.pendientes}</strong>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {resumen.encuestaFabrica.topVendedores.length > 0 && (
+                <div className="mt-4">
+                  <div className="mb-1 text-xs font-medium uppercase tracking-wide text-ink-muted">
+                    Los que más deben
+                  </div>
+                  <div className="space-y-1">
+                    {resumen.encuestaFabrica.topVendedores.map((v) => (
+                      <div key={v.codigo} className="flex items-center gap-2 text-sm">
+                        <span className="w-8 text-right font-semibold text-ink">{v.pendientes}</span>
+                        <span className="text-ink">{v.nombre || `Vendedor ${v.codigo}`}</span>
+                        <span className="text-xs text-ink-muted">{v.sucursal}</span>
+                        {v.sinCorreo && <span className="text-xs text-red-700">— falta el correo</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <p className="mt-3 text-xs text-ink-muted">
+                Fábrica no avisa quién contestó: se deduce de que deje de venir en el Excel de pendientes.
+                {resumen.encuestaFabrica.vendedoresSinCorreo > 0 &&
+                  " A los vendedores sin correo no se les puede avisar hasta que se les cargue."}
+              </p>
+            </Card>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <TablaRanking

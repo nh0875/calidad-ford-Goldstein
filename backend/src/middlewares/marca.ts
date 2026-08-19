@@ -18,9 +18,13 @@ export function requireFidelizacion(_req: Request, res: Response, next: NextFunc
 }
 
 export function requireRefuerzo(_req: Request, res: Response, next: NextFunction) {
-  if (!marca.refuerzo.habilitado) {
+  // Solo la variante de Ford (tareas sobre Casos que se trabajan adentro del
+  // sistema). VW refuerza la encuesta por su propia pantalla: ver
+  // requireEncuestaVW. Sin este segundo chequeo, VW tendría las dos abiertas y
+  // la de Ford solo podría mostrar una lista vacía.
+  if (!marca.refuerzo.habilitado || marca.refuerzo.formatoExcel !== "FORD") {
     return res.status(404).json({
-      message: `El módulo de Refuerzo de encuesta no está disponible en ${marca.nombre}.`,
+      message: `El refuerzo de la encuesta de ${marca.nombre} se gestiona desde la pantalla de Encuestas de fábrica.`,
     });
   }
   next();
@@ -32,7 +36,7 @@ export function requireRefuerzo(_req: Request, res: Response, next: NextFunction
  * endpoints no tienen que contestar.
  */
 export function requireEncuestaVW(_req: Request, res: Response, next: NextFunction) {
-  if (marca.refuerzo.formatoExcel !== "VW") {
+  if (!marca.refuerzo.habilitado || marca.refuerzo.formatoExcel !== "VW") {
     return res.status(404).json({
       message: `Las encuestas de fábrica de ${marca.nombre} se cargan desde la pantalla de Refuerzo.`,
     });

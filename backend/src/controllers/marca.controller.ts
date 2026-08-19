@@ -18,11 +18,18 @@ export function infoMarca(_req: Request, res: Response) {
     estrellasSinRqr: marca.estrellasSinRqr,
     modulos: {
       fidelizacion: marca.fidelizacion,
-      refuerzo: marca.refuerzo.habilitado,
-      // Pantalla propia de encuestas de fábrica: solo donde el Excel viene en el
-      // formato de VW (una hoja por sucursal, sin teléfono, con vendedores a los
-      // que se les avisa por correo).
-      encuestaFabrica: marca.refuerzo.formatoExcel === "VW",
+      // Las DOS marcas refuerzan la encuesta de fábrica, pero con circuitos
+      // distintos, y cada una tiene que ver UNA sola pantalla:
+      //
+      //  - "refuerzo" es la de Ford: tareas colgadas de un Caso, que los asesores
+      //    trabajan adentro del sistema.
+      //  - "encuestaFabrica" es la de VW: lista propia agrupada por vendedor, con
+      //    aviso por correo, porque los vendedores de VW no entran al sistema.
+      //
+      // En VW la de Ford quedaría SIEMPRE vacía (nada crea esas tareas) y su
+      // carga de Excel rechazaría el archivo real de VW, que tiene otro formato.
+      refuerzo: marca.refuerzo.habilitado && marca.refuerzo.formatoExcel === "FORD",
+      encuestaFabrica: marca.refuerzo.habilitado && marca.refuerzo.formatoExcel === "VW",
     },
     // Catálogo de áreas/subáreas del RQR, solo en las marcas que lo usan. Va
     // acá para que el formulario lo tenga sin una consulta aparte: son datos

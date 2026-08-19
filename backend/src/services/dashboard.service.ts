@@ -1,18 +1,83 @@
 import {
   AreaTrabajo,
   EncuestaFordEstado,
+  EstadoEncuestaFabrica,
   EstadoContacto,
   EstadoRQR,
   EstadoTareaRefuerzo,
   MessageDirection,
   Prisma,
 } from "@prisma/client";
+import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { FiltrosReporte, reporteCausaRaiz, reporteSentimiento } from "./reporte.service";
 
 // Un ranking con menos casos que esto distorsiona (una sola respuesta mala = 100% rojo)
 const MINIMO_CASOS_RANKING = 5;
 const RQR_ABIERTOS_EN_LISTA = 10;
+const VENDEDORES_EN_TABLERO = 5;
+
+/**
+ * Encuestas de fábrica de Volkswagen para el tablero.
+ *
+ * Devuelve null en las marcas que no usan este circuito, así el tablero no
+ * muestra un panel vacío.
+ *
+ * "Respondieron" son los que dejaron de venir en el Excel de pendientes: fábrica
+ * no nos dice quién contestó, se deduce de su ausencia (ver la importación).
+ */
+async function resumenEncuestaFabrica() {
+  if (marca.refuerzo.formatoExcel !== "VW") return null;
+
+  const [porEstado, porSucursal, vendedores] = await Promise.all([
+    prisma.encuestaFabricaVW.groupBy({ by: ["estado"], _count: { _all: true } }),
+    prisma.encuestaFabricaVW.groupBy({
+      by: ["sucursal"],
+      where: { estado: EstadoEncuestaFabrica.PENDIENTE },
+      _count: { _all: true },
+    }),
+    prisma.vendedorVW.findMany({
+      where: { pendientes: { some: { estado: EstadoEncuestaFabrica.PENDIENTE } } },
+      select: {
+        codigo: true,
+        nombre: true,
+        email: true,
+        sucursal: true,
+        _count: { select: { pendientes: { where: { estado: EstadoEncuestaFabrica.PENDIENTE } } } },
+      },
+    }),
+  ]);
+
+  const cuenta = (e: EstadoEncuestaFabrica) =>
+    porEstado.find((g) => g.estado === e)?._count._all ?? 0;
+  const pendientes = cuenta(EstadoEncuestaFabrica.PENDIENTE);
+  const respondieron = cuenta(EstadoEncuestaFabrica.RESPONDIO);
+  const total = pendientes + respondieron;
+
+  // Los que más deben, arriba: es la lista con la que se decide a quién apurar.
+  const ranking = vendedores
+    .map((v) => ({
+      codigo: v.codigo,
+      nombre: v.nombre,
+      sucursal: v.sucursal,
+      sinCorreo: !v.email,
+      pendientes: v._count.pendientes,
+    }))
+    .sort((a, b) => b.pendientes - a.pendientes);
+
+  return {
+    pendientes,
+    respondieron,
+    tasaRespuesta: total > 0 ? Math.round((respondieron / total) * 1000) / 10 : null,
+    vendedoresConPendientes: ranking.length,
+    // Sin correo cargado no se les puede avisar: es lo que traba el circuito.
+    vendedoresSinCorreo: ranking.filter((v) => v.sinCorreo).length,
+    porSucursal: porSucursal
+      .map((g) => ({ sucursal: g.sucursal, pendientes: g._count._all }))
+      .sort((a, b) => b.pendientes - a.pendientes),
+    topVendedores: ranking.slice(0, VENDEDORES_EN_TABLERO),
+  };
+}
 
 export async function dashboardResumen(f: FiltrosReporte) {
   const rangoFechas = {
@@ -176,11 +241,19 @@ export async function dashboardResumen(f: FiltrosReporte) {
     tareasAbiertas: tareasRefuerzoAbiertas,
   };
 
+  // El MISMO indicador para las marcas cuya encuesta de fábrica vive en su
+  // propia lista (Volkswagen). El bloque de arriba se calcula sobre los Casos, y
+  // los clientes de la encuesta de VW no son Casos —no traen teléfono, no se los
+  // puede contactar por WhatsApp—, así que ahí daba SIEMPRE cero.
+  const encuestaFabrica = await resumenEncuestaFabrica();
+
   return {
     periodo: { fechaDesde: f.fechaDesde ?? null, fechaHasta: f.fechaHasta ?? null },
     totalCasos,
     mensajesSalientes,
     encuestaFord,
+    // null en las marcas que no usan este circuito (el tablero no lo muestra).
+    encuestaFabrica,
     tasaRespuesta: {
       contactados,
       respondidos,
