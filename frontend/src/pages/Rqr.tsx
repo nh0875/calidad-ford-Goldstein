@@ -12,6 +12,7 @@ import { Badge, PuntoSemaforo } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
 import { SkeletonTableRows } from "../components/ui/Skeleton";
 import { EmptyState } from "../components/ui/EmptyState";
+import { nombreClienteRqr } from "../lib/rqr";
 
 interface FilaRqr {
   id: string;
@@ -23,6 +24,7 @@ interface FilaRqr {
   asesor: string;
   caso: { numeroOrden: string; nombrePropietario: string; modelo: string; sucursal: string } | null;
   nombreClienteManual: string | null;
+  clienteAnonimo: boolean;
   modeloManual: string | null;
   sentimentAnalysis: { semaforo: string | null; estrellas: number | null } | null;
 }
@@ -212,7 +214,7 @@ export default function Rqr() {
                     </Link>
                   </td>
                   <td className="px-3 py-2 text-ink">
-                    {r.caso?.nombrePropietario ?? r.nombreClienteManual ?? "(sin datos)"}
+                    {nombreClienteRqr(r)}
                     {!r.caso && (
                       <Badge tono="gris" className="ml-1.5" title="Reclamo sin caso vinculado en el sistema">
                         manual

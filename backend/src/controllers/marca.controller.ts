@@ -37,6 +37,8 @@ export function infoMarca(_req: Request, res: Response) {
     rqr: marca.rqrConSubareas
       ? {
           porSubareas: true,
+          // El formulario permite marcar que el cliente no quiso identificarse.
+          clienteAnonimo: marca.rqrClienteAnonimo,
           areas: AREAS_VW.map((a) => ({
             valor: a,
             etiqueta: NOMBRE_AREA_VW[a],
@@ -46,6 +48,6 @@ export function infoMarca(_req: Request, res: Response) {
           // sistema había contactado al cliente).
           origenes: ORIGENES_RQR_VW,
         }
-      : { porSubareas: false, areas: [], origenes: [] },
+      : { porSubareas: false, clienteAnonimo: marca.rqrClienteAnonimo, areas: [], origenes: [] },
   });
 }

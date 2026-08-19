@@ -20,6 +20,7 @@ import { prisma } from "../config/prisma";
 import { reporteCausaRaiz, reporteSentimiento, FiltrosCausaRaiz, FiltrosReporte } from "./reporte.service";
 import { marca } from "../config/marca";
 import { etiquetaOrigenRqr, etiquetaSubareaVW, NOMBRE_AREA_VW, AreaVW } from "../config/areas-vw";
+import { nombreClienteRqr } from "./rqr.service";
 
 // Enums -> texto que lee gerencia (no las MAYUSCULAS_CON_GUION del código)
 const AREA_LABEL: Record<string, string> = { POSVENTA: "Posventa", VENTAS: "Ventas" };
@@ -416,7 +417,7 @@ function encabezadoDocumento(numeroRQR: string): Paragraph[] {
 export async function wordRqr(rqr: RqrCompleto): Promise<Buffer> {
   // Los RQR manuales pueden no tener Caso vinculado: se usan los datos manuales
   const caso = rqr.caso;
-  const cliente = caso?.nombrePropietario ?? rqr.nombreClienteManual ?? "(sin datos)";
+  const cliente = nombreClienteRqr({ ...rqr, caso });
   const telefono = caso?.whatsapp || caso?.celular || rqr.telefonoManual || "-";
   const vehiculo = caso
     ? `${caso.modelo} — Patente ${caso.patente}${caso.chasisVIN ? ` — VIN ${caso.chasisVIN}` : ""}`

@@ -29,6 +29,8 @@ export interface InfoMarca {
   // En las demás viene con porSubareas=false y las listas vacías.
   rqr: {
     porSubareas: boolean;
+    /** El formulario de RQR permite marcar al cliente como anónimo. */
+    clienteAnonimo: boolean;
     areas: Array<{
       valor: string;
       etiqueta: string;
@@ -46,7 +48,7 @@ const POR_DEFECTO: InfoMarca = {
   escala: "SEMAFORO",
   estrellasSinRqr: null,
   modulos: { fidelizacion: true, refuerzo: true, encuestaFabrica: false },
-  rqr: { porSubareas: false, areas: [], origenes: [] },
+  rqr: { porSubareas: false, clienteAnonimo: false, areas: [], origenes: [] },
 };
 
 let cache: InfoMarca = POR_DEFECTO;

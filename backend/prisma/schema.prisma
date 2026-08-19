@@ -416,6 +416,12 @@ model RQR {
   nombreClienteManual String?
   telefonoManual      String?
   modeloManual        String?
+  // El cliente NO quiso identificarse. Es distinto de "no cargaron el nombre":
+  // sin este campo las dos cosas se ven igual (nombre vacío) y no se puede saber
+  // si falta un dato o si el reclamo es anónimo a propósito. Con esto, el
+  // formulario no exige nombre y en pantalla dice "Anónimo" en vez de
+  // "(sin datos)", que parece un error de carga.
+  clienteAnonimo      Boolean            @default(false)
   sentimentAnalysisId String?            @unique
   sentimentAnalysis   SentimentAnalysis? @relation(fields: [sentimentAnalysisId], references: [id])
   // Área del RQR: hereda la del Caso; para los RQR manuales sin caso se elige

@@ -15,6 +15,7 @@ import { claseBoton } from "../components/ui/Button";
 import { Campo, Input, Select, Textarea } from "../components/ui/Field";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 import { ConfirmarEliminacion } from "../components/ui/ConfirmarEliminacion";
+import { nombreClienteRqr } from "../lib/rqr";
 
 interface RqrDetalleData {
   // --- Campos de Volkswagen (null en Ford) ---
@@ -55,6 +56,7 @@ interface RqrDetalleData {
     fechaProgramacion: string;
   } | null;
   nombreClienteManual: string | null;
+  clienteAnonimo: boolean;
   telefonoManual: string | null;
   modeloManual: string | null;
   sentimentAnalysis: {
@@ -303,7 +305,7 @@ export default function RqrDetalle() {
           </div>
         ) : (
           <div className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
-            <Dato etiqueta="Cliente" valor={rqr.nombreClienteManual ?? "(sin datos)"} />
+            <Dato etiqueta="Cliente" valor={nombreClienteRqr(rqr)} />
             <Dato etiqueta="Teléfono" valor={rqr.telefonoManual ?? "—"} />
             <Dato etiqueta="Vehículo" valor={rqr.modeloManual ?? "—"} />
           </div>

@@ -11,6 +11,7 @@ import {
 import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { FiltrosReporte, reporteCausaRaiz, reporteSentimiento } from "./reporte.service";
+import { nombreClienteRqr } from "./rqr.service";
 
 // Un ranking con menos casos que esto distorsiona (una sola respuesta mala = 100% rojo)
 const MINIMO_CASOS_RANKING = 5;
@@ -164,7 +165,7 @@ export async function dashboardResumen(f: FiltrosReporte) {
     lista: abiertos.slice(0, RQR_ABIERTOS_EN_LISTA).map((r) => ({
       id: r.id,
       numeroRQR: r.numeroRQR,
-      cliente: r.caso?.nombrePropietario ?? r.nombreClienteManual ?? "(sin datos)",
+      cliente: nombreClienteRqr(r),
       sucursal: r.caso?.sucursal ?? "—",
       modelo: r.caso?.modelo ?? r.modeloManual ?? "—",
       causaRaiz: r.causaRaiz,

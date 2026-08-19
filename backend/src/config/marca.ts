@@ -39,6 +39,13 @@ export interface PerfilMarca {
    */
   rqrConSubareas: boolean;
   /**
+   * El formulario de RQR permite marcar que el cliente NO quiso identificarse.
+   * Lo pidió Calidad de Volkswagen: les entran reclamos de gente que no da el
+   * nombre, y hasta ahora quedaban como "(sin datos)", igual que un dato que
+   * alguien se olvidó de cargar. Prenderlo en Ford es cambiar este false.
+   */
+  rqrClienteAnonimo: boolean;
+  /**
    * Refuerzo de la encuesta de fábrica. Las dos marcas lo tienen (fábrica manda
    * la encuesta al mail del cliente), pero se gestiona distinto:
    *  - Ford: los asesores entran al sistema y trabajan sus tareas.
@@ -73,6 +80,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     estrellasSinRqr: null,
     fidelizacion: true,
     rqrConSubareas: false,
+    rqrClienteAnonimo: false,
     refuerzo: { habilitado: true, notificarPorMail: false, formatoExcel: "FORD" },
     colorDocumento: "003478", // azul Ford
     logoArchivo: "logo-ford.png",
@@ -87,6 +95,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     // endpoints responden 404 (ver requireModulo en middlewares/marca.ts).
     fidelizacion: false,
     rqrConSubareas: true,
+    rqrClienteAnonimo: true,
     refuerzo: { habilitado: true, notificarPorMail: true, formatoExcel: "VW" },
     colorDocumento: "001E50", // azul Volkswagen
     logoArchivo: "logo-volkswagen.png",

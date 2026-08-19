@@ -37,6 +37,9 @@ export default function RqrNuevo() {
 
   // Vinculación con caso
   const [sinCaso, setSinCaso] = useState(false);
+  // El cliente no quiso dar sus datos. Es OTRA cosa que "sin caso": ahí el
+  // cliente existe y se carga a mano; acá directamente no se sabe quién es.
+  const [anonimo, setAnonimo] = useState(false);
   const [busqueda, setBusqueda] = useState("");
   const [resultados, setResultados] = useState<CasoBusqueda[]>([]);
   const [buscando, setBuscando] = useState(false);
@@ -116,7 +119,7 @@ export default function RqrNuevo() {
     setGuardando(true);
     try {
       const { data } = await apiPostJson<{ message: string; data: { id: string } }>("/api/rqr", {
-        ...(casoElegido && !sinCaso ? { casoId: casoElegido.id } : {}),
+        ...(casoElegido && !sinCaso && !anonimo ? { casoId: casoElegido.id } : {}),
         ...(sinCaso
           ? {
               nombreClienteManual: nombreManual.trim() || undefined,
@@ -125,6 +128,16 @@ export default function RqrNuevo() {
               // Sin caso vinculado el área se elige acá. El backend ignora esto
               // para usuarios restringidos (les fuerza la suya) y cuando hay caso
               // (hereda la del caso).
+              area: areaNegocio,
+            }
+          : {}),
+        // Anónimo: NO va nombre (el backend rechaza anónimo + nombre juntos),
+        // pero sí lo suelto que haya dejado y el área, porque tampoco hay caso.
+        ...(anonimo
+          ? {
+              clienteAnonimo: true,
+              telefonoManual: telefonoManual.trim() || undefined,
+              modeloManual: modeloManual.trim() || undefined,
               area: areaNegocio,
             }
           : {}),
@@ -175,21 +188,45 @@ export default function RqrNuevo() {
       <Card padding="p-5">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">1. Cliente</h3>
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
-            <input
-              type="checkbox"
-              checked={sinCaso}
-              onChange={(e) => {
-                setSinCaso(e.target.checked);
-                if (e.target.checked) setCasoElegido(null);
-              }}
-              className="h-4 w-4 accent-accent"
-            />
-            Cliente sin caso en el sistema
-          </label>
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                checked={sinCaso}
+                disabled={anonimo}
+                onChange={(e) => {
+                  setSinCaso(e.target.checked);
+                  if (e.target.checked) setCasoElegido(null);
+                }}
+                className="h-4 w-4 accent-accent disabled:opacity-40"
+              />
+              Cliente sin caso en el sistema
+            </label>
+            {/* Anónimo: el cliente NO quiso identificarse. Apaga el otro
+                casillero porque no hay datos que cargar a mano, y saca la
+                exigencia del nombre. Solo en las marcas que lo habilitan. */}
+            {marca.rqr?.clienteAnonimo && (
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+                <input
+                  type="checkbox"
+                  checked={anonimo}
+                  onChange={(e) => {
+                    setAnonimo(e.target.checked);
+                    if (e.target.checked) {
+                      setCasoElegido(null);
+                      setSinCaso(false);
+                      setNombreManual("");
+                    }
+                  }}
+                  className="h-4 w-4 accent-accent"
+                />
+                Cliente anónimo
+              </label>
+            )}
+          </div>
         </div>
 
-        {!sinCaso && !casoElegido && (
+        {!sinCaso && !anonimo && !casoElegido && (
           <div className="relative">
             <Input
               type="text"
@@ -228,7 +265,7 @@ export default function RqrNuevo() {
           </div>
         )}
 
-        {!sinCaso && casoElegido && (
+        {!sinCaso && !anonimo && casoElegido && (
           <div className="flex items-start justify-between rounded-md bg-accent-light p-3 text-sm">
             <div>
               <div className="font-medium text-ink">{casoElegido.nombrePropietario}</div>
@@ -270,6 +307,41 @@ export default function RqrNuevo() {
                 </Select>
               </Campo>
             )}
+          </div>
+        )}
+
+        {/* ANÓNIMO: no hay nombre que cargar. Se dejan igual el teléfono y el
+            modelo porque un reclamo anónimo puede traerlos (llamó de un número,
+            o dijo qué auto tiene) y son lo único con lo que se lo puede ubicar
+            después. Y sigue haciendo falta el área, porque tampoco hay caso. */}
+        {anonimo && (
+          <div className="space-y-3">
+            <Alert tono="info">
+              El cliente no quiso identificarse. El RQR se va a guardar como <strong>Anónimo</strong> — que es
+              distinto de que falte el dato. Si te dio algún dato suelto, cargalo abajo.
+            </Alert>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Campo etiqueta="Teléfono" hint="Si lo dejó o quedó registrado">
+                <Input type="text" value={telefonoManual} onChange={(e) => setTelefonoManual(e.target.value)} />
+              </Campo>
+              <Campo etiqueta="Modelo del vehículo" hint="Si lo mencionó">
+                <Input type="text" value={modeloManual} onChange={(e) => setModeloManual(e.target.value)} />
+              </Campo>
+              {puedeElegirArea && (
+                <Campo etiqueta="Área del reclamo *" hint="No hay caso vinculado del cual heredarla">
+                  <Select
+                    value={areaNegocio}
+                    onChange={(e) => setAreaNegocio(e.target.value as "VENTAS" | "POSVENTA")}
+                  >
+                    {AREAS.map((a) => (
+                      <option key={a} value={a}>
+                        {etiquetaArea(a)}
+                      </option>
+                    ))}
+                  </Select>
+                </Campo>
+              )}
+            </div>
           </div>
         )}
       </Card>
@@ -418,7 +490,15 @@ export default function RqrNuevo() {
         </Link>
         <button
           onClick={guardar}
-          disabled={guardando || !descripcion.trim() || !asesor.trim() || (!sinCaso && !casoElegido) || (sinCaso && !nombreManual.trim())}
+          disabled={
+            guardando ||
+            !descripcion.trim() ||
+            !asesor.trim() ||
+            // Hay que saber de quién es: un caso, un nombre a mano, o la
+            // constancia de que el cliente es anónimo.
+            (!sinCaso && !anonimo && !casoElegido) ||
+            (sinCaso && !nombreManual.trim())
+          }
           className={claseBoton("primario")}
         >
           {guardando ? "Creando…" : "Crear RQR"}

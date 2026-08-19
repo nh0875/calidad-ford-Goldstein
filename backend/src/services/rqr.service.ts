@@ -151,6 +151,8 @@ export interface DatosRqrManual {
   nombreClienteManual?: string;
   telefonoManual?: string;
   modeloManual?: string;
+  /** El cliente no quiso identificarse (ver nombreClienteRqr más abajo). */
+  clienteAnonimo?: boolean;
   canal: string;
   areaOrigen: string;
   areaAfectada?: string;
@@ -186,6 +188,7 @@ export async function crearRqrManual(datos: DatosRqrManual) {
             nombreClienteManual: datos.nombreClienteManual ?? null,
             telefonoManual: datos.telefonoManual ?? null,
             modeloManual: datos.modeloManual ?? null,
+            clienteAnonimo: datos.clienteAnonimo ?? false,
             numeroRQR,
             canal: datos.canal,
             areaOrigen: datos.areaOrigen,
@@ -238,4 +241,31 @@ export async function recalcularTieneRqrAbierto(casoId: string | null) {
     where: { id: casoId },
     data: { tieneRqrAbierto: abiertos > 0 },
   });
+}
+
+/**
+ * El nombre del cliente que se muestra en un RQR, de una sola manera en todo el
+ * sistema (listado, detalle, Word, tablero y reportes).
+ *
+ * El orden importa:
+ *  1. Si hay Caso vinculado, manda el nombre del Caso.
+ *  2. Si el cliente NO quiso identificarse, "Anónimo" — que es un dato, no una
+ *     falta de dato.
+ *  3. El nombre cargado a mano.
+ *  4. "(sin datos)" solo cuando de verdad falta.
+ *
+ * Antes, un reclamo anónimo y uno al que se le olvidó cargar el nombre se veían
+ * exactamente igual, y no había forma de distinguirlos.
+ */
+export function nombreClienteRqr(rqr: {
+  clienteAnonimo?: boolean | null;
+  nombreClienteManual?: string | null;
+  caso?: { nombrePropietario?: string | null } | null;
+}): string {
+  const delCaso = rqr.caso?.nombrePropietario?.trim();
+  if (delCaso) return delCaso;
+  if (rqr.clienteAnonimo) return "Anónimo";
+  const manual = rqr.nombreClienteManual?.trim();
+  if (manual) return manual;
+  return "(sin datos)";
 }

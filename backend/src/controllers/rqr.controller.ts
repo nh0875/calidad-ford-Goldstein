@@ -186,10 +186,23 @@ const createSchema = z
     tratamientoBitacora: z.string().trim().min(1).optional(),
     observaciones: z.string().trim().min(1).optional(),
     area: z.nativeEnum(AreaTrabajo).optional(), // solo para RQR manual sin caso
+    // El cliente no quiso identificarse. Solo lo acepta la marca que lo tiene
+    // habilitado (ver PerfilMarca.rqrClienteAnonimo).
+    clienteAnonimo: z.boolean().optional(),
     ...camposVW,
   })
-  .refine((v) => v.casoId || v.nombreClienteManual, {
-    message: "Vinculá un caso existente o cargá al menos el nombre del cliente.",
+  // Un RQR necesita saber DE QUIÉN es: un caso vinculado, un nombre a mano, o la
+  // constancia explícita de que el cliente no se quiso identificar. Lo que no se
+  // acepta es un RQR sin ninguna de las tres, que después nadie sabe a quién
+  // llamar y no se puede distinguir de una carga incompleta.
+  .refine((v) => v.casoId || v.nombreClienteManual || v.clienteAnonimo, {
+    message:
+      "Vinculá un caso existente, cargá al menos el nombre del cliente, o marcá que el cliente es anónimo.",
+  })
+  // Marcar anónimo Y cargar el nombre es contradictorio: alguna de las dos cosas
+  // está mal y hay que resolverla antes de guardar, no elegir una en silencio.
+  .refine((v) => !(v.clienteAnonimo && v.nombreClienteManual), {
+    message: "El cliente está marcado como anónimo pero tiene un nombre cargado. Dejá solo una de las dos cosas.",
   });
 
 export async function createRqr(req: Request, res: Response) {
@@ -202,6 +215,15 @@ export async function createRqr(req: Request, res: Response) {
   const datos = parsed.data;
   const errorVW = validarCamposVW(datos);
   if (errorVW) return res.status(400).json({ message: errorVW });
+
+  // El anonimato es una opción de la marca, no del que manda el pedido: si la
+  // marca no lo tiene habilitado y llega igual, se rechaza en vez de guardar un
+  // RQR sin dueño que su formulario nunca hubiera permitido.
+  if (datos.clienteAnonimo && !marca.rqrClienteAnonimo) {
+    return res.status(400).json({
+      message: `Los RQR anónimos no están habilitados en ${marca.nombre}.`,
+    });
+  }
   const restringido = areaPermitida(req.usuario!); // null = admin/ambas
 
   // El área del RQR: si vincula un caso, hereda la del caso; si es manual, la
@@ -233,7 +255,13 @@ export async function createRqr(req: Request, res: Response) {
       : datos.areaOrigen;
 
   // Queda registrado quién lo cargó: se imprime en el documento del RQR.
-  const rqr = await crearRqrManual({ ...datos, areaOrigen, area, creadoPorId: req.usuario!.id });
+  const rqr = await crearRqrManual({
+    ...datos,
+    areaOrigen,
+    area,
+    creadoPorId: req.usuario!.id,
+    clienteAnonimo: datos.clienteAnonimo ?? false,
+  });
 
   await auditar(req, {
     accion: ACCIONES.RQR_CREADO,
