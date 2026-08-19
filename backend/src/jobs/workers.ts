@@ -2,16 +2,26 @@ import { EstadoContacto, EstadoFidelizacion, MessageDirection, Prisma, Semaforo,
 import { DelayedError, Job, UnrecoverableError, Worker } from "bullmq";
 import { env } from "../config/env";
 import { cupoDisponibleHoy, dentroDeVentana, msHastaProximaApertura } from "../services/ventana-envio.service";
+import { usaEstrellas } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { redisConnection } from "../config/redis";
 import { marcarNoRespondidos } from "../services/mantenimiento.service";
 import { crearRqrAutomatico } from "../services/rqr.service";
-import { analizarRespuesta, esErrorCuota, esErrorReintenable, transcribirAudio } from "../services/sentiment.service";
+import {
+  CONFIANZA_MINIMA_POSITIVO,
+  ResultadoAnalisis,
+  analizarRespuesta,
+  aplicarBarreraDeConfianza,
+  esErrorCuota,
+  esErrorReintenable,
+  transcribirAudio,
+} from "../services/sentiment.service";
 import { WhatsappApiError, descargarMedia, sendTemplateMessage, sendTextMessage } from "../services/whatsapp.service";
 import { programarAgradecimiento, reemplazarPlaceholders } from "../services/agradecimiento.service";
 import {
   analisisPrincipal,
   consolidarTexto,
+  decidirAgradecimiento,
   decidirClasificacion,
   esSoloCortesia,
   mensajesSinAnalizar,
@@ -308,14 +318,17 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
     return { revisionManual: true };
   }
 
-  let resultado;
+  let resultado: ResultadoAnalisis;
   if (semaforoEmoji === Semaforo.VERDE) {
     // Reacción positiva (👍, ❤️, 🙏…): VERDE determinista, sin gastar una llamada
     // a la IA ni abrir ningún RQR. Se arma un resultado con la misma forma que
     // el de la IA para que el resto del flujo (escalada, agradecimiento) lo trate igual.
+    // Confianza 1: no es una estimación, es una regla — por eso pasa la barrera.
     resultado = {
       semaforo: Semaforo.VERDE,
       severidad: null,
+      // En las marcas que puntúan con estrellas, un pulgar arriba es un 5.
+      estrellas: usaEstrellas() ? 5 : null,
       confianza: 1,
       categoriaCausaRaiz: null,
       resumen: `El cliente reaccionó de forma positiva (${texto.trim()}).`,
@@ -341,6 +354,29 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
         `Error definitivo llamando a la IA: ${err instanceof Error ? err.message : String(err)}`
       );
     }
+  }
+
+  // BARRERA DE CONFIANZA PARA LO POSITIVO.
+  //
+  // Un "cliente conforme" dispara un mensaje automático que le pide puntuar la
+  // encuesta de fábrica con 5. Eso no se puede mandar sobre una corazonada: si
+  // la IA no está MUY segura de que el cliente dijo algo bueno, el caso queda
+  // sin clasificar y lo mira una persona.
+  //
+  // La barrera es solo para lo POSITIVO, a propósito. Una queja con poca
+  // confianza se deja clasificada igual: equivocarse escalando un reclamo que no
+  // era tan grave se corrige en un minuto; equivocarse pidiéndole 5 puntos a
+  // alguien que está enojado no se corrige más.
+  //
+  // No se pisa el análisis: la lectura de la IA queda en el resumen y en la
+  // respuesta cruda, para que quien lo revise vea qué había entendido.
+  const conBarrera = aplicarBarreraDeConfianza(resultado);
+  if (conBarrera !== resultado) {
+    console.log(
+      `[analisis-sentimiento] caso ${caso.numeroOrden}: positivo con ${Math.round(resultado.confianza * 100)}% ` +
+        `de confianza (mínimo ${Math.round(CONFIANZA_MINIMA_POSITIVO * 100)}%): queda para clasificar a mano.`
+    );
+    resultado = conBarrera;
   }
 
   // Escalada: un seguimiento reemplaza a la clasificación vigente SOLO si es
@@ -383,7 +419,11 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
 
   // La IA a veces clasifica PERO pide confirmación humana (baja confianza / caso
   // borroso): también va al cartel de avisos, salvo que sea un seguimiento menor.
-  if (resultado.requiereRevisionManual && !quedaComoSeguimiento) {
+  // Se incluye el caso "no clasificó nada" (semáforo null) aunque no haya pedido
+  // revisión: sin semáforo el caso no recibe mensaje automático, así que si
+  // tampoco dejara aviso quedaría mudo y nadie se enteraría de que hay alguien
+  // esperando respuesta.
+  if ((resultado.requiereRevisionManual || resultado.semaforo === null) && !quedaComoSeguimiento) {
     await crearAviso({
       tipo: TipoAviso.REVISION_MANUAL,
       area: caso.area,
@@ -488,32 +528,50 @@ async function procesarAgradecimiento(job: Job<DatosAgradecimiento>) {
   }
 
   // Semáforo del último análisis. AMARILLO y ROJO llevan el mensaje empático (sin
-  // encuesta); VERDE y "sin clasificar" (null) llevan el recordatorio de la encuesta.
+  // encuesta); VERDE lleva el recordatorio de la encuesta.
   const analisis = await prisma.sentimentAnalysis.findFirst({
     where: { casoId },
     orderBy: { analyzedAt: "desc" },
-    select: { semaforo: true },
+    select: { semaforo: true, requiereRevisionManual: true },
   });
   const semaforo = analisis?.semaforo ?? null;
+
+  // Qué corresponde mandar (o no mandar) según cómo quedó clasificado el caso.
+  // La regla vive en decidirAgradecimiento() y se prueba aparte: lo que sale de
+  // acá le llega a un cliente real.
+  const decision = decidirAgradecimiento({
+    semaforo,
+    requiereRevisionManual: analisis?.requiereRevisionManual ?? false,
+  });
+  if (!decision.enviar) {
+    console.log(`[agradecimiento] caso ${caso.numeroOrden}: no se envía nada — ${decision.motivo}.`);
+    return { omitido: decision.motivo };
+  }
+
   const config = await obtenerConfiguracion();
 
+  // OJO CON EL ORDEN: el mensaje de promotor se elige de forma EXPLÍCITA, por el
+  // tono que devolvió la decisión, y NUNCA como el "else" de los demás. Así
+  // estaba antes y por eso salía: cualquier caso que no fuera rojo ni amarillo
+  // —incluido uno SIN CLASIFICAR— caía acá y se llevaba el pedido de 5 puntos.
   let plantilla: string;
-  if (semaforo === Semaforo.ROJO) {
+  if (decision.tono === "PROMOTOR") {
+    // Cliente conforme confirmado: agradecimiento + recordatorio de la encuesta.
+    // Es la ÚNICA rama que le pide al cliente que puntúe con 5.
+    plantilla = config[CLAVES_CONFIG.AGRADECIMIENTO_VERDE_AMARILLO];
+  } else if (semaforo === Semaforo.ROJO) {
     // A los ROJOS (detractores): variante empática SIN recordatorio de encuesta, o
     // ningún mensaje si el toggle "enviar a rojos" está en false (para manejarlos a mano).
     if (config[CLAVES_CONFIG.AGRADECIMIENTO_ENVIAR_A_ROJOS] !== "true") {
       return { omitido: "rojo, config indica no enviar mensaje automático" };
     }
     plantilla = config[CLAVES_CONFIG.AGRADECIMIENTO_ROJO];
-  } else if (semaforo === Semaforo.AMARILLO) {
+  } else {
     // A los AMARILLOS (neutros): el MISMO mensaje empático que a los rojos, SIN el
-    // recordatorio de la encuesta de Ford. Se manda SIEMPRE (el toggle de arriba
-    // gobierna solo a los rojos): un cliente neutro no debe recibir el empujón a la
+    // recordatorio de la encuesta. Se manda SIEMPRE (el toggle de arriba gobierna
+    // solo a los rojos): un cliente neutro no debe recibir el empujón a la
     // encuesta, porque puntuaría flojo.
     plantilla = config[CLAVES_CONFIG.AGRADECIMIENTO_ROJO];
-  } else {
-    // VERDE (promotor) o sin clasificar: recordatorio de la encuesta oficial de Ford.
-    plantilla = config[CLAVES_CONFIG.AGRADECIMIENTO_VERDE_AMARILLO];
   }
 
   const mensaje = reemplazarPlaceholders(plantilla, caso);

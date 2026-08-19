@@ -237,6 +237,48 @@ export function decidirClasificacion(opciones: {
   return { revisionManual: null, semaforoEmoji: null };
 }
 
+// ---------- ¿Le mandamos un mensaje automático? ----------
+//
+// Es la decisión más delicada del sistema: lo que sale de acá le llega a un
+// cliente real, y una de las variantes le pide que puntúe la encuesta de fábrica
+// con 5. Por eso vive en una función sola y se prueba aparte.
+
+export type TonoAgradecimiento =
+  | "PROMOTOR" // cliente conforme: agradecimiento + recordatorio de puntuar con 5
+  | "EMPATICO"; // cliente con alguna objeción: se le ofrece que Calidad lo contacte
+
+export type DecisionAgradecimiento =
+  | { enviar: false; motivo: string }
+  | { enviar: true; tono: TonoAgradecimiento };
+
+/**
+ * Qué mensaje automático corresponde según cómo quedó clasificado el caso.
+ *
+ * REGLA DE FONDO: sin una clasificación explícita NO sale nada. Antes, un caso
+ * "sin clasificar" caía en la misma rama que un cliente conforme y se llevaba el
+ * pedido de 5 puntos igual. Le llegó a alguien que solo había escrito "cuando
+ * vaya lo charlamos, gracias", y al día siguiente mandó un reclamo largo.
+ *
+ * El silencio es la opción segura: el caso queda en Seguimiento con su cartel de
+ * aviso y una persona le contesta lo que corresponda.
+ */
+export function decidirAgradecimiento(analisis: {
+  semaforo: Semaforo | null;
+  requiereRevisionManual: boolean;
+}): DecisionAgradecimiento {
+  if (analisis.semaforo === null) {
+    return { enviar: false, motivo: "el caso quedó sin clasificar: lo revisa una persona" };
+  }
+  // Un positivo que la IA no terminó de confirmar tampoco alcanza para pedir 5
+  // puntos. Los negativos sí se mandan aunque estén marcados para revisar: ese
+  // mensaje no pide nada, solo ofrece que Calidad lo contacte.
+  if (analisis.semaforo === Semaforo.VERDE && analisis.requiereRevisionManual) {
+    return { enviar: false, motivo: "cliente conforme sin confirmar: lo revisa una persona" };
+  }
+  if (analisis.semaforo === Semaforo.VERDE) return { enviar: true, tono: "PROMOTOR" };
+  return { enviar: true, tono: "EMPATICO" };
+}
+
 // ---------- Gravedad comparable ----------
 // Para decidir si una respuesta posterior EMPEORA lo que ya sabíamos del caso.
 

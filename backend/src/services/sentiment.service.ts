@@ -4,6 +4,55 @@ import { z } from "zod";
 import { env } from "../config/env";
 import { marca, usaEstrellas } from "../config/marca";
 
+/**
+ * Confianza MÍNIMA para dar por bueno un caso positivo (VERDE / 5 estrellas).
+ *
+ * Por debajo de esto el caso NO se clasifica: queda para que lo mire una persona
+ * en Seguimiento y no se le manda ningún mensaje automático.
+ *
+ * Existe porque a un cliente "conforme" el sistema le pide que puntúe la
+ * encuesta de fábrica con 5, y ese pedido no se puede mandar sobre una
+ * corazonada. Pasó de verdad: un cliente contestó "cuando vaya lo charlamos,
+ * gracias", la IA lo leyó como conforme, le llegó el pedido de 5 puntos, y al
+ * día siguiente mandó un reclamo largo.
+ *
+ * Aplica SOLO a lo positivo. Una queja con poca confianza se deja clasificada
+ * igual: escalar de más se corrige en un minuto, pedirle 5 puntos a alguien
+ * enojado no se corrige nunca.
+ */
+export const CONFIANZA_MINIMA_POSITIVO = 0.8;
+
+/**
+ * Aplica la barrera: si la IA dio un resultado POSITIVO sin llegar a la
+ * confianza mínima, el caso se devuelve SIN CLASIFICAR y marcado para que lo
+ * mire una persona.
+ *
+ * No se pisa lo que entendió la IA: su lectura queda dentro del resumen, para
+ * que quien lo revise en Seguimiento vea de dónde venía la duda.
+ *
+ * Devuelve el mismo objeto cuando no hay nada que bajar, así el flujo normal no
+ * paga nada.
+ */
+export function aplicarBarreraDeConfianza(resultado: ResultadoAnalisis): ResultadoAnalisis {
+  if (resultado.semaforo !== Semaforo.VERDE) return resultado;
+  if (resultado.confianza >= CONFIANZA_MINIMA_POSITIVO) return resultado;
+
+  const pct = Math.round(resultado.confianza * 100);
+  const minimo = Math.round(CONFIANZA_MINIMA_POSITIVO * 100);
+  return {
+    ...resultado,
+    semaforo: null,
+    severidad: null,
+    estrellas: null,
+    requiereRQR: false,
+    requiereRevisionManual: true,
+    resumen:
+      `La IA lo leyó como cliente conforme pero con solo ${pct}% de confianza ` +
+      `(hace falta ${minimo}%), así que no se clasificó ni se le mandó nada. ` +
+      `Lo que entendió: ${resultado.resumen}`,
+  };
+}
+
 // ---------- Categorías de causa raíz (lista cerrada, editable acá) ----------
 
 export const CATEGORIAS_CAUSA_RAIZ = [
@@ -211,9 +260,17 @@ Mide qué tan grave es el malestar del cliente, INDEPENDIENTE de qué tan seguro
 - GRAVE: enojo claro, perjuicio concreto, o pérdida de confianza en la marca (esto normalmente ya es ROJO).
 Para VERDE, severidad es null. Ante duda entre LEVE y MODERADA en un AMARILLO, elegí MODERADA.
 
-UN SALUDO NO ES UNA VALORACIÓN (regla dura):
-Si el mensaje es SOLO un saludo o una cortesía —"buen día", "hola", "buenas tardes", "gracias", "ok", "listo"— NO es una opinión sobre el servicio: el cliente todavía no dijo nada. En ese caso poné "requiereRevisionManual": true y NO lo clasifiques como VERDE. Un saludo amable no significa que el cliente esté conforme.
+EL VERDE SE GANA, NO SE REGALA (regla dura, la más importante):
+VERDE significa que el cliente DIJO ALGO EXPLÍCITAMENTE BUENO sobre el servicio, la atención o el trabajo. Si no lo dijo, NO es VERDE, por más amable que suene el mensaje.
+Poné "semaforo": null y "requiereRevisionManual": true —NUNCA VERDE— cuando el mensaje sea:
+- Un saludo o una cortesía sola: "buen día", "hola", "gracias", "ok", "listo", "dale".
+- Una respuesta que PATEA la conversación para después: "cuando vaya lo charlamos", "después te cuento", "lo hablamos en persona", "ahora no puedo", "te aviso".
+- Coordinación o logística: "¿a qué hora abren?", "necesito un turno", "mañana paso".
+- Un acuse de recibo sin opinión: "recibido", "me llegó", "ya está".
+- Cualquier cosa que no se pueda leer como una opinión sobre cómo lo atendieron.
+El motivo: al VERDE le sigue un mensaje automático que le pide al cliente que puntúe la encuesta de fábrica con 5. Pedirle 5 puntos a alguien que no dijo nada bueno —o que está a punto de quejarse— es peor que no escribirle nada. Ante CUALQUIER duda entre VERDE y dejarlo sin clasificar, dejalo sin clasificar: una persona lo mira y contesta.
 Distinto es un saludo QUE ADEMÁS trae contenido ("buen día, me atendieron excelente"): eso sí se clasifica por lo que dice del servicio.
+Y ojo: esto NO aplica a las quejas. Si el cliente se queja, clasificá AMARILLO o ROJO como corresponda; no lo dejes sin clasificar por las dudas.
 
 REGLAS:
 - "confianza" es tu certeza en la clasificación, de 0 a 1 (NO es la gravedad; para eso está "severidad").
@@ -235,6 +292,12 @@ Salida: {"semaforo":"ROJO","severidad":"GRAVE","confianza":0.95,"categoriaCausaR
 
 Cliente: "Buen día"
 Salida: {"semaforo":null,"severidad":null,"confianza":0.2,"categoriaCausaRaiz":null,"resumen":"El cliente solo saludó, todavía no dio una opinión sobre el servicio.","requiereRevisionManual":true}
+
+Cliente: "Cuando vaya, lo charlamos, gracias!"
+Salida: {"semaforo":null,"severidad":null,"confianza":0.25,"categoriaCausaRaiz":null,"resumen":"El cliente deja la conversación para cuando vaya al taller; todavía no dijo nada sobre el servicio.","requiereRevisionManual":true}
+
+Cliente: "Ok, gracias, cualquier cosa te aviso"
+Salida: {"semaforo":null,"severidad":null,"confianza":0.2,"categoriaCausaRaiz":null,"resumen":"Acuse de recibo amable, sin opinión sobre la atención.","requiereRevisionManual":true}
 
 Respondé ÚNICAMENTE con un objeto JSON válido con esta forma exacta, sin texto adicional antes ni después:
 {"semaforo": "VERDE" | "AMARILLO" | "ROJO" | null, "severidad": "LEVE" | "MODERADA" | "GRAVE" | null, "confianza": number, "categoriaCausaRaiz": string | null, "resumen": string, "requiereRevisionManual": boolean}`;
@@ -268,9 +331,17 @@ CATEGORÍAS DE CAUSA RAÍZ (usá exclusivamente una de estas, o null si son 5 es
 - REPUESTOS: faltantes o demoras de repuestos.
 - OTRO: causa identificable que no encaja en las anteriores.
 
-UN SALUDO NO ES UNA VALORACIÓN (regla dura):
-Si el mensaje es SOLO un saludo o una cortesía —"buen día", "hola", "buenas tardes", "gracias", "ok", "listo"— NO es una opinión sobre el servicio: el cliente todavía no dijo nada. En ese caso poné "requiereRevisionManual": true y NO le pongas 5 estrellas. Un saludo amable no significa que el cliente esté conforme.
+LAS 5 ESTRELLAS SE GANAN, NO SE REGALAN (regla dura, la más importante):
+5 estrellas significa que el cliente DIJO ALGO EXPLÍCITAMENTE BUENO sobre el servicio, la atención o el trabajo. Si no lo dijo, NO son 5, por más amable que suene el mensaje.
+Poné "estrellas": null y "requiereRevisionManual": true —NUNCA 5— cuando el mensaje sea:
+- Un saludo o una cortesía sola: "buen día", "hola", "gracias", "ok", "listo", "dale".
+- Una respuesta que PATEA la conversación para después: "cuando vaya lo charlamos", "después te cuento", "lo hablamos en persona", "ahora no puedo", "te aviso".
+- Coordinación o logística: "¿a qué hora abren?", "necesito un turno", "mañana paso".
+- Un acuse de recibo sin opinión: "recibido", "me llegó", "ya está".
+- Cualquier cosa que no se pueda leer como una opinión sobre cómo lo atendieron.
+El motivo: a las 5 estrellas les sigue un mensaje automático que le pide al cliente que puntúe la encuesta de fábrica con 5. Pedirle 5 puntos a alguien que no dijo nada bueno —o que está a punto de quejarse— es peor que no escribirle nada. Ante CUALQUIER duda entre 5 y dejarlo sin puntuar, dejalo sin puntuar: una persona lo mira y contesta.
 Distinto es un saludo QUE ADEMÁS trae contenido ("buen día, me atendieron excelente"): eso sí se puntúa por lo que dice del servicio.
+Y ojo: esto NO aplica a las quejas. Si el cliente se queja, puntuá 1, 2 o 3 como corresponda; no lo dejes sin puntuar por las dudas.
 
 REGLAS:
 - "confianza" es tu certeza en la puntuación, de 0 a 1. NO es el puntaje: podés estar 100% seguro de que algo merece 2 estrellas.
@@ -292,6 +363,12 @@ Salida: {"estrellas":1,"confianza":0.95,"categoriaCausaRaiz":"CALIDAD_TRABAJO","
 
 Cliente: "Buen día"
 Salida: {"estrellas":null,"confianza":0.2,"categoriaCausaRaiz":null,"resumen":"El cliente solo saludó, todavía no dio una opinión sobre el servicio.","requiereRevisionManual":true}
+
+Cliente: "Cuando vaya, lo charlamos, gracias!"
+Salida: {"estrellas":null,"confianza":0.25,"categoriaCausaRaiz":null,"resumen":"El cliente deja la conversación para cuando vaya; todavía no dijo nada sobre el servicio.","requiereRevisionManual":true}
+
+Cliente: "Ok, gracias, cualquier cosa te aviso"
+Salida: {"estrellas":null,"confianza":0.2,"categoriaCausaRaiz":null,"resumen":"Acuse de recibo amable, sin opinión sobre la atención.","requiereRevisionManual":true}
 
 Respondé ÚNICAMENTE con un objeto JSON válido con esta forma exacta, sin texto adicional antes ni después:
 {"estrellas": 1 | 2 | 3 | 4 | 5 | null, "confianza": number, "categoriaCausaRaiz": string | null, "resumen": string, "requiereRevisionManual": boolean}`;
