@@ -352,6 +352,8 @@ export async function verConversacion(req: Request, res: Response) {
       mediaTipo: true,
       waMessageId: true,
       createdAt: true,
+      // Quién lo escribió (null = automático o mensaje viejo, anterior al cambio).
+      enviadoPor: { select: { nombre: true } },
     },
   });
 
@@ -442,6 +444,8 @@ async function verConversacionFidelizacion(req: Request, res: Response, id: stri
       mediaTipo: true,
       waMessageId: true,
       createdAt: true,
+      // Quién lo escribió (null = automático o mensaje viejo, anterior al cambio).
+      enviadoPor: { select: { nombre: true } },
     },
   });
 
@@ -560,6 +564,9 @@ export async function responder(req: Request, res: Response) {
       content: parsed.data.texto,
       status: "enviado",
       waMessageId,
+      // Queda guardado en el MENSAJE, no solo en la auditoría: la pregunta
+      // "¿quién le mandó esto al cliente?" se hace mirando la conversación.
+      enviadoPorId: req.usuario?.id ?? null,
     },
   });
 
@@ -622,6 +629,7 @@ async function responderFidelizacion(req: Request, res: Response, id: string, te
       content: texto,
       status: "enviado",
       waMessageId,
+      enviadoPorId: req.usuario?.id ?? null,
     },
   });
 
@@ -711,6 +719,8 @@ export async function reenviarPlantilla(req: Request, res: Response) {
       templateName,
       status: "enviado",
       waMessageId,
+      // Reenviar una plantilla también lo decide una persona: se registra igual.
+      enviadoPorId: req.usuario?.id ?? null,
     },
   });
   await prisma.caso.update({
@@ -771,6 +781,7 @@ async function reenviarPlantillaFidelizacion(req: Request, res: Response, id: st
       templateName,
       status: "enviado",
       waMessageId,
+      enviadoPorId: req.usuario?.id ?? null,
     },
   });
   await prisma.clienteFidelizacion.update({

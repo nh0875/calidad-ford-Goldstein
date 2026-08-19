@@ -310,6 +310,17 @@ model WhatsappMessage {
   // true = mensaje de agradecimiento/recordatorio automático (Parte A),
   // para distinguirlo del template inicial en reportes y en el detalle del caso
   esAgradecimiento      Boolean              @default(false)
+  // QUIÉN lo escribió, cuando lo escribió una persona desde Seguimiento.
+  // Null en los entrantes y en todo lo automático (plantilla de contacto,
+  // agradecimiento, respuesta al botón de fidelización).
+  //
+  // Se guarda ACÁ y no solo en la auditoría porque la pregunta "¿quién le mandó
+  // esto al cliente?" aparece mirando la conversación, y desde ahí no había
+  // forma de contestarla: el registro de auditoría no se puede buscar por
+  // cliente ni por caso, y su detalle guarda el número de orden y el largo del
+  // texto, no el nombre de quien escribió.
+  enviadoPorId          String?
+  enviadoPor            Usuario?             @relation("MensajeEnviadoPor", fields: [enviadoPorId], references: [id])
   // Media entrante (nota de voz, imagen, etc.): el id del archivo en Meta, su
   // mime y el tipo. Se guarda porque el análisis corre async (separado del
   // webhook) y necesita bajar el audio de Meta para que Gemini lo transcriba.
@@ -334,6 +345,7 @@ model WhatsappMessage {
   @@unique([waMessageId])
   @@index([casoId])
   @@index([clienteFidelizacionId])
+  @@index([enviadoPorId])
 }
 
 model SentimentAnalysis {
@@ -496,6 +508,7 @@ model Usuario {
   supresionesCreadas       SupresionContacto[]   @relation("SupresionCreadaPor")
   aliasCreados             AliasNormalizacion[]  @relation("AliasCreadoPor")
   avisosVistos             Aviso[]               @relation("AvisoVistoPor")
+  mensajesEnviados         WhatsappMessage[]     @relation("MensajeEnviadoPor")
 }
 
 // Lista de supresión POR TELÉFONO: quien está acá nunca recibe una campaña de

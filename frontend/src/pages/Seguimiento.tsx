@@ -59,6 +59,9 @@ interface Mensaje {
   status: string;
   templateName: string | null;
   esAgradecimiento: boolean;
+  // Quién lo escribió. null = lo mandó el sistema solo, o es un mensaje viejo
+  // (anterior a que se empezara a guardar el autor).
+  enviadoPor: { nombre: string } | null;
   mediaTipo: string | null;
   waMessageId: string | null;
   createdAt: string;
@@ -499,7 +502,22 @@ export default function Seguimiento() {
                       ) : (
                         <p className="whitespace-pre-wrap break-words">{m.content}</p>
                       )}
-                      <div className={`mt-0.5 flex items-center justify-end gap-1 text-[10px] ${saliente ? "text-white/60" : "text-ink-muted"}`}>
+                      {/* QUIÉN lo mandó. Solo en los salientes, y solo cuando se
+                          sabe: los automáticos ya se identifican con su etiqueta
+                          de arriba, y los mensajes viejos no tienen el dato
+                          guardado (para esos está
+                          scripts/windows/quien-mando-el-mensaje.sql). */}
+                      <div className={`mt-0.5 flex items-center justify-end gap-1.5 text-[10px] ${saliente ? "text-white/60" : "text-ink-muted"}`}>
+                        {saliente && m.enviadoPor && (
+                          <span className="truncate" title={`Lo escribió ${m.enviadoPor.nombre}`}>
+                            {m.enviadoPor.nombre}
+                          </span>
+                        )}
+                        {saliente && !m.enviadoPor && !m.esAgradecimiento && !m.templateName && (
+                          <span className="italic opacity-70" title="Es un mensaje anterior a que el sistema guardara quién lo escribe">
+                            autor no registrado
+                          </span>
+                        )}
                         <span>{hora(m.createdAt)}</span>
                         {saliente && <EstadoMensaje status={m.status} />}
                       </div>
