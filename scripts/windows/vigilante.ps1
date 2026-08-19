@@ -33,6 +33,9 @@ if (-not $DockerExe) { $DockerExe = "$env:LOCALAPPDATA\Programs\DockerDesktop\Do
 # Ruta de ngrok. Si no existe, el script lo busca en el PATH (instalacion por
 # winget/choco). Dejar vacio para usar solo el PATH.
 $NgrokExe    = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe"
+# Dominio ESTATICO de ngrok. Es DISTINTO en cada PC: cada marca tiene su propio
+# tunel y su propia cuenta. Se lee de NGROK_DOMAIN en .env.prod; este valor queda
+# solo como respaldo para la PC de Ford, que ya estaba configurada asi.
 $NgrokDomain = "dealer-occupant-brigade.ngrok-free.dev"
 # Tarea dedicada que mantiene ngrok vivo. Un ngrok lanzado como HIJO de esta tarea
 # lo mata Windows al terminar la tarea; su propia tarea lo mantiene de primera clase.
@@ -186,6 +189,13 @@ try {
     # ¿Está prendida la segunda marca? Si sí, sus contenedores pasan a ser
     # obligatorios: sin esto el vigilante los ve caer y no hace nada, porque la
     # salud de Ford sigue dando OK.
+    # Cada PC tiene su PROPIO tunel de ngrok: el dominio sale del .env.prod de
+    # esta maquina. Si quedara fijo en el script, en la PC de la otra marca el
+    # vigilante buscaria un tunel que nunca va a existir, lo daria por caido, y
+    # estaria matando y relanzando ngrok cada 5 minutos para siempre.
+    $dominioEnv = Leer-EnvProd "NGROK_DOMAIN"
+    if ($dominioEnv) { $NgrokDomain = $dominioEnv }
+
     $VWPrendida = ((Leer-EnvProd "COMPOSE_PROFILES") -match "\bvw\b")
     $PuertoVW = Leer-EnvProd "HTTP_PORT_VW"
     if (-not $PuertoVW) { $PuertoVW = "8080" }

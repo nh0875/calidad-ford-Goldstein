@@ -22,6 +22,10 @@ set "NGROK_PATH=%LOCALAPPDATA%\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.W
 
 REM (4) Dominio ESTATICO de ngrok (reservado en tu cuenta de ngrok).
 REM     Es el que va en la URL del webhook de Meta.
+REM     CADA PC TIENE EL SUYO: si hay una PC por marca, cada una necesita su
+REM     propio tunel (y su propia cuenta de ngrok, porque el plan gratis da un
+REM     solo dominio por cuenta). Se toma de NGROK_DOMAIN del .env.prod si esta
+REM     definido; si no, se usa este valor.
 set "NGROK_DOMAIN=dealer-occupant-brigade.ngrok-free.dev"
 
 REM (5) Puerto local del sistema (nginx). Debe coincidir con HTTP_PORT del .env
@@ -30,6 +34,16 @@ set "PORT=80"
 REM ==================================================================
 REM  A partir de aca no hace falta tocar nada.
 REM ==================================================================
+
+REM El .env.prod de ESTA PC manda sobre el dominio y el puerto de arriba: asi el
+REM mismo .bat sirve en las dos maquinas sin editarlo.
+cd /d "%PROJECT_DIR%"
+if exist ".env.prod" (
+  for /f "usebackq tokens=1,* delims==" %%A in (".env.prod") do (
+    if /i "%%A"=="NGROK_DOMAIN" if not "%%B"=="" set "NGROK_DOMAIN=%%B"
+    if /i "%%A"=="HTTP_PORT"    if not "%%B"=="" set "PORT=%%B"
+  )
+)
 
 echo [%date% %time%] Esperando %WAIT_SECONDS%s a que Docker Desktop arranque...
 timeout /t %WAIT_SECONDS% /nobreak >nul

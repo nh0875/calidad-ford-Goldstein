@@ -123,7 +123,18 @@ services:
       timeout: 5s
       retries: 10
 
-  # ----------------------------- MARCA 1: FORD -----------------------------
+  # --------------------------- STACK PRINCIPAL ---------------------------
+  # Es Ford por defecto, pero NO está atado a Ford: la marca la fija MARCA en el
+  # .env.prod. Eso permite las dos formas de desplegar:
+  #
+  #   a) UNA PC con las dos marcas: acá corre Ford y VW se suma con el perfil
+  #      "vw" (COMPOSE_PROFILES=vw), contra otra base y otro índice de Redis.
+  #   b) UNA PC POR MARCA (lo que se va a hacer): en la PC de VW este mismo
+  #      stack corre con MARCA=VOLKSWAGEN y listo. Sin perfil, sin segunda base,
+  #      sin ruteo por path del webhook: es el sistema, configurado como VW.
+  #
+  # La forma (b) es más simple y más robusta: cada marca tiene su propio Postgres,
+  # su propio Redis y su propio túnel, y una no se puede llevar puesta a la otra.
   backend:
     <<: *backend-comun
     # El proceso Node (API + workers) es el que más crece: importaciones de
@@ -133,7 +144,9 @@ services:
       <<: *backend-env-comun
       # Marca de esta instancia: define la escala (semáforo vs estrellas), qué
       # módulos existen y el nombre en pantallas y documentos. Ver config/marca.ts.
-      MARCA: FORD
+      # Por defecto FORD, así que la PC que ya está en producción no cambia en
+      # nada aunque no defina la variable.
+      MARCA: ${MARCA:-FORD}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-calidad_ford}?schema=public
       # Sin índice = DB 0 de Redis (el default). VW usa la 1.
       REDIS_URL: redis://redis:6379
@@ -173,8 +186,10 @@ services:
     depends_on:
       - backend
 
-  # -------------------------- MARCA 2: VOLKSWAGEN --------------------------
-  # Bajo el perfil "vw": no arrancan salvo que se pase --profile vw.
+  # ------------------ SEGUNDA MARCA EN LA MISMA PC (opcional) ------------------
+  # Bajo el perfil "vw": no arrancan salvo COMPOSE_PROFILES=vw en el .env.prod.
+  # SOLO hace falta si las dos marcas comparten una PC. Con una PC por marca esto
+  # queda sin usar: ahí alcanza con MARCA=VOLKSWAGEN en el stack principal.
 
   # Crea la base de VW dentro del MISMO Postgres si todavía no existe. Corre una
   # sola vez por arranque y termina; backend-vw espera a que termine bien.
