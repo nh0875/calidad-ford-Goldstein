@@ -13,6 +13,43 @@ import { claseBoton } from "../components/ui/Button";
 import { Campo, Input, Textarea } from "../components/ui/Field";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 
+// Cómo se llama en ESTA marca un cliente conforme y uno disconforme. Ford mide
+// por semáforo y Volkswagen por estrellas: si la pantalla dice "semáforo verde"
+// en Volkswagen, quien edita no reconoce de qué mensaje le están hablando, y
+// termina escribiendo el texto de la otra marca. Es lo que pasó.
+function vocabulario() {
+  const m = getMarca();
+  if (m.escala === "ESTRELLAS") {
+    const tope = m.estrellasSinRqr ?? 5;
+    return {
+      conforme: `${tope} estrellas`,
+      disconforme: `menos de ${tope} estrellas`,
+      detractor: "1 o 2 estrellas",
+      neutro: "3 o 4 estrellas",
+    };
+  }
+  return {
+    conforme: "semáforo verde",
+    disconforme: "semáforo amarillo o rojo",
+    detractor: "semáforo rojo",
+    neutro: "semáforo amarillo",
+  };
+}
+
+// Nombre de LA OTRA marca, para avisar si un texto la nombra. No bloquea: puede
+// haber un motivo (un cliente que tiene las dos marcas), pero casi siempre es un
+// texto copiado de la instancia equivocada.
+const OTRAS_MARCAS: Record<string, string> = { FORD: "Volkswagen", VOLKSWAGEN: "Ford" };
+
+function nombraLaOtraMarca(texto: string): string | null {
+  const otra = OTRAS_MARCAS[getMarca().codigo];
+  if (!otra) return null;
+  // \\b (límite de palabra) para que "Ford" no matchee dentro de otra palabra.
+  // Va con DOBLE barra: dentro del template literal, "\b" solo sería el carácter
+  // de retroceso y la expresión no encontraría nada nunca.
+  return new RegExp(`\\b${otra}\\b`, "i").test(texto) ? otra : null;
+}
+
 const K = {
   VERDE_AMARILLO: "agradecimiento.textoVerdeAmarillo",
   ROJO: "agradecimiento.textoRojo",
@@ -98,6 +135,18 @@ export default function Configuracion() {
         <Alert tono="info">Solo un administrador puede editar estos textos. Los ves en modo lectura.</Alert>
       )}
 
+      {/* EN QUÉ MARCA ESTÁS PARADO. Las dos instancias se ven casi iguales y se
+          suelen tener abiertas en dos pestañas: sin esto es fácil editar los
+          mensajes de una creyendo que son los de la otra. Pasó. */}
+      <div className="rounded-lg border-2 border-accent bg-accent-light px-4 py-3">
+        <div className="text-xs uppercase tracking-wide text-ink-muted">Estás editando los mensajes de</div>
+        <div className="font-display text-lg font-bold text-navy">{getMarca().nombre}</div>
+        <div className="mt-0.5 text-xs text-ink-muted">
+          Cada marca tiene su propia base y sus propios textos: lo que cambies acá NO afecta a{" "}
+          {OTRAS_MARCAS[getMarca().codigo] ?? "la otra marca"}.
+        </div>
+      </div>
+
       <Card padding="p-5">
         <h3 className="mb-1 flex items-center gap-2 font-display text-sm font-bold uppercase tracking-wide text-navy">
           <MessageCircleHeart className="h-4 w-4 text-accent" aria-hidden="true" />
@@ -115,7 +164,7 @@ export default function Configuracion() {
         {/* VERDE (promotor) → recordatorio de encuesta */}
         <div className="mb-5">
           <label className="mb-1 block text-sm font-medium text-ink">
-            Cliente conforme (semáforo verde) — recordatorio de la encuesta de {getMarca().nombre}
+            Cliente conforme ({vocabulario().conforme}) — recordatorio de la encuesta de {getMarca().nombre}
           </label>
           <Textarea
             value={cfg[K.VERDE_AMARILLO]}
@@ -123,13 +172,14 @@ export default function Configuracion() {
             rows={4}
             disabled={!esAdmin}
           />
+          <AvisoOtraMarca texto={cfg[K.VERDE_AMARILLO]} />
           <Previews texto={cfg[K.VERDE_AMARILLO]} />
         </div>
 
         {/* AMARILLO + ROJO → mensaje empático (sin encuesta) */}
         <div className="mb-2 border-t border-gray-100 pt-4">
           <label className="mb-1 block text-sm font-medium text-ink">
-            Cliente neutro o disconforme (semáforo amarillo o rojo) — mensaje empático, sin recordatorio de encuesta
+            Cliente neutro o disconforme ({vocabulario().disconforme}) — mensaje empático, sin recordatorio de encuesta
           </label>
           <Textarea
             value={cfg[K.ROJO]}
@@ -137,6 +187,7 @@ export default function Configuracion() {
             rows={3}
             disabled={!esAdmin}
           />
+          <AvisoOtraMarca texto={cfg[K.ROJO]} />
           <Previews texto={cfg[K.ROJO]} />
           <label className="mt-3 flex items-center gap-2 text-sm text-ink">
             <input
@@ -146,9 +197,9 @@ export default function Configuracion() {
               disabled={!esAdmin}
               onChange={(e) => set(K.ENVIAR_A_ROJOS, e.target.checked ? "true" : "false")}
             />
-            Enviar este mensaje también a los detractores (semáforo rojo)
+            Enviar este mensaje también a los detractores ({vocabulario().detractor})
             <span className="text-xs text-ink-muted">
-              (a los amarillos se les manda siempre; si lo desactivás, a los rojos no se les manda nada automático)
+              (a los de {vocabulario().neutro} se les manda siempre; si lo desactivás, a los detractores no se les manda nada automático)
             </span>
           </label>
         </div>
@@ -394,6 +445,25 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
         </div>
       )}
     </Card>
+  );
+}
+
+/**
+ * Avisa si el texto nombra a la OTRA marca. No bloquea el guardado: puede haber
+ * un motivo válido. Pero casi siempre es un texto copiado de la instancia
+ * equivocada, y eso le llega al cliente por WhatsApp.
+ */
+function AvisoOtraMarca({ texto }: { texto: string }) {
+  const otra = nombraLaOtraMarca(texto);
+  if (!otra) return null;
+  return (
+    <div className="mt-2">
+      <Alert tono="advertencia">
+        Este texto nombra a <strong>{otra}</strong>, y estás editando los mensajes de{" "}
+        <strong>{getMarca().nombre}</strong>. Revisalo antes de guardar: si quedó copiado de la otra instancia, al
+        cliente le va a llegar con la marca cambiada.
+      </Alert>
+    </div>
   );
 }
 
