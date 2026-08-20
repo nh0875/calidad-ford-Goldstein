@@ -72,3 +72,12 @@ npm-debug.log*
 # ===== Logos de marca (material de terceros, no se versionan) =====
 # Ver backend/assets/README.md: se copian a mano en cada despliegue.
 backend/assets/logo-*
+
+# Configuración del respaldo PROPIA de cada PC (rutas de OneDrive, retención,
+# nombre del contenedor). Igual que .env.prod: no se versiona.
+#
+# Va ignorado ADEMÁS por seguridad: sin esto es un archivo "sin seguimiento", y
+# cualquier `git stash -u` o `git clean` de los que se usan para destrabar una
+# actualización se lo lleva puesto. El respaldo seguiría corriendo, pero con los
+# valores por defecto —sin copiar a OneDrive— y sin ningún error visible.
+scripts/windows/Respaldo-Config.json
