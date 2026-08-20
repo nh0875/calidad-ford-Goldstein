@@ -9,8 +9,13 @@
 #  Pasó, y costó horas darse cuenta. Este script no deja que pase: compara el
 #  commit que quedó corriendo contra el que se acaba de traer.
 #
-#  Uso, desde la carpeta del proyecto:
-#      powershell -ExecutionPolicy Bypass -File scripts\windows\actualizar-sistema.ps1
+#  COMO SE CORRE: doble clic en "Actualizar-AHORA.bat", que esta al lado.
+#
+#  Tambien se puede desde PowerShell, pero con la RUTA COMPLETA del archivo.
+#  Con la ruta relativa solo anda si la consola YA esta parada en la carpeta
+#  del proyecto; abierta en system32 (lo normal al abrir PowerShell) da
+#  "el argumento ... no existe". El script en si funciona desde cualquier lado:
+#  se ubica solo a partir de donde esta guardado.
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
