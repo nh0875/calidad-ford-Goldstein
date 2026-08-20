@@ -72,12 +72,79 @@ if ($sucio) {
     Write-Host "    Se actualiza igual, pero si el pull falla es por esto." -ForegroundColor Yellow
 }
 
-& git pull --ff-only
-if ($LASTEXITCODE -ne 0) {
+# --- Traer, resolviendo solo los dos bloqueos tipicos ------------------------
+#
+# 1) ARCHIVOS COPIADOS A MANO. Pasa cuando alguien recibe un script por WhatsApp
+#    o por mail y lo pega en la carpeta: git no lo puede reemplazar porque no lo
+#    tiene registrado, y aborta TODA la actualizacion por un archivo que
+#    justamente venia a traer. Se corren a un costado (NO se borran) y sigue.
+#
+# 2) ARCHIVOS DEL SISTEMA EDITADOS EN ESTA PC. Ahi NO se decide solo: se muestra
+#    que cambio y se corta, porque puede ser algo que alguien puso a proposito y
+#    pisarlo en silencio seria peor que no actualizar.
+
+function Intentar-Pull {
+    $salida = & git pull --ff-only 2>&1
+    $codigo = $LASTEXITCODE
+    $salida | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+    return @{ ok = ($codigo -eq 0); texto = ($salida -join "`n") }
+}
+
+$r = Intentar-Pull
+
+if (-not $r.ok -and $r.texto -match "untracked working tree files would be overwritten") {
+    $sello = Get-Date -Format "yyyyMMdd-HHmmss"
+    $backup = Join-Path $ProjectDir ("_reemplazados-" + $sello)
+
+    $aMover = @()
+    $capturando = $false
+    foreach ($linea in ($r.texto -split "`n")) {
+        if ($linea -match "untracked working tree files would be overwritten") { $capturando = $true; continue }
+        if ($capturando) {
+            $limpio = "$linea".Trim()
+            if ($limpio -eq "" -or $limpio -like "Please *" -or $limpio -like "Aborting*" -or $limpio -like "error:*") { $capturando = $false; continue }
+            $aMover += $limpio
+        }
+    }
+
+    if ($aMover.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  Hay archivos copiados a mano que el sistema trae por su cuenta." -ForegroundColor Yellow
+        Write-Host "  Se guarda una copia en $backup y se sigue:" -ForegroundColor Yellow
+        foreach ($rel in $aMover) {
+            $origen = Join-Path $ProjectDir $rel
+            if (-not (Test-Path $origen)) { continue }
+            $destino = Join-Path $backup $rel
+            $carpeta = Split-Path $destino -Parent
+            if (-not (Test-Path $carpeta)) { New-Item -ItemType Directory -Path $carpeta -Force | Out-Null }
+            Move-Item -Path $origen -Destination $destino -Force
+            Write-Host "      $rel" -ForegroundColor Gray
+        }
+        Write-Host ""
+        Write-Host "  Reintentando..." -ForegroundColor Cyan
+        $r = Intentar-Pull
+    }
+}
+
+if (-not $r.ok) {
     Write-Host ""
     Write-Host "  NO SE PUDO TRAER LA VERSION NUEVA. No se reconstruye nada: el sistema" -ForegroundColor Red
     Write-Host "  sigue funcionando con la version de antes, que es lo correcto." -ForegroundColor Red
-    Write-Host "  Suele ser por cambios locales; resolverlos y volver a correr esto." -ForegroundColor Red
+
+    if ($r.texto -match "Your local changes to the following files would be overwritten") {
+        Write-Host ""
+        Write-Host "  Es porque estos archivos del sistema fueron editados en esta PC:" -ForegroundColor Yellow
+        (& git diff --name-only) | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        Write-Host ""
+        Write-Host "  Que cambio en cada uno:" -ForegroundColor Yellow
+        & git diff --stat | ForEach-Object { Write-Host "      $_" -ForegroundColor Gray }
+        Write-Host ""
+        Write-Host "  Si esos cambios NO hacen falta (lo normal: son archivos del sistema," -ForegroundColor Yellow
+        Write-Host "  no configuracion tuya), se descartan asi y se vuelve a correr esto:" -ForegroundColor Yellow
+        Write-Host "      git checkout -- ." -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  Si SI hacen falta, mandale esta pantalla a Ignacio antes de tocar nada." -ForegroundColor Yellow
+    }
     exit 1
 }
 
