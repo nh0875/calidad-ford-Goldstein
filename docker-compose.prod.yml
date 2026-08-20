@@ -29,6 +29,10 @@ x-backend-comun: &backend-comun
   build:
     context: ./backend
     dockerfile: Dockerfile.prod
+    args:
+      # Commit que queda DENTRO de la imagen, visible en /api/health. Lo setea
+      # actualizar-sistema.ps1; si se buildea a mano queda "desconocida".
+      GIT_COMMIT: ${GIT_COMMIT:-desconocida}
   restart: unless-stopped
   volumes:
     # Solo lectura: el backend lee el estado que escribe el contenedor de backup

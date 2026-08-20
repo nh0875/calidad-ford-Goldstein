@@ -158,6 +158,28 @@ export function esSoloEmoji(texto: string): boolean {
 }
 
 /**
+ * ¿El texto trae un emoji claramente positivo y ninguno negativo?
+ *
+ * A diferencia de sentimientoSoloEmoji, NO exige que el mensaje sea puro emoji:
+ * sirve para los mixtos tipo "gracias 👍", donde el pulgar es lo que vale.
+ */
+function tienePositivoClaro(texto: string): boolean {
+  if (tieneEmojiNegativo(texto)) return false;
+  return EMOJI_POSITIVOS.some((e) => texto.includes(e));
+}
+
+/**
+ * ¿El texto trae algún emoji claramente negativo (👎, 😡, 😭)?
+ *
+ * Se usa como freno de mano sobre la clasificación POSITIVA: si el cliente puso
+ * un pulgar para abajo, el caso no puede terminar en verde por más que la IA lea
+ * bien el resto del mensaje. Es barato y es determinista.
+ */
+export function tieneEmojiNegativo(texto: string): boolean {
+  return EMOJI_NEGATIVOS.some((e) => texto.includes(e));
+}
+
+/**
  * Clasifica una respuesta compuesta SOLO por emojis. Devuelve:
  *  - VERDE si hay al menos un emoji positivo y ninguno negativo
  *  - null  si tiene texto (no aplica), o si es ambigua (😮 😢) o mezcla
@@ -227,10 +249,25 @@ export function decidirClasificacion(opciones: {
       : { revisionManual: null, semaforoEmoji };
   }
 
+  // CORTESÍA + UN EMOJI POSITIVO ("gracias 👍", "ok 🙏") NO es solo cortesía.
+  //
+  // El pulgar ahí ES la valoración: el cliente se tomó el trabajo de ponerlo. Un
+  // "gracias" pelado es otra cosa —puede ser cortesía o alivio— y ese sí va a
+  // revisión manual.
+  //
+  // Hace falta una regla propia porque 👍 está en la lista de cortesías (para
+  // poder ignorar el 👍 con el que contestan nuestro agradecimiento), así que
+  // sin esto "gracias 👍" caía en "solo cortesía" y el cliente se quedaba sin el
+  // mensaje de conforme.
+  const todoCortesia = contenidos.length > 0 && contenidos.every((c) => esSoloCortesia(c));
+  if (!esSeguimiento && todoCortesia && contenidos.some(tienePositivoClaro)) {
+    return { revisionManual: null, semaforoEmoji: Semaforo.VERDE };
+  }
+
   // PRIMERA respuesta que es puro saludo. No es una opinión y no se puede
   // puntuar: mandada a la IA vuelve como positiva (pasó de verdad, un "Buen día"
   // quedó VERDE) y el cliente queda contado como conforme sin haber dicho nada.
-  if (!esSeguimiento && contenidos.length > 0 && contenidos.every((c) => esSoloCortesia(c))) {
+  if (!esSeguimiento && todoCortesia) {
     return { revisionManual: "solo-cortesia", semaforoEmoji: null };
   }
 

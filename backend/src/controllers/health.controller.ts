@@ -1,6 +1,16 @@
 import { Request, Response } from "express";
 import { prisma } from "../config/prisma";
 import { redisConnection } from "../config/redis";
+import { marca } from "../config/marca";
+
+// Commit del código que está CORRIENDO. Lo inyecta el build (ver Dockerfile.prod
+// y el arg GIT_COMMIT del compose).
+//
+// Existe por un problema real: se arreglaba algo, se rebuildeaba en la PC de la
+// agencia, y el error seguía — porque el rebuild se había hecho SIN traer los
+// cambios (`git pull`). Todo se veía bien y no había forma de darse cuenta.
+// Ahora se pregunta y el sistema contesta qué versión tiene puesta.
+const VERSION = (process.env.GIT_COMMIT ?? "").trim() || "desconocida";
 
 // Si Redis está caído, ioredis encola los comandos indefinidamente
 // (maxRetriesPerRequest: null); sin timeout el healthcheck se colgaría.
@@ -38,6 +48,8 @@ export async function getHealth(_req: Request, res: Response) {
 
   res.status(healthy ? 200 : 503).json({
     status: healthy ? "ok" : "degraded",
+    marca: marca.codigo,
+    version: VERSION,
     checks,
     timestamp: new Date().toISOString(),
   });

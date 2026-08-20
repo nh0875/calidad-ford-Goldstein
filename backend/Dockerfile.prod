@@ -27,6 +27,12 @@ RUN apk add --no-cache openssl wget
 
 WORKDIR /app
 ENV NODE_ENV=production
+# Commit del codigo que quedo dentro de la imagen. Lo pasa el compose y se ve en
+# /api/health, para poder responder "que version esta corriendo" sin adivinar.
+# Va en la etapa FINAL a proposito: asi cambiar el commit no invalida la cache de
+# npm ci ni la del build, y el rebuild sigue siendo rapido.
+ARG GIT_COMMIT=desconocida
+ENV GIT_COMMIT=$GIT_COMMIT
 
 # Se copia node_modules completo desde el build: incluye el cliente de Prisma
 # ya generado y el CLI de prisma que hace falta para `migrate deploy`

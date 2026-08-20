@@ -370,7 +370,7 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
   //
   // No se pisa el análisis: la lectura de la IA queda en el resumen y en la
   // respuesta cruda, para que quien lo revise vea qué había entendido.
-  const conBarrera = aplicarBarreraDeConfianza(resultado);
+  const conBarrera = aplicarBarreraDeConfianza(resultado, texto);
   if (conBarrera !== resultado) {
     console.log(
       `[analisis-sentimiento] caso ${caso.numeroOrden}: positivo con ${Math.round(resultado.confianza * 100)}% ` +

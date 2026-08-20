@@ -3,6 +3,7 @@ import { Semaforo, Severidad } from "@prisma/client";
 import { z } from "zod";
 import { env } from "../config/env";
 import { marca, usaEstrellas } from "../config/marca";
+import { tieneEmojiNegativo } from "./analisis.service";
 
 /**
  * Confianza MÍNIMA para dar por bueno un caso positivo (VERDE / 5 estrellas).
@@ -33,12 +34,25 @@ export const CONFIANZA_MINIMA_POSITIVO = 0.8;
  * Devuelve el mismo objeto cuando no hay nada que bajar, así el flujo normal no
  * paga nada.
  */
-export function aplicarBarreraDeConfianza(resultado: ResultadoAnalisis): ResultadoAnalisis {
+export function aplicarBarreraDeConfianza(
+  resultado: ResultadoAnalisis,
+  textoCliente?: string
+): ResultadoAnalisis {
   if (resultado.semaforo !== Semaforo.VERDE) return resultado;
-  if (resultado.confianza >= CONFIANZA_MINIMA_POSITIVO) return resultado;
+
+  const sinConfianza = resultado.confianza < CONFIANZA_MINIMA_POSITIVO;
+  // Freno de mano: si el cliente puso un pulgar para abajo (o 😡, 😭…), el caso
+  // no puede quedar en verde por más que la IA lea bien el resto del mensaje.
+  const conEmojiNegativo = textoCliente ? tieneEmojiNegativo(textoCliente) : false;
+  if (!sinConfianza && !conEmojiNegativo) return resultado;
 
   const pct = Math.round(resultado.confianza * 100);
   const minimo = Math.round(CONFIANZA_MINIMA_POSITIVO * 100);
+  const motivo = conEmojiNegativo
+    ? "La IA lo leyó como cliente conforme, pero el mensaje trae un emoji negativo " +
+      "(un pulgar para abajo o similar), así que no se clasificó ni se le mandó nada."
+    : `La IA lo leyó como cliente conforme pero con solo ${pct}% de confianza ` +
+      `(hace falta ${minimo}%), así que no se clasificó ni se le mandó nada.`;
   return {
     ...resultado,
     semaforo: null,
@@ -46,10 +60,7 @@ export function aplicarBarreraDeConfianza(resultado: ResultadoAnalisis): Resulta
     estrellas: null,
     requiereRQR: false,
     requiereRevisionManual: true,
-    resumen:
-      `La IA lo leyó como cliente conforme pero con solo ${pct}% de confianza ` +
-      `(hace falta ${minimo}%), así que no se clasificó ni se le mandó nada. ` +
-      `Lo que entendió: ${resultado.resumen}`,
+    resumen: `${motivo} Lo que entendió: ${resultado.resumen}`,
   };
 }
 
