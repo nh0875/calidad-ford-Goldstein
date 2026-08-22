@@ -11,6 +11,9 @@ import { AreaTrabajo, ItemPosventa, Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { DEFINICION_ITEMS, ITEM_QUE_DEFINE_EL_CASO, etiquetaItem } from "../config/posventa-vw";
 
+/** Etiqueta de los casos sin asesor o sin sucursal cargados. */
+const SIN_DATO = "(sin dato)";
+
 export interface FiltrosPosventa {
   fechaDesde?: string;
   fechaHasta?: string;
@@ -64,8 +67,12 @@ async function evaluacionesFiltradas(f: FiltrosPosventa) {
           },
         }
       : {}),
-    ...(f.sucursal ? { sucursal: { equals: f.sucursal, mode: "insensitive" } } : {}),
-    ...(f.asesor ? { asesor: { equals: f.asesor, mode: "insensitive" } } : {}),
+    // "(sin dato)" es la etiqueta que pone el agrupador para los casos sin asesor
+    // o sin sucursal cargados. La pantalla arma el combo con esas etiquetas, así
+    // que hay que traducirla de vuelta: buscarla tal cual no encontraba nada
+    // nunca y el reporte salía vacío.
+    ...(f.sucursal ? { sucursal: f.sucursal === SIN_DATO ? "" : { equals: f.sucursal, mode: "insensitive" as const } } : {}),
+    ...(f.asesor ? { asesor: f.asesor === SIN_DATO ? "" : { equals: f.asesor, mode: "insensitive" as const } } : {}),
   };
 
   return prisma.evaluacionPosventa.findMany({

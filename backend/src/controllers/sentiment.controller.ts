@@ -6,6 +6,8 @@ import { CATEGORIAS_CAUSA_RAIZ, derivarDeEstrellas } from "../services/sentiment
 import { ACCIONES, auditar } from "../services/audit.service";
 import { apagarAvisosCaso } from "../services/aviso.service";
 import { parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
+import { ITEM_QUE_DEFINE_EL_CASO } from "../config/posventa-vw";
+import { usaEncuestaPorItems } from "../services/encuesta-posventa.service";
 
 const INCLUDE_CASO = {
   caso: {
@@ -206,6 +208,23 @@ export async function patchSentimentAnalysis(req: Request, res: Response) {
     },
     include: INCLUDE_CASO,
   });
+
+  // Si se corrigieron las estrellas y este caso usa la encuesta por ítems, hay que
+  // corregir TAMBIÉN el ítem GENERAL: de esa fila sale exactamente el mismo
+  // número. Sin esto, el mismo caso mostraba una nota en Seguimiento (la
+  // corregida) y otra en el reporte de desempeño (la vieja), y no había forma de
+  // saber cuál era la buena.
+  if (
+    cambios.estrellas != null &&
+    actualizado.casoId &&
+    actualizado.caso &&
+    usaEncuestaPorItems(actualizado.caso.area)
+  ) {
+    await prisma.evaluacionPosventa.updateMany({
+      where: { casoId: actualizado.casoId, item: ITEM_QUE_DEFINE_EL_CASO },
+      data: { estrellas: cambios.estrellas },
+    });
+  }
 
   // Al clasificar a mano, el caso deja de estar pendiente de revisión: se apaga
   // su aviso del cartel (si tenía uno). Así el aviso "se apaga solo" al resolver.

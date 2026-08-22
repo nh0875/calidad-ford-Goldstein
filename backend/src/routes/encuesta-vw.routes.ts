@@ -10,6 +10,7 @@ import {
   notificarEncuestaVW,
   previewEncuestaVW,
 } from "../controllers/encuesta-vw.controller";
+import { estadoMailRefuerzo } from "../controllers/refuerzo.controller";
 
 const router = Router();
 
@@ -21,6 +22,12 @@ router.get("/", asyncHandler(listarEncuestaVW));
 // primero se muestra el impacto y recién después se toca la base.
 router.post("/preview", requireAdmin, recibirXlsx("archivo"), asyncHandler(previewEncuestaVW));
 router.post("/confirm", requireAdmin, asyncHandler(confirmEncuestaVW));
+
+// ¿Hay casilla de correo configurada? La pantalla lo consulta para avisar ANTES
+// de que aprieten "Avisar a los vendedores". Vive acá y no en /refuerzos porque
+// esa ruta está detrás de requireRefuerzo, que en VW da 404: el aviso preventivo
+// nunca se mostraba.
+router.get("/estado-mail", asyncHandler(estadoMailRefuerzo));
 
 // Aviso por correo a los vendedores con su lista.
 // Va ANTES de "/vendedores/:id" para que "notificar" no se lea como un id.

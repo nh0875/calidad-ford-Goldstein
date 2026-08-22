@@ -99,7 +99,7 @@ export default function EncuestasFabrica() {
     try {
       const [r, m] = await Promise.all([
         apiGet<{ data: Vendedor[]; resumen: Resumen }>("/api/encuesta-vw"),
-        apiGet<EstadoMail>("/api/refuerzos/estado-mail").catch(() => null),
+        apiGet<EstadoMail>("/api/encuesta-vw/estado-mail").catch(() => null),
       ]);
       setVendedores(r.data);
       setResumen(r.resumen);

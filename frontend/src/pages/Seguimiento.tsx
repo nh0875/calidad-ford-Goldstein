@@ -81,6 +81,8 @@ interface Hilo {
     optOut: boolean;
     suprimido: boolean;
     quiereAsesor: boolean;
+    // Apretó "Quiero participar por Llamada" en la plantilla de Posventa.
+    quiereLlamado?: boolean;
   };
   mensajes: Mensaje[];
   analisis: {
@@ -90,6 +92,13 @@ interface Hilo {
     requiereRevisionManual: boolean;
     resumenIA: string;
   } | null;
+  // Los 5 puntajes de la encuesta de Posventa (null en las marcas que no la usan).
+  puntajesPosventa: Array<{
+    item: string;
+    etiqueta: string;
+    estrellas: number | null;
+    comentario: string | null;
+  }> | null;
   ventana: { abierta: boolean; cierraEn: string | null };
   puedeResponder: { ok: boolean; motivo: string };
   puedeReenviarPlantilla: boolean;
@@ -458,12 +467,54 @@ export default function Seguimiento() {
               )}
             </div>
 
+            {hilo.caso.quiereLlamado && (
+              <div className="border-b border-amber-200 bg-amber-50 px-4 py-2">
+                <p className="flex items-center gap-2 text-sm font-medium text-amber-900">
+                  <Phone className="h-4 w-4 shrink-0" />
+                  El cliente prefiere que lo llamen en vez de contestar por WhatsApp. No se le mandó ningún mensaje
+                  automático: hay que llamarlo.
+                </p>
+              </div>
+            )}
+
             {hilo.caso.quiereAsesor && (
               <div className="border-b border-amber-200 bg-amber-50 px-4 py-2">
                 <p className="flex items-center gap-2 text-sm font-medium text-amber-900">
                   <Phone className="h-4 w-4 shrink-0" />
                   El cliente pidió turno con un asesor. Coordinalo y respondele por acá; al responderle sale de pendientes.
                 </p>
+              </div>
+            )}
+
+            {/* Los 5 puntajes de la encuesta de Posventa. Es el POR QUÉ del semáforo
+                del caso: sin esto se ve que quedó en 4 estrellas pero no que el
+                lavado fue un 1, que es justo el dato por el que se mide por ítem. */}
+            {hilo.puntajesPosventa && hilo.puntajesPosventa.some((p) => p.estrellas !== null) && (
+              <div className="border-b border-gray-200 bg-gray-50 px-4 py-2">
+                <div className="mb-1 text-[10px] uppercase tracking-wide text-ink-muted">Encuesta de Posventa</div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {hilo.puntajesPosventa.map((p) => (
+                    <span key={p.item} className="text-xs" title={p.comentario ?? undefined}>
+                      <span className="text-ink-muted">{p.etiqueta}: </span>
+                      {p.estrellas === null ? (
+                        <span className="text-ink-muted">no contestó</span>
+                      ) : (
+                        <span
+                          className={`font-semibold ${
+                            p.estrellas >= 5
+                              ? "text-green-700"
+                              : p.estrellas >= 4
+                                ? "text-yellow-700"
+                                : "text-red-700"
+                          }`}
+                        >
+                          {p.estrellas}/5
+                        </span>
+                      )}
+                      {p.comentario && <span className="ml-1 text-ink-muted">“{p.comentario}”</span>}
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
 

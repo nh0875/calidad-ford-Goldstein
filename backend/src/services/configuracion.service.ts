@@ -24,6 +24,7 @@ export const CLAVES_CONFIG = {
   // figura en la plantilla aprobada en Meta: si allá lo renombran, se corrige
   // acá y el sistema lo vuelve a reconocer, sin tocar código ni redeployar.
   POSVENTA_TEXTO_BOTON_WHATSAPP: "posventa.textoBotonWhatsapp",
+  POSVENTA_TEXTO_BOTON_LLAMADA: "posventa.textoBotonLlamada",
   POSVENTA_PREGUNTAS: "posventa.preguntas",
   POSVENTA_ENVIAR_PREGUNTAS: "posventa.enviarPreguntas",
 } as const;
@@ -46,6 +47,7 @@ export const DEFAULTS_CONFIG: Record<string, string> = {
   // Posventa por ítems. El texto de las preguntas se arma del catálogo
   // (config/posventa-vw.ts) para que la lista y el orden vivan en un solo lugar.
   [CLAVES_CONFIG.POSVENTA_TEXTO_BOTON_WHATSAPP]: "Quiero participar por Whatsapp",
+  [CLAVES_CONFIG.POSVENTA_TEXTO_BOTON_LLAMADA]: "Quiero participar por Llamada",
   [CLAVES_CONFIG.POSVENTA_PREGUNTAS]: textoPreguntasPorDefecto(),
   [CLAVES_CONFIG.POSVENTA_ENVIAR_PREGUNTAS]: "true",
 };

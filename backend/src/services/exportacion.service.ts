@@ -66,7 +66,7 @@ function hojaConEncabezado(wb: ExcelJS.Workbook, nombre: string, columnas: Array
 export async function excelReporteSentimiento(f: FiltrosReporte): Promise<Buffer> {
   const r = await reporteSentimiento(f);
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Sistema de Calidad Ford";
+  wb.creator = `Sistema de Calidad ${marca.nombre}`;
 
   const resumen = hojaConEncabezado(wb, "Resumen", [
     { header: "Indicador", key: "k", width: 40 },
@@ -136,7 +136,7 @@ export async function excelCasos(where: Prisma.CasoWhereInput): Promise<Buffer> 
   });
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Sistema de Calidad Ford";
+  wb.creator = `Sistema de Calidad ${marca.nombre}`;
 
   const columnas = [
     { header: "Fecha visita", key: "fecha", width: 12 },
@@ -214,7 +214,7 @@ export async function excelCasos(where: Prisma.CasoWhereInput): Promise<Buffer> 
 export async function excelReporteCausaRaiz(f: FiltrosCausaRaiz): Promise<Buffer> {
   const r = await reporteCausaRaiz(f);
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Sistema de Calidad Ford";
+  wb.creator = `Sistema de Calidad ${marca.nombre}`;
 
   const categorias = hojaConEncabezado(wb, "Por Categoría", [
     { header: "Categoría", key: "categoria", width: 28 },

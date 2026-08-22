@@ -150,22 +150,28 @@ export function esSoloEmoji(texto: string): boolean {
   const sinEspacios = texto.replace(/[\s\u200d\ufe0e\ufe0f]/g, "").trim();
   if (!sinEspacios) return false;
 
-  // TIENE QUE HABER AL MENOS UN PICTOGRAMA DE VERDAD.
-  //
-  // Sin esto, "5 4 5 3 4" contaba como "solo emojis": en Unicode los dígitos
-  // ASCII son Emoji_Component (se usan para armar las teclas 1️⃣ 2️⃣), así que al
-  // sacarlos no quedaba nada y la función decía que sí. Consecuencia real: un
-  // cliente que contestaba la encuesta de Posventa con "5 4 5 3 4" caía en
-  // "reacción ambigua" y su respuesta se perdía entera; y en Ford, un cliente
-  // que contesta solo "5" cae igual.
-  if (!/\p{Extended_Pictographic}/u.test(sinEspacios)) return false;
+  // Las TECLAS (1️⃣ #️⃣) sí son emoji: se sacan antes de mirar si quedan números,
+  // porque están hechas de un dígito ASCII más U+20E3.
+  const sinTeclas = sinEspacios.replace(/[0-9#*]\u20e3/g, "");
+  if (sinTeclas.length === 0) return true; // eran solo teclas
 
-  // Si al quitar los pictogramas y sus modificadores no queda NADA, era solo emoji.
-  const sinPictogramas = sinEspacios.replace(
+  // SI QUEDA CUALQUIER LETRA O NÚMERO, NO ES SOLO EMOJI.
+  //
+  // Este chequeo es el que importa. En Unicode los dígitos ASCII son
+  // Emoji_Component, así que al limpiar se iban junto con los pictogramas y
+  // "5 4 5 3 4 👍" daba true: la respuesta a la encuesta de Posventa se tomaba
+  // como un pulgar suelto, el caso quedaba VERDE con 5 estrellas y los CINCO
+  // puntajes se perdían enteros. Con solo exigir "al menos un pictograma" no
+  // alcanzaba: el 👍 del final ya lo cumplía.
+  if (/[\p{L}\p{N}]/u.test(sinTeclas)) return false;
+
+  if (!/\p{Extended_Pictographic}/u.test(sinTeclas)) return false;
+
+  const resto = sinTeclas.replace(
     /[\p{Extended_Pictographic}\p{Emoji_Component}\p{Emoji_Modifier}]/gu,
     ""
   );
-  return sinPictogramas.length === 0;
+  return resto.length === 0;
 }
 
 /**

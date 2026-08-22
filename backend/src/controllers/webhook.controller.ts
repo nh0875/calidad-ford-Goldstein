@@ -10,7 +10,9 @@ import {
 import { programarAnalisis } from "../services/analisis.service";
 import {
   enviarPreguntasPosventa,
+  esBotonParticiparLlamada,
   esBotonParticiparWhatsapp,
+  marcarQuiereLlamado,
   usaEncuestaPorItems,
 } from "../services/encuesta-posventa.service";
 import {
@@ -199,6 +201,15 @@ async function procesarMensajeEntrante(mensaje: MensajeEntranteMeta) {
         `[webhook] ${caso.numeroOrden} quiere participar por WhatsApp` +
           (r.enviado ? ": preguntas enviadas" : `, pero no se enviaron (${r.motivo})`)
       );
+      return;
+    }
+
+    // El OTRO botón de la misma plantilla: el cliente prefiere que lo llamen. Se
+    // anota para que Calidad lo vea en Seguimiento y NO se le manda nada ni se
+    // analiza: pedir un llamado no es una opinión sobre el servicio.
+    if (usaEncuestaPorItems(caso.area) && (await esBotonParticiparLlamada(contenido, esBoton))) {
+      await marcarQuiereLlamado(caso.id, mensaje.id);
+      console.log(`[webhook] ${caso.numeroOrden} pidió que lo llamen (no se analiza ni se le responde)`);
       return;
     }
 

@@ -33,6 +33,52 @@ export async function esBotonParticiparWhatsapp(contenido: string, esBoton: bool
   return contenido.trim().toLowerCase() === titulo;
 }
 
+/** ¿El texto que llegó es el botón de "participar por llamada"? */
+export async function esBotonParticiparLlamada(contenido: string, esBoton: boolean): Promise<boolean> {
+  if (!esBoton) return false;
+  const titulo = (await obtenerValor(CLAVES_CONFIG.POSVENTA_TEXTO_BOTON_LLAMADA)).trim().toLowerCase();
+  if (!titulo) return false;
+  return contenido.trim().toLowerCase() === titulo;
+}
+
+/**
+ * El cliente pidió que lo llamen. Se deja anotado y NO se le manda nada.
+ *
+ * Es importante que no se analice ese mensaje: apretar "quiero que me llamen" no
+ * es una opinión sobre el servicio. Antes caía como un mensaje cualquiera, la IA
+ * lo clasificaba (daba AMARILLO) y al cliente le llegaba el mensaje automático de
+ * "lamentamos que tu experiencia no haya sido la esperada", que no tiene nada que
+ * ver con lo que pidió. Y encima nadie se enteraba de que había pedido el llamado.
+ */
+export async function marcarQuiereLlamado(
+  casoId: string,
+  waMessageIdBoton?: string
+): Promise<{ marcado: boolean; motivo?: string }> {
+  const caso = await prisma.caso.findUnique({ where: { id: casoId } });
+  if (!caso || caso.eliminadoEn) return { marcado: false, motivo: "caso inexistente o eliminado" };
+
+  await prisma.caso.update({
+    where: { id: caso.id },
+    data: {
+      quiereLlamadoEn: new Date(),
+      ...(caso.estadoContacto === EstadoContacto.ENVIADO
+        ? { estadoContacto: EstadoContacto.RESPONDIDO }
+        : {}),
+    },
+  });
+
+  // El mensaje del botón no se analiza (ver arriba).
+  if (waMessageIdBoton) {
+    await prisma.whatsappMessage.updateMany({
+      where: { casoId: caso.id, waMessageId: waMessageIdBoton, analizadoEn: null },
+      data: { analizadoEn: new Date() },
+    });
+  }
+
+  console.log(`[encuesta-posventa] el caso ${caso.numeroOrden} pidió que lo llamen`);
+  return { marcado: true };
+}
+
 export interface ResultadoEnvioPreguntas {
   enviado: boolean;
   motivo?: string;
@@ -53,6 +99,23 @@ export async function enviarPreguntasPosventa(
 ): Promise<ResultadoEnvioPreguntas> {
   const caso = await prisma.caso.findUnique({ where: { id: casoId } });
   if (!caso || caso.eliminadoEn) return { enviado: false, motivo: "caso inexistente o eliminado" };
+
+  // El mensaje del BOTÓN se marca como analizado ACÁ ARRIBA, antes de cualquier
+  // otro corte.
+  //
+  // Apretar un botón no es una opinión y nunca tiene que entrar al análisis. Si
+  // esto se hiciera recién al final, el segundo apretón (que corta en "ya se le
+  // habían mandado") dejaría ese mensaje sin marcar: se consolidaría con la
+  // respuesta que el cliente mande después y el analizador recibiría
+  // "(1) Quiero participar por Whatsapp (2) 5 4 5 3 4", que el parser de números
+  // ya no reconoce.
+  if (waMessageIdBoton) {
+    await prisma.whatsappMessage.updateMany({
+      where: { casoId: caso.id, waMessageId: waMessageIdBoton, analizadoEn: null },
+      data: { analizadoEn: new Date() },
+    });
+  }
+
   if (!usaEncuestaPorItems(caso.area)) return { enviado: false, motivo: "la marca o el área no usan encuesta por ítems" };
   if (caso.encuestaItemsEnviadaEn) return { enviado: false, motivo: "ya se le habían mandado" };
   if (caso.whatsappOptOut) return { enviado: false, motivo: "opt-out" };
@@ -108,20 +171,6 @@ export async function enviarPreguntasPosventa(
     }),
   ]);
 
-  // El mensaje del BOTÓN se marca como ya analizado.
-  //
-  // Si no, queda pendiente y se consolida junto con la respuesta que el cliente
-  // mande después: el analizador recibiría "(1) Quiero participar por Whatsapp
-  // (2) 5 4 5 3 4" en vez de "5 4 5 3 4", el parser de números no lo reconocería
-  // y los 5 puntajes se perderían. Apretar un botón no es una opinión y no tiene
-  // nada que aportarle al análisis.
-  if (waMessageIdBoton) {
-    await prisma.whatsappMessage.updateMany({
-      where: { casoId: caso.id, waMessageId: waMessageIdBoton, analizadoEn: null },
-      data: { analizadoEn: new Date() },
-    });
-  }
-
   console.log(`[encuesta-posventa] preguntas enviadas al caso ${caso.numeroOrden}`);
   return { enviado: true };
 }
@@ -164,10 +213,20 @@ export async function guardarPuntajes(
         comentario: p.comentario?.trim() || null,
         analisisId: analisisId ?? null,
       },
+      // OJO: el update NO pisa con null.
+      //
+      // Un mensaje posterior del cliente ("me olvidé: el auto vino sin lavar")
+      // se analiza contra los 5 ítems y devuelve null en los 4 que no menciona.
+      // Escribiendo esos null encima, ese cliente perdía los puntajes que YA
+      // había dado: sus notas desaparecían del promedio del área y la fila del
+      // Excel quedaba con guiones. Peor todavía con un mensaje sin relación
+      // ("hola, necesito un turno"), que borraba los cinco.
+      //
+      // Ahora un mensaje posterior solo puede COMPLETAR o CORREGIR lo que
+      // menciona; lo que no menciona queda como estaba.
       update: {
-        estrellas,
-        comentario: p.comentario?.trim() || null,
-        analisisId: analisisId ?? null,
+        ...(estrellas !== null ? { estrellas, analisisId: analisisId ?? null } : {}),
+        ...(p.comentario?.trim() ? { comentario: p.comentario.trim() } : {}),
       },
     });
     if (estrellas !== null) guardados++;

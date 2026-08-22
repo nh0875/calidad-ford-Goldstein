@@ -54,7 +54,14 @@ async function guardar(
   archivo: ArchivoEncuestaVW,
   opciones: OpcionesImportacionVW
 ): Promise<ResumenImportacionVW> {
-  const sucursales = [...new Set(archivo.filas.map((f) => f.codigoSucursal))];
+  // Las sucursales que se van a cerrar salen de las HOJAS del archivo, no de las
+  // filas. Con las filas, UNA sola fila mal cargada —un vendedor de otra
+  // sucursal metido por error en la hoja equivocada— alcanzaba para que el
+  // sistema diera por respondida a TODA esa otra sucursal, que ni siquiera vino
+  // en el archivo. La hoja es lo que dice de qué sucursal habla la foto.
+  const sucursales = archivo.hojas
+    .map((h) => h.codigoSucursal)
+    .filter((c): c is string => !!c);
   const nombresSucursal = [...new Set(archivo.hojas.map((h) => h.nombreSucursal))];
 
   // El período sale de la entrega más reciente: es lo que da el "de cuándo" es
@@ -153,11 +160,25 @@ async function guardar(
 
   // ---- 3. Los que ya no vienen: contestaron --------------------------------
   // Acotado a las sucursales del archivo, por lo dicho arriba.
+  // Se excluyen TODOS los chasis que vinieron en el archivo, incluidos los que el
+  // lector rechazó.
+  //
+  // Antes el corte era "no tiene el sello de esta carga", y ese sello solo lo
+  // reciben las filas que pasaron las validaciones. Una fila con el mail mal
+  // escrito, sin nombre o con el código de vendedor cortado ESTÁ en el archivo y
+  // fábrica la sigue listando como pendiente, pero para el importador no existía:
+  // se la daba por respondida, el cliente desaparecía de la lista de su vendedor,
+  // nadie lo llamaba, y la tasa de respuesta subía por alguien que nunca contestó.
+  const chasisDelArchivo = [
+    ...archivo.filas.map((f) => f.chasis),
+    ...archivo.rechazadas.map((r) => r.chasis),
+  ].filter(Boolean);
+
   const { count: marcadosRespondio } = await prisma.encuestaFabricaVW.updateMany({
     where: {
       estado: EstadoEncuestaFabrica.PENDIENTE,
       vendedor: { codigoSucursal: { in: sucursales } },
-      NOT: { vistaEnUploadId: upload.id },
+      chasis: { notIn: chasisDelArchivo },
     },
     data: { estado: EstadoEncuestaFabrica.RESPONDIO, respondioEn: new Date() },
   });

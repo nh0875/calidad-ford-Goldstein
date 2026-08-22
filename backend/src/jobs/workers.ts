@@ -591,11 +591,17 @@ async function procesarAgradecimiento(job: Job<DatosAgradecimiento>) {
 
   // Semáforo del último análisis. AMARILLO y ROJO llevan el mensaje empático (sin
   // encuesta); VERDE lleva el recordatorio de la encuesta.
-  const analisis = await prisma.sentimentAnalysis.findFirst({
-    where: { casoId },
-    orderBy: { analyzedAt: "desc" },
-    select: { semaforo: true, requiereRevisionManual: true },
-  });
+  // El análisis que CUENTA, no el último.
+  //
+  // Todo el sistema define la clasificación vigente como el análisis principal
+  // (esSeguimiento=false): las pantallas, los reportes y los rankings. Este era
+  // el único lugar que miraba el último sin filtrar, y justo es el que le manda
+  // un WhatsApp al cliente. Consecuencia: un caso ROJO con RQR abierto al que el
+  // cliente después le escribe algo amable —un seguimiento que NO escala, así
+  // que el caso sigue rojo en todos lados— recibía igual el mensaje de promotor
+  // pidiéndole que puntúe la encuesta con 5. Y al revés: un caso VERDE cuyo
+  // último mensaje fue un audio ilegible se quedaba sin su agradecimiento.
+  const analisis = await analisisPrincipal(casoId);
   const semaforo = analisis?.semaforo ?? null;
 
   // Qué corresponde mandar (o no mandar) según cómo quedó clasificado el caso.

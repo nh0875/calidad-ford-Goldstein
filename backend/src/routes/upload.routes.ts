@@ -5,6 +5,7 @@ import { recibirXlsx } from "../middlewares/uploadXlsx";
 import { confirmUpload, listUploads, previewUpload } from "../controllers/upload.controller";
 import { confirmFord, previewFord } from "../controllers/encuesta-ford.controller";
 import { eliminarUpload } from "../controllers/admin.controller";
+import { requireRefuerzo } from "../middlewares/marca";
 
 const router = Router();
 
@@ -16,8 +17,13 @@ router.post("/", recibirXlsx("archivo"), asyncHandler(previewUpload));
 router.post("/confirm", asyncHandler(confirmUpload));
 
 // --- Encuesta Ford (Parte B): flujo de carga propio, mismo patrón ---
-router.post("/ford", recibirXlsx("archivo"), asyncHandler(previewFord));
-router.post("/ford/confirm", asyncHandler(confirmFord));
+// Detrás de requireRefuerzo: es el circuito de la encuesta de fábrica de FORD.
+// Sin esto, en Volkswagen la API aceptaba el archivo igual (la solapa está
+// escondida, pero esconder no es cortar) y lo procesaba con el lector
+// equivocado. El middleware va ANTES de recibirXlsx para que VW ni siquiera
+// levante el archivo a memoria.
+router.post("/ford", requireRefuerzo, recibirXlsx("archivo"), asyncHandler(previewFord));
+router.post("/ford/confirm", requireRefuerzo, asyncHandler(confirmFord));
 
 // Historial de cargas con sus KPIs de resumen
 router.get("/", asyncHandler(listUploads));

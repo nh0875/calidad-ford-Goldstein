@@ -38,8 +38,14 @@ export async function previewEncuestaVW(req: Request, res: Response) {
 
   // Cuántos se darían por respondidos si se confirma: los pendientes de estas
   // sucursales cuyo chasis no viene en el archivo nuevo.
-  const sucursales = [...new Set(archivo.filas.map((f) => f.codigoSucursal))];
-  const chasisDelArchivo = archivo.filas.map((f) => f.chasis);
+  // Las MISMAS sucursales que va a cerrar la importación (por hoja, no por fila).
+  const sucursales = archivo.hojas.map((h) => h.codigoSucursal).filter((c): c is string => !!c);
+  // Los MISMOS chasis que va a excluir la importación (aceptados + rechazados),
+  // para que el número que se muestra antes de confirmar sea el que va a pasar.
+  const chasisDelArchivo = [
+    ...archivo.filas.map((f) => f.chasis),
+    ...archivo.rechazadas.map((r) => r.chasis),
+  ].filter(Boolean);
   const seDarianPorRespondidos = await prisma.encuestaFabricaVW.count({
     where: {
       estado: EstadoEncuestaFabrica.PENDIENTE,

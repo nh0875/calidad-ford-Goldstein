@@ -267,6 +267,14 @@ model Caso {
   // saber que el próximo mensaje del cliente las está contestando, y para no
   // mandárselas dos veces si vuelve a apretar el botón.
   encuestaItemsEnviadaEn DateTime?
+  // El cliente apretó el botón "Quiero participar por Llamada": pidió que lo
+  // llamen en vez de contestar por WhatsApp. Queda pendiente de que alguien de
+  // Calidad lo llame, y se resalta en Seguimiento.
+  //
+  // Es el mismo patrón que ClienteFidelizacion.quiereAsesorEn. Sin esto, ese
+  // botón caía como un mensaje cualquiera: la IA lo clasificaba como si fuera
+  // una opinión y al cliente le llegaba el mensaje automático equivocado.
+  quiereLlamadoEn        DateTime?
   createdAt              DateTime           @default(now())
 
   // Parte A: agradecimiento + recordatorio de encuesta post-clasificación

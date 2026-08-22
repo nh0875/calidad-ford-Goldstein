@@ -11,6 +11,7 @@ import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.servic
 import { obtenerCredencialesMeta, plantillaContactoPara } from "../services/configuracion.service";
 import { agradecimientoQueue } from "../jobs/queues";
 import { ACCIONES, auditar } from "../services/audit.service";
+import { puntajesDelCaso, usaEncuestaPorItems } from "../services/encuesta-posventa.service";
 
 // ---------- "WhatsApp interno" (seguimiento de conversaciones) ----------
 //
@@ -45,6 +46,8 @@ const SELECT_CASO_ENVIO = {
   agradecimientoEnviadoEn: true,
   tieneRqrAbierto: true,
   ultimoErrorEnvio: true,
+  // El cliente apretó "Quiero participar por Llamada": hay que llamarlo.
+  quiereLlamadoEn: true,
 } satisfies Prisma.CasoSelect;
 
 // Campos del cliente de fidelización para las acciones.
@@ -414,9 +417,15 @@ export async function verConversacion(req: Request, res: Response) {
         optOut: caso.whatsappOptOut,
         suprimido,
         quiereAsesor: false,
+        // Pidió que lo llamen (botón de la plantilla de Posventa de VW).
+        quiereLlamado: caso.quiereLlamadoEn != null,
       },
       mensajes,
       analisis,
+      // Los 5 puntajes de la encuesta de Posventa. Sin esto, Calidad ve que el
+      // caso quedó en 4 estrellas pero no POR QUÉ: que el lavado fue un 1 es
+      // justamente el dato por el que se mide por ítems.
+      puntajesPosventa: usaEncuestaPorItems(caso.area) ? await puntajesDelCaso(caso.id) : null,
       ventana,
       puedeResponder,
       puedeReenviarPlantilla,

@@ -343,8 +343,16 @@ export interface ArchivoEncuestaVW {
   vendedores: VendedorDelArchivo[];
   /** Filas listas para importar (las que tienen los datos mínimos). */
   filas: FilaEncuestaVWListaParaImportar[];
-  /** Filas que NO se pueden importar, con el motivo. */
-  rechazadas: Array<{ hoja: string; numeroFilaExcel: number; motivo: string }>;
+  /**
+   * Filas que NO se pueden importar, con el motivo.
+   *
+   * Incluye el CHASIS aunque la fila se rechace: fábrica la sigue listando como
+   * pendiente, así que el importador tiene que saber que ese cliente vino en el
+   * archivo. Sin el chasis, la importación lo daba por respondido —desaparecía
+   * de la lista del vendedor y subía la tasa de respuesta— por un dato mal
+   * cargado en el Excel.
+   */
+  rechazadas: Array<{ hoja: string; numeroFilaExcel: number; motivo: string; chasis: string }>;
   /** Códigos de vendedor que aparecen en los datos pero no en la hoja de nombres. */
   vendedoresSinNombre: Array<{ codigo: string; sucursal: string; filas: number }>;
   avisos: string[];
@@ -416,6 +424,7 @@ export function parsearArchivoEncuestaVW(workbook: XLSX.WorkBook): ArchivoEncues
           hoja: hoja.nombre,
           numeroFilaExcel: fila.numeroFilaExcel,
           motivo: `El código de vendedor "${c.codigoVendedor ?? ""}" no tiene ${LARGO_CODIGO_VENDEDOR} dígitos.`,
+          chasis: (c.chasis ?? "").trim(),
         });
         continue;
       }
@@ -425,15 +434,32 @@ export function parsearArchivoEncuestaVW(workbook: XLSX.WorkBook): ArchivoEncues
           hoja: hoja.nombre,
           numeroFilaExcel: fila.numeroFilaExcel,
           motivo: email ? `El mail "${email}" no parece válido.` : "La fila no tiene mail del cliente.",
+          chasis: (c.chasis ?? "").trim(),
         });
         continue;
       }
+      // El CHASIS es la clave: identifica la unidad y es @unique en la base. Si
+      // viniera vacío, dos clientes distintos se guardarían en la MISMA fila
+      // (el upsert por chasis los pisa uno al otro) y uno de los dos
+      // desaparecería sin dejar rastro.
+      const chasis = (c.chasis ?? "").trim();
+      if (!chasis) {
+        rechazadas.push({
+          hoja: hoja.nombre,
+          numeroFilaExcel: fila.numeroFilaExcel,
+          motivo: "La fila no tiene número de chasis, que es lo que identifica la unidad.",
+          chasis: "",
+        });
+        continue;
+      }
+
       const nombreCliente = nombreClienteVW(c.nombre, c.apellido);
       if (!nombreCliente) {
         rechazadas.push({
           hoja: hoja.nombre,
           numeroFilaExcel: fila.numeroFilaExcel,
           motivo: "La fila no tiene nombre ni apellido del cliente.",
+          chasis: (c.chasis ?? "").trim(),
         });
         continue;
       }
@@ -457,7 +483,7 @@ export function parsearArchivoEncuestaVW(workbook: XLSX.WorkBook): ArchivoEncues
         nombreVendedor,
         nombreCliente,
         email,
-        chasis: (c.chasis ?? "").trim(),
+        chasis,
         dominio: c.dominio?.trim() || null,
         canalVentas: c.canalVentas?.trim() || null,
         area: areaDeCanalVW(c.canalVentas),
