@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { marca } from "../config/marca";
 import { AREAS_VW, NOMBRE_AREA_VW, ORIGENES_RQR_VW, SUBAREAS_VW } from "../config/areas-vw";
+import { DEFINICION_ITEMS } from "../config/posventa-vw";
 
 // Qué marca es esta instancia y qué módulos tiene. Lo consulta el frontend al
 // arrancar para saber qué pestañas mostrar y cómo mostrar la satisfacción
@@ -30,7 +31,14 @@ export function infoMarca(_req: Request, res: Response) {
       // carga de Excel rechazaría el archivo real de VW, que tiene otro formato.
       refuerzo: marca.refuerzo.habilitado && marca.refuerzo.formatoExcel === "FORD",
       encuestaFabrica: marca.refuerzo.habilitado && marca.refuerzo.formatoExcel === "VW",
+      // Pantalla de desempeño de Posventa por ítems.
+      desempenoPosventa: marca.posventaPorItems,
     },
+    // Los 5 ítems que se miden en Posventa. Van acá para que la pantalla arme
+    // sus columnas y sus etiquetas sin una consulta aparte: son fijos y chicos.
+    posventa: marca.posventaPorItems
+      ? { porItems: true, items: DEFINICION_ITEMS }
+      : { porItems: false, items: [] },
     // Catálogo de áreas/subáreas del RQR, solo en las marcas que lo usan. Va
     // acá para que el formulario lo tenga sin una consulta aparte: son datos
     // fijos y chicos, no cambian entre usuarios.

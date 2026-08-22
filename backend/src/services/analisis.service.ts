@@ -149,7 +149,18 @@ export function esSoloEmoji(texto: string): boolean {
   // (dan la forma emoji a un símbolo): U+200D, U+FE0E, U+FE0F.
   const sinEspacios = texto.replace(/[\s\u200d\ufe0e\ufe0f]/g, "").trim();
   if (!sinEspacios) return false;
-  // Si al quitar todos los pictogramas y símbolos no queda NADA, era solo emoji.
+
+  // TIENE QUE HABER AL MENOS UN PICTOGRAMA DE VERDAD.
+  //
+  // Sin esto, "5 4 5 3 4" contaba como "solo emojis": en Unicode los dígitos
+  // ASCII son Emoji_Component (se usan para armar las teclas 1️⃣ 2️⃣), así que al
+  // sacarlos no quedaba nada y la función decía que sí. Consecuencia real: un
+  // cliente que contestaba la encuesta de Posventa con "5 4 5 3 4" caía en
+  // "reacción ambigua" y su respuesta se perdía entera; y en Ford, un cliente
+  // que contesta solo "5" cae igual.
+  if (!/\p{Extended_Pictographic}/u.test(sinEspacios)) return false;
+
+  // Si al quitar los pictogramas y sus modificadores no queda NADA, era solo emoji.
   const sinPictogramas = sinEspacios.replace(
     /[\p{Extended_Pictographic}\p{Emoji_Component}\p{Emoji_Modifier}]/gu,
     ""

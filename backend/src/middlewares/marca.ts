@@ -43,3 +43,16 @@ export function requireEncuestaVW(_req: Request, res: Response, next: NextFuncti
   }
   next();
 }
+
+/**
+ * Encuesta de Posventa medida por ítems. Solo en las marcas que la usan: en las
+ * demás el área se clasifica con una nota sola y estas pantallas no existen.
+ */
+export function requirePosventaPorItems(_req: Request, res: Response, next: NextFunction) {
+  if (!marca.posventaPorItems) {
+    return res.status(404).json({
+      message: `En ${marca.nombre} la encuesta de Posventa no se mide por ítems.`,
+    });
+  }
+  next();
+}

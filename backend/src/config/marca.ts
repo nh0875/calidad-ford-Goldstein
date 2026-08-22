@@ -46,6 +46,16 @@ export interface PerfilMarca {
    */
   rqrClienteAnonimo: boolean;
   /**
+   * La encuesta de POSVENTA se mide por ÍTEMS (trato, organización, calidad de
+   * reparación, lavado y satisfacción general) en vez de con una sola nota.
+   *
+   * Es un pedido de Calidad de VW: Posventa pasa por varias manos distintas y
+   * con una nota sola no se sabe cuál falló. Ventas sigue con la clasificación
+   * de siempre —es otro circuito, con otra gente y otros tiempos—, así que esto
+   * aplica SOLO a los casos de área POSVENTA.
+   */
+  posventaPorItems: boolean;
+  /**
    * Refuerzo de la encuesta de fábrica. Las dos marcas lo tienen (fábrica manda
    * la encuesta al mail del cliente), pero se gestiona distinto:
    *  - Ford: los asesores entran al sistema y trabajan sus tareas.
@@ -81,6 +91,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     fidelizacion: true,
     rqrConSubareas: false,
     rqrClienteAnonimo: false,
+    posventaPorItems: false,
     refuerzo: { habilitado: true, notificarPorMail: false, formatoExcel: "FORD" },
     colorDocumento: "003478", // azul Ford
     logoArchivo: "logo-ford.png",
@@ -96,6 +107,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     fidelizacion: false,
     rqrConSubareas: true,
     rqrClienteAnonimo: true,
+    posventaPorItems: true,
     refuerzo: { habilitado: true, notificarPorMail: true, formatoExcel: "VW" },
     colorDocumento: "001E50", // azul Volkswagen
     logoArchivo: "logo-volkswagen.png",

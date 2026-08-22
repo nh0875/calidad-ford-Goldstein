@@ -10,6 +10,7 @@ import {
   LogOut,
   LucideIcon,
   MailCheck,
+  Wrench,
   GitMerge,
   MessageSquareWarning,
   MessagesSquare,
@@ -44,13 +45,14 @@ const navItems: Array<{
   label: string;
   icono: LucideIcon;
   exacto?: boolean;
-  modulo?: "fidelizacion" | "refuerzo" | "encuestaFabrica";
+  modulo?: "fidelizacion" | "refuerzo" | "encuestaFabrica" | "desempenoPosventa";
 }> = [
   { to: "/dashboard", label: "Dashboard", icono: LayoutDashboard },
   { to: "/upload", label: "Carga de Excel", icono: UploadCloud },
   { to: "/casos", label: "Casos", icono: ClipboardList },
   { to: "/reportes/sentimiento", label: "Reporte de Sentimiento", icono: SmilePlus },
   { to: "/reportes/causas-raiz", label: "Causas Raíz", icono: GitBranch },
+  { to: "/desempeno-posventa", label: "Desempeño de Posventa", icono: Wrench, modulo: "desempenoPosventa" },
   { to: "/rqr", label: "RQR", icono: MessageSquareWarning },
   { to: "/seguimiento", label: "Seguimiento", icono: MessagesSquare },
   { to: "/refuerzos", label: "Refuerzo de encuesta", icono: ClipboardCheck, modulo: "refuerzo" },
@@ -73,6 +75,7 @@ const pageTitles: Record<string, string> = {
   "/supresion": "Lista de supresión (no contactar)",
   "/auditoria": "Auditoría del sistema",
   "/configuracion": "Configuración",
+  "/desempeno-posventa": "Desempeño de Posventa — por ítem",
   "/refuerzos": "Refuerzo de la encuesta de fábrica",
   "/encuestas-fabrica": "Encuestas de fábrica — pendientes por vendedor",
   "/fidelizacion": "Fidelización — carga de planillas",

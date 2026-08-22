@@ -3,6 +3,7 @@ import { prisma } from "../config/prisma";
 import { env } from "../config/env";
 import { cifradoDisponible, cifrar, descifrar } from "./cripto.service";
 import { marca } from "../config/marca";
+import { textoPreguntasPorDefecto } from "../config/posventa-vw";
 
 // Configuración editable (clave→valor en la tabla Configuracion). Parte A guarda
 // acá los textos de los mensajes automáticos y sus toggles, editables desde
@@ -19,6 +20,12 @@ export const CLAVES_CONFIG = {
   FIDELIZACION_RESPUESTA_BOTON_ASESOR: "fidelizacion.respuestaBotonAsesor",
   FIDELIZACION_ENVIAR_RESPUESTA_BOTON: "fidelizacion.enviarRespuestaBotonAsesor",
   FIDELIZACION_TEXTO_BOTON_ASESOR: "fidelizacion.textoBotonAsesor",
+  // Encuesta de Posventa por ítems (Volkswagen). El TÍTULO del botón es el que
+  // figura en la plantilla aprobada en Meta: si allá lo renombran, se corrige
+  // acá y el sistema lo vuelve a reconocer, sin tocar código ni redeployar.
+  POSVENTA_TEXTO_BOTON_WHATSAPP: "posventa.textoBotonWhatsapp",
+  POSVENTA_PREGUNTAS: "posventa.preguntas",
+  POSVENTA_ENVIAR_PREGUNTAS: "posventa.enviarPreguntas",
 } as const;
 
 // Placeholders soportados en los textos: {nombre} {email} {modelo}
@@ -36,6 +43,11 @@ export const DEFAULTS_CONFIG: Record<string, string> = {
     "¡Gracias, {nombre}! Ya tomamos tu pedido de turno con un asesor. En breve nos comunicamos para coordinar el día y horario que mejor te quede. ¡Saludos!",
   [CLAVES_CONFIG.FIDELIZACION_ENVIAR_RESPUESTA_BOTON]: "true",
   [CLAVES_CONFIG.FIDELIZACION_TEXTO_BOTON_ASESOR]: "Agendar mi Turno con un Asesor",
+  // Posventa por ítems. El texto de las preguntas se arma del catálogo
+  // (config/posventa-vw.ts) para que la lista y el orden vivan en un solo lugar.
+  [CLAVES_CONFIG.POSVENTA_TEXTO_BOTON_WHATSAPP]: "Quiero participar por Whatsapp",
+  [CLAVES_CONFIG.POSVENTA_PREGUNTAS]: textoPreguntasPorDefecto(),
+  [CLAVES_CONFIG.POSVENTA_ENVIAR_PREGUNTAS]: "true",
 };
 
 // Solo estas claves son editables desde la API (evita que se inyecten claves arbitrarias)

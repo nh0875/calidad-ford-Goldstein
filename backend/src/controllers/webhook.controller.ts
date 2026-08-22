@@ -9,6 +9,11 @@ import {
 } from "../services/agradecimiento.service";
 import { programarAnalisis } from "../services/analisis.service";
 import {
+  enviarPreguntasPosventa,
+  esBotonParticiparWhatsapp,
+  usaEncuestaPorItems,
+} from "../services/encuesta-posventa.service";
+import {
   CLAVES_CONFIG,
   guardarEstadoPlantillaFidelizacion,
   obtenerCredencialesMeta,
@@ -183,6 +188,20 @@ async function procesarMensajeEntrante(mensaje: MensajeEntranteMeta) {
     });
     // Opt-out (BAJA/STOP): se marca el caso; el agradecimiento lo respeta.
     await marcarOptOutSiCorresponde(caso.id, contenido);
+
+    // ENCUESTA DE POSVENTA POR ÍTEMS (Volkswagen): el cliente apretó "Quiero
+    // participar por WhatsApp" en la plantilla. Se le mandan las 5 preguntas y
+    // NO se analiza este mensaje: apretar un botón no es una opinión, y
+    // mandarlo a la IA lo clasificaría como si lo fuera.
+    if (usaEncuestaPorItems(caso.area) && (await esBotonParticiparWhatsapp(contenido, esBoton))) {
+      const r = await enviarPreguntasPosventa(caso.id, mensaje.id);
+      console.log(
+        `[webhook] ${caso.numeroOrden} quiere participar por WhatsApp` +
+          (r.enviado ? ": preguntas enviadas" : `, pero no se enviaron (${r.motivo})`)
+      );
+      return;
+    }
+
     // El análisis se programa (debounce) para analizar la tanda completa junta.
     await programarAnalisis(caso.id);
     console.log(`[webhook] respuesta de ${mensaje.from} asociada al caso ${caso.numeroOrden} (${caso.id})`);

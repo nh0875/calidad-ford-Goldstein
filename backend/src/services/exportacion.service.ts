@@ -339,7 +339,7 @@ function detectarFormatoImagen(datos: Buffer): "png" | "jpg" | null {
  * y no puede fallar la descarga porque falte un archivo de imagen. Si no está,
  * el Word sale sin logo y queda un aviso en el log (una sola vez).
  */
-function leerLogoMarca(): { datos: Buffer; tipo: "png" | "jpg" } | null {
+export function leerLogoMarca(): { datos: Buffer; tipo: "png" | "jpg" } | null {
   if (logoCache !== undefined) return logoCache;
   const ruta =
     process.env.LOGO_MARCA_ARCHIVO?.trim() ||

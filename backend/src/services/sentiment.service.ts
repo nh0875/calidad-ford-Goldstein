@@ -4,6 +4,9 @@ import { z } from "zod";
 import { env } from "../config/env";
 import { marca, usaEstrellas } from "../config/marca";
 import { tieneEmojiNegativo } from "./analisis.service";
+import { ITEMS_POSVENTA } from "../config/posventa-vw";
+import { PuntajeItem } from "./encuesta-posventa.service";
+import { esquemaItemsIA, leerPuntajesDeLista, normalizarPuntajes, promptItemsPosventa } from "./posventa-items.service";
 
 /**
  * Confianza MÍNIMA para dar por bueno un caso positivo (VERDE / 5 estrellas).
@@ -423,11 +426,11 @@ type Proveedor = "anthropic" | "gemini";
 
 const anthropic = new Anthropic({ apiKey: env.anthropicApiKey || "sin-configurar" });
 
-async function llamarAnthropic(mensajes: MensajeIA[]): Promise<string> {
+async function llamarAnthropic(mensajes: MensajeIA[], sistema?: string): Promise<string> {
   const respuesta = await anthropic.messages.create({
     model: env.anthropicModel,
     max_tokens: 1024,
-    system: promptDelSistema(),
+    system: sistema ?? promptDelSistema(),
     messages: mensajes,
   });
   const bloqueTexto = respuesta.content.find(
@@ -448,7 +451,7 @@ export class GeminiApiError extends Error {
   }
 }
 
-async function llamarGemini(mensajes: MensajeIA[]): Promise<string> {
+async function llamarGemini(mensajes: MensajeIA[], sistema?: string): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${env.geminiModel}:generateContent?key=${env.geminiApiKey}`;
   const contents = mensajes.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -472,7 +475,7 @@ async function llamarGemini(mensajes: MensajeIA[]): Promise<string> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: promptDelSistema() }] },
+        systemInstruction: { parts: [{ text: sistema ?? promptDelSistema() }] },
         contents,
         generationConfig,
       }),
@@ -827,4 +830,95 @@ export function esErrorCuota(err: unknown): boolean {
   if (err instanceof GeminiApiError) return err.status === 429;
   if (err instanceof Anthropic.RateLimitError) return true;
   return false;
+}
+
+
+// ---------------------------------------------------------------------------
+// Encuesta de Posventa por ítems (Volkswagen)
+// ---------------------------------------------------------------------------
+
+/**
+ * Lee la respuesta del cliente y devuelve un puntaje por ítem.
+ *
+ * Primero prueba el parser sin IA: la mayoría contesta "5 4 5 3 4" y eso es
+ * inequívoco, no tiene sentido gastar una llamada ni arriesgar que el modelo se
+ * equivoque en algo que es literalmente una lista de números.
+ *
+ * Devuelve null si no se pudo leer nada: el caso queda para revisión manual en
+ * vez de inventar puntajes, porque un puntaje inventado ensucia el promedio del
+ * área y ahí ya nadie lo puede distinguir de uno real.
+ */
+export async function analizarItemsPosventa(
+  texto: string
+): Promise<{ puntajes: PuntajeItem[]; confianza: number; resumen: string; crudo: unknown } | null> {
+  // 1) Sin IA, cuando es una lista de números.
+  const deLista = leerPuntajesDeLista(texto);
+  if (deLista) {
+    return {
+      puntajes: deLista,
+      confianza: 1,
+      resumen: "El cliente puntuó los 5 ítems.",
+      crudo: { motivo: "lista-de-numeros", texto },
+    };
+  }
+
+  // 2) Con IA.
+  if (env.analisisModoMock || (!hayIaReal() && env.modoDemo)) {
+    return analizarItemsMock(texto);
+  }
+  const proveedor = hayIaReal() ? elegirProveedor() : "anthropic";
+  const llamarModelo = proveedor === "gemini" ? llamarGemini : llamarAnthropic;
+  const sistema = promptItemsPosventa();
+
+  let crudo = "";
+  try {
+    crudo = await llamarModelo([{ role: "user", content: `Respuesta del cliente:
+"""${texto}"""` }], sistema);
+  } catch (err) {
+    console.error("[posventa-items] falló la llamada a la IA:", err instanceof Error ? err.message : err);
+    return null;
+  }
+
+  const limpio = crudo.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  let objeto: unknown;
+  try {
+    objeto = JSON.parse(limpio);
+  } catch {
+    console.warn("[posventa-items] la IA no devolvió JSON válido");
+    return null;
+  }
+  const validado = esquemaItemsIA.safeParse(objeto);
+  if (!validado.success) {
+    console.warn("[posventa-items] el JSON de la IA no tiene la forma esperada");
+    return null;
+  }
+
+  return {
+    puntajes: normalizarPuntajes(validado.data.puntajes),
+    confianza: validado.data.confianza,
+    resumen: validado.data.resumen,
+    crudo,
+  };
+}
+
+/** Modo simulado: puntúa por palabras clave, para probar el circuito sin API. */
+function analizarItemsMock(texto: string) {
+  const t = texto.toLowerCase();
+  const malo = /(desastre|pesim|sucio|mal|nunca|queja|tarde|demor)/.test(t);
+  const bueno = /(excelente|impecable|perfecto|muy bien|de diez|barbaro)/.test(t);
+  const base = malo ? 2 : bueno ? 5 : 4;
+  return {
+    puntajes: normalizarPuntajes(
+      ITEMS_POSVENTA.map((item) => ({
+        item,
+        // El mock solo puntúa el general: inventar los otros 4 daría una idea
+        // falsa de que el circuito por ítems anda cuando en realidad no se probó.
+        estrellas: item === "GENERAL" ? base : null,
+        comentario: null,
+      }))
+    ),
+    confianza: 0.5,
+    resumen: `[MOCK] Lectura simulada (${base} estrellas en general).`,
+    crudo: { mock: true, texto },
+  };
 }

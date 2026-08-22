@@ -24,6 +24,13 @@ export interface InfoMarca {
     refuerzo: boolean;
     // Pantalla propia de encuestas de fábrica (Volkswagen).
     encuestaFabrica: boolean;
+    // Pantalla de desempeño de Posventa por ítems (Volkswagen).
+    desempenoPosventa: boolean;
+  };
+  // Los 5 ítems que mide la encuesta de Posventa. Vacío en las marcas que no la usan.
+  posventa: {
+    porItems: boolean;
+    items: Array<{ item: string; etiqueta: string; pregunta: string; descripcion: string }>;
   };
   // Catálogo del RQR de las marcas que clasifican por área + subárea (VW).
   // En las demás viene con porSubareas=false y las listas vacías.
@@ -47,7 +54,8 @@ const POR_DEFECTO: InfoMarca = {
   nombre: "Ford",
   escala: "SEMAFORO",
   estrellasSinRqr: null,
-  modulos: { fidelizacion: true, refuerzo: true, encuestaFabrica: false },
+  modulos: { fidelizacion: true, refuerzo: true, encuestaFabrica: false, desempenoPosventa: false },
+  posventa: { porItems: false, items: [] },
   rqr: { porSubareas: false, clienteAnonimo: false, areas: [], origenes: [] },
 };
 

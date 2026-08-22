@@ -21,11 +21,17 @@ import demoRoutes from "./demo.routes";
 import configuracionRoutes from "./configuracion.routes";
 import refuerzoRoutes from "./refuerzo.routes";
 import encuestaVwRoutes from "./encuesta-vw.routes";
+import posventaRoutes from "./posventa.routes";
 import supresionRoutes from "./supresion.routes";
 import normalizacionRoutes from "./normalizacion.routes";
 import avisoRoutes from "./aviso.routes";
 import fidelizacionRoutes from "./fidelizacion.routes";
-import { requireEncuestaVW, requireFidelizacion, requireRefuerzo } from "../middlewares/marca";
+import {
+  requireEncuestaVW,
+  requireFidelizacion,
+  requirePosventaPorItems,
+  requireRefuerzo,
+} from "../middlewares/marca";
 import seguimientoRoutes from "./seguimiento.routes";
 
 const router = Router();
@@ -70,6 +76,9 @@ router.use("/refuerzos", requireRefuerzo, refuerzoRoutes); // tareas de refuerzo
 // Encuestas de fábrica de Volkswagen: lista aparte de Caso (esos clientes no
 // traen teléfono) más el ABM de vendedores y el aviso por correo.
 router.use("/encuesta-vw", requireEncuestaVW, encuestaVwRoutes);
+// Desempeño de Posventa por ítems (trato, organización, reparación, lavado y
+// satisfacción general), con su exportación a Excel y Word.
+router.use("/posventa", requirePosventaPorItems, posventaRoutes);
 router.use("/supresion", supresionRoutes); // lista de supresión por teléfono (solo ADMIN)
 router.use("/normalizacion", normalizacionRoutes); // normalización de asesores/sucursales (solo ADMIN)
 router.use("/avisos", avisoRoutes); // cartel rojo en pantalla (RQR abierto, escaladas, amarillos)

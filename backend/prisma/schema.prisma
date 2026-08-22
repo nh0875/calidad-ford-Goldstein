@@ -228,42 +228,46 @@ model ClienteFidelizacion {
 
 // Cada fila del seguimiento post-servicio ("Contacto Posterior")
 model Caso {
-  id                 String             @id @default(cuid())
-  uploadId           String
-  upload             ExcelUpload        @relation(fields: [uploadId], references: [id], onDelete: Cascade)
-  numeroOrden        String
-  fechaProgramacion  DateTime
-  hora               String?
+  id                     String             @id @default(cuid())
+  uploadId               String
+  upload                 ExcelUpload        @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  numeroOrden            String
+  fechaProgramacion      DateTime
+  hora                   String?
   // Área del caso (POSVENTA para el Contacto Posventa; VENTAS para Contacto
   // Ventas). Decide qué usuarios lo ven/gestionan.
-  area               AreaTrabajo        @default(POSVENTA)
-  origenAgendamiento OrigenAgendamiento @default(DEALER)
+  area                   AreaTrabajo        @default(POSVENTA)
+  origenAgendamiento     OrigenAgendamiento @default(DEALER)
   // asesor = nombre NORMALIZADO para mostrar/agrupar (ej. "Carla Campora").
   // asesorCodigo = identificador numérico si venía en el texto (ej. "140445"),
   // guardado aparte para desambiguar homónimos. asesorRaw = valor original del
   // Excel, para trazabilidad y para poder re-normalizar en el futuro.
-  asesor             String
-  asesorCodigo       String?
-  asesorRaw          String?
-  modelo             String
-  patente            String
-  chasisVIN          String?
-  nombrePropietario  String
-  emailPropietario   String?
-  celular            String
-  whatsapp           String
+  asesor                 String
+  asesorCodigo           String?
+  asesorRaw              String?
+  modelo                 String
+  patente                String
+  chasisVIN              String?
+  nombrePropietario      String
+  emailPropietario       String?
+  celular                String
+  whatsapp               String
   // Teléfonos normalizados a E.164 (whatsapp + celular, deduplicados). Se usa
   // para cruzar contra la lista de supresión sin depender del formato original.
-  telefonosNorm      String[]           @default([])
-  comentarioAsesor   String?            @db.Text
-  fechaSalida        DateTime?
-  diasEnServicio     Int?
-  sucursal           String
-  sucursalRaw        String?
-  estadoContacto     EstadoContacto     @default(PENDIENTE)
-  ultimoErrorEnvio   String? // motivo del último fallo de envío de WhatsApp
-  tieneRqrAbierto    Boolean            @default(false) // true mientras exista un RQR ABIERTO/EN_TRATAMIENTO del caso
-  createdAt          DateTime           @default(now())
+  telefonosNorm          String[]           @default([])
+  comentarioAsesor       String?            @db.Text
+  fechaSalida            DateTime?
+  diasEnServicio         Int?
+  sucursal               String
+  sucursalRaw            String?
+  estadoContacto         EstadoContacto     @default(PENDIENTE)
+  ultimoErrorEnvio       String? // motivo del último fallo de envío de WhatsApp
+  tieneRqrAbierto        Boolean            @default(false) // true mientras exista un RQR ABIERTO/EN_TRATAMIENTO del caso
+  // Cuándo se le mandaron las 5 preguntas de la encuesta de Posventa. Sirve para
+  // saber que el próximo mensaje del cliente las está contestando, y para no
+  // mandárselas dos veces si vuelve a apretar el botón.
+  encuestaItemsEnviadaEn DateTime?
+  createdAt              DateTime           @default(now())
 
   // Parte A: agradecimiento + recordatorio de encuesta post-clasificación
   agradecimientoEnviadoEn DateTime? // se envía una sola vez por caso; null = no enviado
@@ -278,12 +282,15 @@ model Caso {
   eliminadoPorId String?
   eliminadoPor   Usuario?  @relation("CasoEliminadoPor", fields: [eliminadoPorId], references: [id])
 
-  mensajes       WhatsappMessage[]
-  analisis       SentimentAnalysis[]
-  rqrs           RQR[]
-  tareasRefuerzo TareaRefuerzo[]
-  supresiones    SupresionContacto[] @relation("SupresionCasoOrigen")
-  avisos         Aviso[]
+  mensajes           WhatsappMessage[]
+  analisis           SentimentAnalysis[]
+  // Puntajes por ítem de la encuesta de Posventa (Volkswagen). Vacío en Ford
+  // y en los casos de Ventas.
+  evaluacionPosventa EvaluacionPosventa[]
+  rqrs               RQR[]
+  tareasRefuerzo     TareaRefuerzo[]
+  supresiones        SupresionContacto[]  @relation("SupresionCasoOrigen")
+  avisos             Aviso[]
 
   @@index([uploadId])
   @@index([sucursal, estadoContacto])
@@ -337,6 +344,8 @@ model WhatsappMessage {
   createdAt             DateTime             @default(now())
 
   analisis SentimentAnalysis[]
+  // Puntajes por ítem de la encuesta de Posventa (Volkswagen). Vacío en Ford y
+  // en los casos de Ventas.
 
   // Único: el id de Meta identifica la entrega; ante un reintento del webhook
   // (Meta reenvía la misma notificación) esto impide duplicar el mensaje
@@ -385,7 +394,8 @@ model SentimentAnalysis {
   mensajesAnalizados     Int              @default(1)
   analyzedAt             DateTime         @default(now())
 
-  rqr RQR?
+  rqr                RQR?
+  evaluacionPosventa EvaluacionPosventa[]
 
   @@index([casoId])
   @@index([semaforo])
@@ -729,4 +739,46 @@ model EncuestaFabricaVW {
   @@index([estado, vendedorId])
   @@index([sucursal, estado])
   @@index([vistaEnUploadId])
+}
+
+// ---------------------------------------------------------------------------
+// Encuesta de Posventa por ítems (Volkswagen)
+// ---------------------------------------------------------------------------
+// Posventa pasa por varias manos —quien atiende, quien organiza, quien repara,
+// quien lava— y con una sola nota no se sabe cuál falló. Se mide cada una por
+// separado, en filas distintas, para poder promediar y rankear por ítem sin
+// pelear con un JSON.
+
+enum ItemPosventa {
+  TRATO
+  ORGANIZACION
+  CALIDAD_REPARACION
+  LAVADO
+  GENERAL
+}
+
+model EvaluacionPosventa {
+  id     String       @id @default(cuid())
+  casoId String
+  caso   Caso         @relation(fields: [casoId], references: [id], onDelete: Cascade)
+  item   ItemPosventa
+
+  // 1 a 5 (5 = mejor). NULL = el cliente no contestó ESE ítem: es distinto de un
+  // 1, y mezclarlos ensuciaría el promedio del área.
+  estrellas  Int?
+  // Lo que el cliente dijo puntualmente de este ítem, si dijo algo. Es lo que
+  // convierte un "3" en algo accionable ("el lavado dejó que desear").
+  comentario String? @db.Text
+
+  // De qué análisis salió, para poder rastrear la respuesta original.
+  analisisId String?
+  analisis   SentimentAnalysis? @relation(fields: [analisisId], references: [id], onDelete: SetNull)
+
+  creadoEn DateTime @default(now())
+
+  // Un puntaje por ítem por caso: si el cliente contesta de nuevo, se corrige el
+  // que había en vez de sumar otro y contarlo dos veces en el promedio.
+  @@unique([casoId, item])
+  @@index([item, estrellas])
+  @@index([analisisId])
 }

@@ -7,11 +7,16 @@ import { prisma } from "../config/prisma";
 import { redisConnection } from "../config/redis";
 import { marcarNoRespondidos } from "../services/mantenimiento.service";
 import { crearRqrAutomatico } from "../services/rqr.service";
+import { ITEM_QUE_DEFINE_EL_CASO, etiquetaItem } from "../config/posventa-vw";
+import { PuntajeItem, guardarPuntajes, usaEncuestaPorItems } from "../services/encuesta-posventa.service";
 import {
   CONFIANZA_MINIMA_POSITIVO,
   ResultadoAnalisis,
+  analizarItemsPosventa,
   analizarRespuesta,
   aplicarBarreraDeConfianza,
+  aplicarReglaRQR,
+  derivarDeEstrellas,
   esErrorCuota,
   esErrorReintenable,
   transcribirAudio,
@@ -318,6 +323,9 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
     return { revisionManual: true };
   }
 
+  // Puntajes por ítem de la encuesta de Posventa (VW). Se guardan DESPUÉS de
+  // crear el análisis, para poder colgarlos de él.
+  let puntajesPosventa: PuntajeItem[] | null = null;
   let resultado: ResultadoAnalisis;
   if (semaforoEmoji === Semaforo.VERDE) {
     // Reacción positiva (👍, ❤️, 🙏…): VERDE determinista, sin gastar una llamada
@@ -337,6 +345,53 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
       requiereRevisionManual: false,
     };
     console.log(`[analisis-sentimiento] caso ${caso.numeroOrden}: reacción positiva ${texto.trim()} → VERDE (sin IA)`);
+  } else if (usaEncuestaPorItems(caso.area) && caso.encuestaItemsEnviadaEn) {
+    // ENCUESTA DE POSVENTA POR ÍTEMS: al cliente se le mandaron las 5 preguntas,
+    // así que su respuesta se lee ítem por ítem y no como una opinión suelta.
+    const items = await analizarItemsPosventa(texto);
+    if (!items) {
+      // No se pudo leer: NO se inventan puntajes. Un puntaje inventado ensucia el
+      // promedio del área y después nadie lo puede distinguir de uno real.
+      resultado = {
+        semaforo: null,
+        severidad: null,
+        estrellas: null,
+        confianza: 0,
+        categoriaCausaRaiz: null,
+        resumen: "No se pudo leer la respuesta a la encuesta de Posventa. Requiere revisión manual.",
+        respuestaCruda: { motivo: "items-ilegibles", contenido: texto },
+        requiereRQR: false,
+        requiereRevisionManual: true,
+      };
+    } else {
+      puntajesPosventa = items.puntajes;
+      // El ítem GENERAL es el que define el caso: es el único que abre RQR. Los
+      // otros 4 se miden y salen en el reporte de desempeño, pero no abren un
+      // reclamo formal por su cuenta — con 5 ítems es casi seguro que alguno no
+      // sea 5, y abrir RQR por cada uno inundaría a Calidad de reclamos que en
+      // realidad son "el lavado estuvo flojo" en una visita por lo demás buena.
+      const general = items.puntajes.find((x) => x.item === ITEM_QUE_DEFINE_EL_CASO)?.estrellas ?? null;
+      const derivado = general !== null ? derivarDeEstrellas(general) : null;
+      const detalle = items.puntajes
+        .filter((x) => x.estrellas !== null)
+        .map((x) => `${etiquetaItem(x.item)} ${x.estrellas}`)
+        .join(" · ");
+      resultado = {
+        semaforo: derivado?.semaforo ?? null,
+        severidad: derivado?.severidad ?? null,
+        estrellas: general,
+        confianza: items.confianza,
+        categoriaCausaRaiz: null,
+        resumen: detalle ? `${items.resumen} (${detalle})` : items.resumen,
+        respuestaCruda: items.crudo,
+        requiereRQR: aplicarReglaRQR(derivado?.semaforo ?? null, derivado?.severidad ?? null),
+        // Sin puntaje general no hay clasificación del caso: lo mira una persona.
+        requiereRevisionManual: general === null,
+      };
+      console.log(
+        `[analisis-sentimiento] caso ${caso.numeroOrden}: encuesta de Posventa leída — ${detalle || "sin puntajes"}`
+      );
+    }
   } else {
     try {
       resultado = await analizarRespuesta(texto, {
@@ -415,6 +470,13 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
       mensajesAnalizados: mensajes.length,
     },
   });
+  // Los puntajes por ítem se cuelgan del análisis recién creado, para poder
+  // rastrear de qué respuesta salió cada uno.
+  if (puntajesPosventa) {
+    const n = await guardarPuntajes(casoId, puntajesPosventa, analisis.id);
+    console.log(`[analisis-sentimiento] caso ${caso.numeroOrden}: ${n} de 5 ítems con puntaje`);
+  }
+
   await marcarAnalizados(idsTanda);
 
   // La IA a veces clasifica PERO pide confirmación humana (baja confianza / caso
