@@ -339,12 +339,26 @@ permiso de administrador (es para registrar la tarea): dale que sí.
 
 *(Si preferís por consola: `powershell -ExecutionPolicy Bypass -File Instalar-Actualizacion-Automatica.ps1`, con PowerShell abierto como administrador.)*
 
-Desde ahí, todas las noches a las **4 de la mañana** la PC mira si hay algo nuevo
-en GitHub. Si no hay (que es casi siempre), **no toca nada**. Si hay, actualiza.
+Desde ahí, todos los días a las **13:00** (hora del almuerzo) la PC mira si hay
+algo nuevo en GitHub. Si no hay (que es casi siempre), **no toca nada**. Si hay,
+actualiza: son un par de minutos sin sistema mientras se reinician los
+contenedores y se aplican las migraciones.
 
-> **Por qué a las 4 AM:** actualizar reinicia los contenedores y aplica
-> migraciones, así que hay un par de minutos sin sistema. A esa hora no hay nadie
-> usando y los WhatsApp tampoco salen (la ventana de envío arranca a las 9).
+> **¿Por qué al mediodía y no de madrugada?** Porque **la PC se apaga a la noche**.
+> Una tarea de las 4 AM no correría nunca, o correría recién al prender la
+> máquina a las 8 y media, justo con la agencia abriendo. Al mediodía la PC
+> seguro está prendida y los usuarios seguro no están.
+
+**Si la PC estuvo apagada al mediodía**, la tarea corre cuando se prende — pero
+**solo si no pasó mucho**. Si ya son más de las 16:00, no actualiza: espera al día
+siguiente. Así nunca reinicia el sistema en pleno horario de trabajo. No se
+pierde nada, la versión nueva sigue esperándolo en GitHub.
+
+> **A esa hora se están mandando WhatsApp** (la ventana va de 9 a 19), así que el
+> backend hace un **apagado ordenado**: termina el mensaje que tenga entre manos
+> antes de cerrar, en vez de morir a la mitad y reintentarlo (lo que le mandaría
+> el WhatsApp dos veces al cliente). Y lo que quede en la cola sobrevive al
+> reinicio, porque Redis guarda en disco.
 
 **Si la versión nueva arranca rota, vuelve sola a la anterior.** Antes de
 construir se anota qué imágenes estaban andando; si después de 5 minutos el

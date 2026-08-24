@@ -47,5 +47,9 @@ COPY assets ./assets
 
 EXPOSE 3000
 
-# Aplica las migraciones pendientes y arranca la API + workers
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+# Aplica las migraciones pendientes y arranca la API + workers.
+# El `exec` no es decorativo: sin él, PID 1 queda siendo `sh`, que NO le pasa el
+# SIGTERM a node. Al reiniciar, Docker esperaría 10 segundos y después mataría
+# todo de golpe, con los workers a mitad de un job (ver el apagado ordenado en
+# src/index.ts). Con `exec`, node ES el PID 1 y recibe la señal él mismo.
+CMD ["sh", "-c", "npx prisma migrate deploy && exec node dist/index.js"]

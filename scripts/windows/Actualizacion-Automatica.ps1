@@ -1,8 +1,8 @@
 ﻿# ============================================================================
 #  Actualización AUTOMÁTICA del Sistema de Calidad
 # ============================================================================
-#  Pensado para el Programador de tareas: corre solo, de madrugada, y actualiza
-#  el sistema únicamente si hay algo nuevo en GitHub.
+#  Pensado para el Programador de tareas: corre solo a la hora del almuerzo y
+#  actualiza el sistema únicamente si hay algo nuevo en GitHub.
 #
 #  POR QUÉ EXISTE: depender de que alguien se acuerde de hacer doble clic no
 #  funciona. La PC de Ford estuvo 21 commits atrás durante una semana y nos
@@ -28,7 +28,14 @@
 # ============================================================================
 
 param(
-    # Para probarlo a mano sin esperar al horario ni al cron.
+    # Hora a la que la tarea debería haber corrido (la pone el instalador). Sirve
+    # para el candado de horario de más abajo. Vacía = sin candado.
+    [string]$HoraPrevista = "",
+
+    # Cuántas horas después de $HoraPrevista se sigue aceptando la corrida.
+    [int]$MargenHoras = 3,
+
+    # Para probarlo a mano sin esperar al horario. Saltea el candado.
     [switch]$Ahora
 )
 
@@ -68,6 +75,31 @@ function Rotar-Log {
 
 Rotar-Log
 Set-Location $ProjectDir
+
+# --- ¿Es hora de actualizar? ------------------------------------------------
+# La tarea está marcada "correr apenas se pueda" para que una PC apagada no se
+# saltee la actualización. El efecto colateral es que si la PC estuvo apagada al
+# mediodía, Windows dispara la tarea CUANDO PRENDE: a las 8 y media de la mañana,
+# con la agencia abriendo y la gente entrando al sistema. Justo lo contrario de
+# lo que se buscó al elegir el horario del almuerzo.
+#
+# Entonces: se acepta la corrida hasta $MargenHoras después de la hora prevista.
+# Más tarde que eso, se deja para el día siguiente. No se pierde nada: la
+# actualización sigue esperando en GitHub.
+if ($HoraPrevista -and -not $Ahora) {
+    $partes = $HoraPrevista -split ":"
+    if ($partes.Count -eq 2) {
+        # OJO con el nombre: PowerShell no distingue mayúsculas, así que llamar
+        # "$ahora" a esta variable pisaba el parámetro -Ahora y rompía el candado.
+        $momento = Get-Date
+        $prevista = $momento.Date.AddHours([int]$partes[0]).AddMinutes([int]$partes[1])
+        $minutos = ($momento - $prevista).TotalMinutes
+        if ($minutos -lt -5 -or $minutos -gt ($MargenHoras * 60)) {
+            Log ("Fuera de horario: son las {0} y esto corre a las {1} (margen {2} h). Se deja para la próxima." -f $momento.ToString("HH:mm"), $HoraPrevista, $MargenHoras)
+            exit 0
+        }
+    }
+}
 
 # --- A qué stack le hablamos -------------------------------------------------
 # docker compose bautiza al proyecto con el nombre de la CARPETA. Como cada PC

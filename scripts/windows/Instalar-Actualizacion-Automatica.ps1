@@ -4,19 +4,26 @@
 #  Se corre UNA VEZ por máquina. Registra una tarea programada que revisa si hay
 #  cambios nuevos en GitHub y, si los hay, actualiza el sistema.
 #
-#  Se corre en horario de MADRUGADA a propósito: actualizar reinicia los
-#  contenedores y aplica migraciones, así que hay un par de minutos sin sistema.
-#  A las 4 de la mañana no hay nadie usándolo y los WhatsApp tampoco salen (la
-#  ventana de envío arranca a las 9).
+#  Corre a la HORA DEL ALMUERZO a propósito: actualizar reinicia los contenedores
+#  y aplica migraciones, así que hay un par de minutos sin sistema.
+#
+#  ¿Por qué no de madrugada, que sería más tranquilo? Porque la PC de la agencia
+#  se apaga a la noche. Una tarea de las 4 AM no correría nunca, o correría al
+#  prender la máquina a las 8 y media, con la agencia abriendo. Al mediodía la PC
+#  seguro está prendida y los usuarios seguro no están.
+#
+#  Como al mediodía la ventana de envío está abierta (9 a 19), el backend hace un
+#  apagado ordenado: termina el WhatsApp que tenga entre manos antes de cerrar, y
+#  la cola vive en Redis con persistencia, así que lo pendiente sigue ahí.
 #
 #  Uso:
 #      powershell -ExecutionPolicy Bypass -File Instalar-Actualizacion-Automatica.ps1
-#      powershell -ExecutionPolicy Bypass -File Instalar-Actualizacion-Automatica.ps1 -Hora 05:30
+#      powershell -ExecutionPolicy Bypass -File Instalar-Actualizacion-Automatica.ps1 -Hora 13:30
 #      powershell -ExecutionPolicy Bypass -File Instalar-Actualizacion-Automatica.ps1 -Quitar
 # ============================================================================
 
 param(
-    [string]$Hora = "04:00",
+    [string]$Hora = "13:00",
     [switch]$Quitar
 )
 
@@ -60,8 +67,11 @@ if ($Hora -notmatch '^\d{1,2}:\d{2}$') {
     exit 1
 }
 
+# Se le pasa la hora prevista para que el script sepa reconocer una corrida
+# tardía (PC que estuvo apagada al mediodía y arranca a la mañana siguiente) y la
+# deje pasar en vez de actualizar con la agencia llena de gente.
 $accion = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument ("-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"{0}`"" -f $Script)
+    -Argument ("-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"{0}`" -HoraPrevista {1}" -f $Script, $Hora)
 
 # Diaria a la hora elegida. Si la PC estaba apagada, se corre cuando prende.
 $disparador = New-ScheduledTaskTrigger -Daily -At $Hora
@@ -81,8 +91,10 @@ Register-ScheduledTask -TaskName $NombreTarea -Action $accion -Trigger $disparad
 Write-Host ""
 Write-Host "  Listo. El sistema se va a actualizar solo." -ForegroundColor Green
 Write-Host ""
-Write-Host "    Cuando       : todos los dias a las $Hora"
+Write-Host "    Cuando       : todos los dias a las $Hora (hora del almuerzo)"
 Write-Host "    Que hace     : mira si hay algo nuevo en GitHub; si no hay, no toca nada"
+Write-Host "    Si la PC estaba apagada: corre al prenderla, salvo que ya sea muy tarde"
+Write-Host "                   (ahi espera al dia siguiente y no molesta en horario de trabajo)"
 Write-Host "    Si algo sale mal: vuelve solo a la version anterior"
 Write-Host "    Registro     : scripts\windows\actualizacion-automatica.log"
 Write-Host ""

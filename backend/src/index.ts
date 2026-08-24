@@ -7,7 +7,7 @@ import { seedAdmin } from "./scripts/seedAdmin";
 
 const app = createApp();
 
-app.listen(env.port, () => {
+const server = app.listen(env.port, () => {
   console.log(`Backend escuchando en http://localhost:${env.port} (env: ${env.nodeEnv})`);
 });
 
@@ -23,10 +23,55 @@ app.listen(env.port, () => {
   }
 }
 
-startWorkers();
+const workers = startWorkers();
 
 registrarJobsRepetibles()
   .then(() => console.log("Cron diario de NO_RESPONDIO registrado (08:00 AR)"))
   .catch((err) => console.error("No se pudo registrar el cron de mantenimiento:", err));
 
 seedAdmin().catch((err) => console.error("[seed] Error creando el admin inicial:", err));
+
+// ---------------------------------------------------------------------------
+// Apagado ordenado
+// ---------------------------------------------------------------------------
+// Sin esto, un `docker compose up -d` mata a los workers a mitad de un job. El
+// caso feo es el envío de WhatsApp: si el proceso muere justo entre que Meta
+// acepta el mensaje y que se registra en la base, BullMQ lo da por colgado y lo
+// reintenta, y el cliente RECIBE EL MENSAJE DOS VECES.
+//
+// `worker.close()` deja de tomar jobs nuevos y espera a que termine el que está
+// en curso. Importa desde que el sistema se actualiza solo al mediodía, con
+// gente usándolo y la ventana de envío abierta.
+//
+// Para que la señal llegue hasta acá hacen falta dos cosas más, fuera de este
+// archivo: que el CMD del Dockerfile haga `exec node` (si no, PID 1 es `sh` y se
+// come el SIGTERM) y que compose dé tiempo suficiente (stop_grace_period).
+let apagando = false;
+
+async function apagarOrdenado(senal: string): Promise<void> {
+  if (apagando) return;
+  apagando = true;
+  console.log(`[apagado] ${senal} recibido: se termina el trabajo en curso y se cierra.`);
+
+  const plazo = setTimeout(() => {
+    console.error("[apagado] tardó demasiado: se cierra a la fuerza.");
+    process.exit(1);
+  }, 25_000);
+  plazo.unref();
+
+  try {
+    await Promise.all(workers.map((w) => w.close()));
+    console.log("[apagado] workers cerrados sin dejar jobs a medias.");
+  } catch (err) {
+    console.error("[apagado] error cerrando los workers:", err);
+  }
+
+  server.close(() => {
+    clearTimeout(plazo);
+    console.log("[apagado] listo.");
+    process.exit(0);
+  });
+}
+
+process.on("SIGTERM", () => void apagarOrdenado("SIGTERM"));
+process.on("SIGINT", () => void apagarOrdenado("SIGINT"));

@@ -50,6 +50,13 @@ x-backend-comun: &backend-comun
       # actualizar-sistema.ps1; si se buildea a mano queda "desconocida".
       GIT_COMMIT: ${GIT_COMMIT:-desconocida}
   restart: unless-stopped
+  # Docker manda SIGTERM y a los 10 segundos mata todo. Con el apagado ordenado
+  # (src/index.ts) el backend usa ese rato para terminar el job que tiene entre
+  # manos; un envío a Meta puede tardar unos segundos, así que 10 quedan cortos.
+  # Importa desde que el sistema se actualiza solo al mediodía, con la ventana de
+  # envío abierta: un worker muerto a la mitad puede reintentar un WhatsApp que ya
+  # salió y el cliente lo recibe dos veces.
+  stop_grace_period: 40s
   volumes:
     # Solo lectura: el backend lee el estado que escribe el contenedor de backup
     - backup_status:/var/backup-status:ro
