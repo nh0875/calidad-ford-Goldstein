@@ -115,10 +115,29 @@ if ($sucio) {
 #    pisarlo en silencio seria peor que no actualizar.
 
 function Intentar-Pull {
-    $salida = & git pull --ff-only 2>&1
-    $codigo = $LASTEXITCODE
-    $salida | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
-    return @{ ok = ($codigo -eq 0); texto = ($salida -join "`n") }
+    # OJO CON EL "2>&1". Git escribe por la salida de ERRORES cosas que no son
+    # errores: el "From https://github.com/..." de siempre. Con
+    # ErrorActionPreference = "Stop", PowerShell 5.1 convierte esa linea en una
+    # excepcion (NativeCommandError) y MATA el script en pleno pull. Paso en la
+    # PC de Ford: la actualizacion se corto en el "Trayendo los cambios" y no
+    # llego a reconstruir nada.
+    #
+    # Igual hace falta LEER ese texto, porque los dos bloqueos que este script
+    # resuelve solo ("untracked working tree files...", "Your local changes...")
+    # tambien salen por ahi. La solucion es mandarlo a un archivo: asi se lee
+    # entero y PowerShell no lo toca.
+    $temp = [System.IO.Path]::GetTempFileName()
+    try {
+        $normal = & git pull --ff-only 2>$temp
+        $codigo = $LASTEXITCODE
+        $errores = @()
+        if (Test-Path $temp) { $errores = @(Get-Content $temp -ErrorAction SilentlyContinue) }
+        $salida = @($normal) + @($errores) | Where-Object { "$_".Trim() -ne "" }
+        $salida | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+        return @{ ok = ($codigo -eq 0); texto = ($salida -join "`n") }
+    } finally {
+        Remove-Item $temp -Force -ErrorAction SilentlyContinue
+    }
 }
 
 $r = Intentar-Pull
