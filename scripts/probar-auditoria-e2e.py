@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Los arreglos que salieron de la auditoria, probados en vivo."""
+"""Los 4 arreglos que faltaban de la auditoria, probados contra el sistema real."""
 import json, subprocess, time, urllib.request, urllib.error
 
-VW, FORD = 8096, 8095
+FORD = 8095
 PG = "vanina-local-postgres-1"
 PW = "ucc__pISIFpGkKvlHXo-yytS"
+DB = "calidad_ford"
 ok = fail = 0
 
 
@@ -18,19 +19,19 @@ def check(n, cond, det=""):
         print("  FALLA " + n + "   -> " + str(det))
 
 
-def call(port, method, path, tok=None, body=None):
-    req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), method=method)
+def call(method, path, tok=None, body=None):
+    req = urllib.request.Request("http://127.0.0.1:%d%s" % (FORD, path), method=method)
     req.add_header("Content-Type", "application/json")
     if tok:
         req.add_header("Authorization", "Bearer " + tok)
     data = json.dumps(body).encode("utf-8") if body is not None else None
     try:
         with urllib.request.urlopen(req, data) as r:
-            c = r.read().decode("utf-8", "replace")
+            cuerpo = r.read().decode("utf-8", "replace")
             try:
-                return r.status, json.loads(c)
+                return r.status, json.loads(cuerpo)
             except Exception:
-                return r.status, {"raw": c}
+                return r.status, {"raw": cuerpo}
     except urllib.error.HTTPError as e:
         try:
             return e.code, json.load(e)
@@ -38,144 +39,120 @@ def call(port, method, path, tok=None, body=None):
             return e.code, {}
 
 
-def sql(q, db="calidad_vw"):
+def sql(q):
     out = subprocess.run(
-        ["docker", "exec", "-e", "PGPASSWORD=" + PW, PG, "psql", "-U", "calidad", "-d", db, "-tA", "-F", "|", "-c", q],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
+        ["docker", "exec", "-e", "PGPASSWORD=" + PW, PG, "psql", "-U", "calidad", "-d", DB, "-tA", "-F", "|", "-c", q],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
     return [l for l in out.stdout.strip().split("\n") if l.strip()]
 
 
-def webhook(port, tel, contenido, msgid, tipo="text"):
-    if tipo == "button":
-        msg = {"id": msgid, "from": tel, "type": "button", "button": {"text": contenido}}
-    else:
-        msg = {"id": msgid, "from": tel, "type": "text", "text": {"body": contenido}}
-    return call(port, "POST", "/api/webhooks/whatsapp", body={
-        "object": "whatsapp_business_account",
-        "entry": [{"id": "1", "changes": [{"field": "messages", "value": {"messaging_product": "whatsapp", "messages": [msg]}}]}]})
+tok = call("POST", "/api/auth/login", body={"email": "admin@goldstein.com.ar", "password": "UqWuQnF5Zwf92bDT#4"})[1]["token"]
+creados = []
 
 
-tv = call(VW, "POST", "/api/auth/login", body={"email": "admin@volkswagen.local", "password": "SandboxVW-2026!"})[1]["token"]
-tf = call(FORD, "POST", "/api/auth/login", body={"email": "admin@goldstein.com.ar", "password": "UqWuQnF5Zwf92bDT#4"})[1]["token"]
-ITEMS = ["TRATO", "ORGANIZACION", "CALIDAD_REPARACION", "LAVADO", "GENERAL"]
+_secuencia = [0]
+_ultimoTel = [""]
 
 
-def crear(orden, tel, patente):
-    s, r = call(VW, "POST", "/api/casos", tv, {
-        "numeroOrden": orden, "nombrePropietario": "AUD " + orden, "whatsapp": "+" + tel,
-        "modelo": "Amarok", "patente": patente, "sucursal": "Mendoza", "asesor": "Prueba",
-        "fechaProgramacion": "2026-08-22", "area": "POSVENTA"})
+def crear(orden, patente, area="POSVENTA", nombre=None, sucursal="Mendoza"):
+    _secuencia[0] += 1
+    tel = "+54926154%05d" % (10000 + _secuencia[0])
+    _ultimoTel[0] = tel
+    s, r = call("POST", "/api/casos", tok, {
+        "numeroOrden": orden, "nombrePropietario": nombre or ("CLIENTE " + orden),
+        "whatsapp": tel, "modelo": "Ranger", "patente": patente,
+        "sucursal": sucursal, "asesor": "Prueba", "fechaProgramacion": "2026-08-21", "area": area})
     if s not in (200, 201):
-        print("    no se creo %s: %s" % (orden, r.get("message")))
+        print("    no se pudo crear %s: %s" % (orden, r.get("message")))
         return None
     cid = r["data"]["id"]
-    sql("UPDATE \"Caso\" SET \"estadoContacto\"='ENVIADO' WHERE id='%s';" % cid)
+    creados.append(cid)
     return cid
 
 
-def puntajes(cid):
-    filas = sql("SELECT item, COALESCE(estrellas::text,'null') FROM \"EvaluacionPosventa\" WHERE \"casoId\"='%s';" % cid)
-    d = {}
-    for f in filas:
-        p = f.split("|")
-        d[p[0]] = None if p[1] == "null" else int(p[1])
-    return [d.get(i) for i in ITEMS]
-
-
-creados = []
-
-print("=== 1. UN SEGUNDO MENSAJE YA NO BORRA LOS PUNTAJES (era lo mas grave) ===")
-tel = "5492615666001"
-cid = crear("AUD-01", tel, "AU001AA")
-creados.append(cid)
+print("=== 12) LAS FECHAS DEL REPORTE, EN HORA ARGENTINA ===")
+print("     Un cliente contesta el 21/08 a las 22:00. Antes se contaba en el 22.")
+cid = crear("FECHA-01", "FE001AA")
 if cid:
-    webhook(VW, tel, "Quiero participar por Whatsapp", "wamid.aud.1b", tipo="button")
-    time.sleep(5)
-    webhook(VW, tel, "5 4 5 3 4", "wamid.aud.1r")
-    time.sleep(18)
-    antes = puntajes(cid)
-    check("primero contesta la encuesta completa", antes == [5, 4, 5, 3, 4], antes)
-
-    # ahora escribe otra cosa que NO menciona los items
-    webhook(VW, tel, "hola, necesito un turno para el service del mes que viene", "wamid.aud.1b2")
-    time.sleep(18)
-    despues = puntajes(cid)
-    check("un mensaje sin relacion NO le borra los 5 puntajes", despues == antes, "antes %s -> despues %s" % (antes, despues))
+    # analisis a las 22:00 hora argentina del 21/08 = 01:00 UTC del 22/08
+    sql("INSERT INTO \"SentimentAnalysis\" (id,\"casoId\",semaforo,confianza,\"resumenIA\",\"respuestaCrudaIA\","
+        "\"esSeguimiento\",\"analyzedAt\") VALUES ('an-fecha-01','%s','VERDE',1,'prueba','{}',false,"
+        "'2026-08-22T01:00:00Z');" % cid)
+    s, rep = call("GET", "/api/reportes/sentimiento?fechaDesde=2026-08-21&fechaHasta=2026-08-21", tok)
+    if s == 200:
+        puntos = {p["fecha"]: p for p in rep["evolucion"]["puntos"]}
+        check("entra al rango del 21", rep["totales"]["VERDE"] >= 1, rep["totales"])
+        check("y se agrupa en el 21 (no en el 22)", "2026-08-21" in puntos, list(puntos.keys()))
+        if "2026-08-22" in puntos:
+            check("no aparece un balde del 22", False, "quedo un punto en 2026-08-22")
+        else:
+            check("no aparece un balde del 22", True)
 
 print("")
-print("=== 2. Y UN MENSAJE QUE SI HABLA DE UN ITEM LO CORRIGE, SIN TOCAR EL RESTO ===")
-tel2 = "5492615666002"
-cid2 = crear("AUD-02", tel2, "AU002AA")
-creados.append(cid2)
+print("=== 14) LOS RQR SIGUEN AL CASO CUANDO SE CORRIGE EL AREA ===")
+cid2 = crear("AREA-01", "AR001AA", area="POSVENTA")
+telArea = _ultimoTel[0]
 if cid2:
-    webhook(VW, tel2, "Quiero participar por Whatsapp", "wamid.aud.2b", tipo="button")
-    time.sleep(5)
-    webhook(VW, tel2, "5 5 5 5 5", "wamid.aud.2r")
-    time.sleep(18)
-    antes2 = puntajes(cid2)
-    check("arranca con todo en 5", antes2 == [5, 5, 5, 5, 5], antes2)
-    # correccion parcial: solo el lavado (via API, que es determinista)
-    webhook(VW, tel2, "1 5 5 5 5", "wamid.aud.2c")
-    time.sleep(18)
-    despues2 = puntajes(cid2)
-    check("una respuesta nueva completa corrige los 5", despues2 == [1, 5, 5, 5, 5], despues2)
+    s, r = call("POST", "/api/rqr", tok, {
+        "casoId": cid2, "canal": "Posventa", "areaOrigen": "Taller",
+        "asesor": "Prueba", "descripcionReclamo": "reclamo de prueba"})
+    check("se creo el RQR sobre el caso", s == 201, "%s %s" % (s, r.get("message")))
+    filas = sql("SELECT area FROM \"RQR\" WHERE \"casoId\"='%s';" % cid2)
+    check("el RQR nace en POSVENTA", filas and filas[0] == "POSVENTA", filas)
+
+    # se corrige el area del caso
+    s, casoActual = call("GET", "/api/casos/" + cid2, tok)
+    d = casoActual.get("data", {})
+    s, r = call("PATCH", "/api/casos/" + cid2, tok, {
+        "numeroOrden": d.get("numeroOrden", "AREA-01"), "nombrePropietario": d.get("nombrePropietario", "X"),
+        "fechaProgramacion": "2026-08-21", "origenAgendamiento": d.get("origenAgendamiento", "DEALER"),
+        "asesor": "Prueba", "modelo": "Ranger", "patente": "AR001AA", "sucursal": "Mendoza",
+        "whatsapp": telArea, "celular": "", "area": "VENTAS"})
+    check("se pudo corregir el area del caso a VENTAS", s == 200, "%s %s" % (s, r.get("message")))
+    filas = sql("SELECT area FROM \"RQR\" WHERE \"casoId\"='%s';" % cid2)
+    check("el RQR se movio a VENTAS con el caso", filas and filas[0] == "VENTAS", filas)
 
 print("")
-print("=== 3. UNA ENCUESTA CON UN EMOJI AL FINAL YA NO SE PIERDE ===")
-tel3 = "5492615666003"
-cid3 = crear("AUD-03", tel3, "AU003AA")
-creados.append(cid3)
+print("=== 13) LA BUSQUEDA ENCUENTRA MAS ALLA DE LOS 500 MAS NUEVOS ===")
+cid3 = crear("BUSQ-01", "BU001AA", nombre="ZZZAPATERO INENCONTRABLE")
 if cid3:
-    webhook(VW, tel3, "Quiero participar por Whatsapp", "wamid.aud.3b", tipo="button")
-    time.sleep(5)
-    webhook(VW, tel3, "5 4 5 3 4 \U0001F44D", "wamid.aud.3r")
-    time.sleep(18)
-    p3 = puntajes(cid3)
-    check("'5 4 5 3 4 (pulgar)' se lee como encuesta, no como emoji", p3 == [5, 4, 5, 3, 4], p3)
+    # se lo envejece: pasa a ser el caso MAS VIEJO de todos
+    sql("UPDATE \"Caso\" SET \"createdAt\"='2020-01-01T00:00:00Z' WHERE id='%s';" % cid3)
+    sql("INSERT INTO \"WhatsappMessage\" (id,\"casoId\",direction,content,status,\"createdAt\") "
+        "VALUES ('msg-busq-01','%s','ENTRANTE','hola','recibido', now());" % cid3)
+    s, lista = call("GET", "/api/seguimiento?q=ZZZAPATERO", tok)
+    encontrados = [c for c in lista.get("data", []) if "ZZZAPATERO" in c["nombre"]]
+    check("lo encuentra buscando por nombre", len(encontrados) == 1, "%s resultados" % len(lista.get("data", [])))
+    s, lista = call("GET", "/api/seguimiento?q=BUSQ-01", tok)
+    check("lo encuentra buscando por numero de orden", len(lista.get("data", [])) >= 1, lista.get("total"))
+
+    print("     y los filtros de la pantalla siguen andando:")
+    for filtro, nombre in [("todas", "Todas"), ("revision", "Para revisar"), ("rojos", "Rojos"), ("asesor", "Asesor")]:
+        s, l = call("GET", "/api/seguimiento?filtro=" + filtro, tok)
+        check("   filtro %-13s responde" % nombre, s == 200, s)
+        if filtro == "rojos" and s == 200:
+            malos = [c for c in l["data"] if c["semaforo"] not in (None, "ROJO")]
+            check("   'Rojos' solo trae rojos", len(malos) == 0, [c["semaforo"] for c in malos[:3]])
+        if filtro == "revision" and s == 200:
+            malos = [c for c in l["data"] if not c["requiereRevision"]]
+            check("   'Para revisar' solo trae los que lo piden", len(malos) == 0, len(malos))
 
 print("")
-print("=== 4. EL AGRADECIMIENTO USA EL ANALISIS QUE CUENTA ===")
-filas = sql("SELECT count(*) FROM \"SentimentAnalysis\" WHERE \"esSeguimiento\"=true;")
-print("      (analisis de seguimiento en la base: %s)" % (filas[0] if filas else "0"))
-# se verifica leyendo el codigo compilado, que es lo determinista
-out = subprocess.run(["docker", "exec", "vanina-local-backend-vw-1", "sh", "-c",
-                      "grep -c 'analisisPrincipal(casoId)' dist/jobs/workers.js"],
-                     capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
-check("el worker de agradecimiento usa analisisPrincipal", out.isdigit() and int(out) >= 1, out)
-
-print("")
-print("=== 5. LA CARGA DE LA ENCUESTA DE FORD YA NO CONTESTA EN VW ===")
-s, r = call(VW, "POST", "/api/uploads/ford/confirm", tv, {"fileToken": "00000000-0000-0000-0000-000000000000", "mapping": {}})
-check("VW rechaza el circuito de Ford (404)", s == 404, "%s %s" % (s, str(r.get("message"))[:60]))
-s, r = call(FORD, "POST", "/api/uploads/ford/confirm", tf, {"fileToken": "00000000-0000-0000-0000-000000000000", "mapping": {}})
-check("Ford lo sigue teniendo (no da 404)", s != 404, s)
-
-print("")
-print("=== 6. EL AVISO DE CASILLA DE CORREO YA SE PUEDE CONSULTAR EN VW ===")
-s, r = call(VW, "GET", "/api/encuesta-vw/estado-mail", tv)
-check("responde en VW", s == 200, "%s %s" % (s, r))
-if s == 200:
-    print("      configurado: %s | casilla: %s" % (r.get("configurado"), r.get("casilla")))
-
-print("")
-print("=== 7. EL FILTRO '(sin dato)' YA ENCUENTRA ===")
-s, r = call(VW, "GET", "/api/posventa/desempeno?asesor=Prueba", tv)
-check("filtrando por un asesor real trae datos", s == 200 and r["data"]["clientesQueContestaron"] > 0,
-      r.get("data", {}).get("clientesQueContestaron"))
-
-print("")
-print("=== 8. LOS EXCEL YA NO SE FIRMAN COMO FORD EN VW ===")
-out = subprocess.run(["docker", "exec", "vanina-local-backend-vw-1", "sh", "-c",
-                      "grep -c 'Sistema de Calidad Ford' dist/services/exportacion.service.js || true"],
-                     capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
-check("ya no queda 'Sistema de Calidad Ford' fijo", out in ("0", ""), out)
+print("=== 17) EL AGRADECIMIENTO NO SE MANDA DOS VECES ===")
+filas = sql("SELECT count(*) FROM \"Caso\" c JOIN \"WhatsappMessage\" m ON m.\"casoId\"=c.id "
+            "WHERE m.\"esAgradecimiento\"=true AND c.\"agradecimientoEnviadoEn\" IS NULL;")
+check("no hay agradecimientos enviados sin su fecha (candado abierto)", filas and filas[0] == "0", filas)
+filas = sql("SELECT c.\"numeroOrden\", count(*) FROM \"Caso\" c JOIN \"WhatsappMessage\" m ON m.\"casoId\"=c.id "
+            "WHERE m.\"esAgradecimiento\"=true GROUP BY c.\"numeroOrden\" HAVING count(*) > 1;")
+check("ningun caso tiene dos agradecimientos", len(filas) == 0, filas)
 
 # limpieza
 for c in creados:
-    if c:
-        for tab in ("EvaluacionPosventa", "RQR", "SentimentAnalysis", "WhatsappMessage"):
-            sql('DELETE FROM "%s" WHERE "casoId"=\'%s\';' % (tab, c))
-        sql("DELETE FROM \"Caso\" WHERE id='%s';" % c)
+    sql("DELETE FROM \"SentimentAnalysis\" WHERE \"casoId\"='%s';" % c)
+    sql("DELETE FROM \"RQR\" WHERE \"casoId\"='%s';" % c)
+    sql("DELETE FROM \"WhatsappMessage\" WHERE \"casoId\"='%s';" % c)
+    sql("DELETE FROM \"Caso\" WHERE id='%s';" % c)
 
 print("")
 print("  %d bien / %d mal" % (ok, fail))

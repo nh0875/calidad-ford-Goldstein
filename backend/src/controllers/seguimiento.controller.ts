@@ -151,12 +151,42 @@ export async function listarConversaciones(req: Request, res: Response) {
   // (no el filtro pedido, así los desplegables ofrecen todas las opciones).
   const restringido = areaPermitida(req.usuario!);
 
+  // LA BÚSQUEDA VA A LA BASE, no al tope de 500.
+  //
+  // El tope se aplica sobre los casos MÁS NUEVOS, así que buscar en memoria solo
+  // encontraba dentro de esa ventana: un cliente de hace tres meses era
+  // directamente inencontrable, y buscarlo devolvía "no hay conversaciones" como
+  // si no existiera. Con el término en el where, la búsqueda alcanza a todos.
+  const termino = q?.trim() || "";
+  const whereBusquedaCaso: Prisma.CasoWhereInput = termino
+    ? {
+        OR: [
+          { nombrePropietario: { contains: termino, mode: "insensitive" } },
+          { numeroOrden: { contains: termino, mode: "insensitive" } },
+        ],
+      }
+    : {};
+  const whereBusquedaFidel: Prisma.ClienteFidelizacionWhereInput = termino
+    ? { nombre: { contains: termino, mode: "insensitive" } }
+    : {};
+
+  // Los filtros de la pantalla también, por el mismo motivo: "Para revisar" y
+  // "Rojos" son justo las vistas donde no se puede perder ninguno.
+  const whereFiltroCaso: Prisma.CasoWhereInput =
+    filtro === "revision"
+      ? { analisis: { some: { esSeguimiento: false, requiereRevisionManual: true } } }
+      : filtro === "rojos"
+        ? { analisis: { some: { esSeguimiento: false, semaforo: "ROJO" } } }
+        : {};
+
   const [casos, fidels] = await Promise.all([
     prisma.caso.findMany({
       where: {
         eliminadoEn: null,
         ...(restringido ? { area: restringido } : {}),
         mensajes: { some: {} }, // solo casos con actividad de WhatsApp
+        ...whereBusquedaCaso,
+        ...whereFiltroCaso,
       },
       select: {
         id: true,
@@ -187,7 +217,14 @@ export async function listarConversaciones(req: Request, res: Response) {
     }),
     // Fidelización: sin restricción de área (la ve cualquiera de la provincia).
     prisma.clienteFidelizacion.findMany({
-      where: { eliminadoEn: null, mensajes: { some: {} } },
+      where: {
+        eliminadoEn: null,
+        mensajes: { some: {} },
+        ...whereBusquedaFidel,
+        // Los filtros de semáforo no aplican a Fidelización (no se clasifica):
+        // con "Para revisar" o "Rojos" puestos, no tiene que traer ninguno.
+        ...(filtro === "revision" || filtro === "rojos" ? { id: "" } : {}),
+      },
       select: {
         id: true,
         nombre: true,
@@ -280,23 +317,13 @@ export async function listarConversaciones(req: Request, res: Response) {
     };
   });
 
-  const termino = q?.toLowerCase();
   const lista = [...itemsCaso, ...itemsFidel]
     // Filtros pedidos (área + provincia): solo ACOTAN lo que ya puede ver.
     .filter((c) => coincideFiltro(c, areaFiltro))
     .filter((c) => !sucursalPedida || mismaProvincia(sucursalPedida, c.sucursal))
-    .filter((c) =>
-      filtro === "revision"
-        ? c.requiereRevision
-        : filtro === "rojos"
-          ? c.semaforo === "ROJO"
-          : filtro === "asesor"
-            ? c.quiereAsesor
-            : true
-    )
-    .filter(
-      (c) => !termino || c.nombre.toLowerCase().includes(termino) || c.numeroOrden.toLowerCase().includes(termino)
-    )
+    // "asesor" (pidió turno con un asesor) sigue en JS: es un flag de
+    // Fidelización, no una condición sobre los casos.
+    .filter((c) => (filtro === "asesor" ? c.quiereAsesor : true))
     .sort((a, b) => {
       const ta = a.ultimoMensaje?.createdAt.getTime() ?? 0;
       const tb = b.ultimoMensaje?.createdAt.getTime() ?? 0;

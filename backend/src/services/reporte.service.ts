@@ -31,16 +31,28 @@ function whereCaso(f: FiltrosReporte): Prisma.CasoWhereInput {
   };
 }
 
+// Las claves de agrupación se arman con la hora LOCAL, no con UTC.
+//
+// Los extremos del rango se construyen en hora local (rangoFechas, arriba:
+// `new Date("2026-08-21T00:00:00")` es la medianoche de Buenos Aires). Si las
+// claves se armaran en UTC, las dos puntas no coincidirían: una respuesta de las
+// 21:30 de un martes entra al rango del martes pero cae en el balde del
+// miércoles, porque en UTC ya son las 00:30. Con TZ=America/Argentina eso son
+// TRES HORAS de cada día mal atribuidas —justo la franja en la que más contesta
+// la gente— y un lunes que arranca contando el domingo a la noche.
 function claveDia(fecha: Date): string {
-  return fecha.toISOString().slice(0, 10);
+  const a = fecha.getFullYear();
+  const m = String(fecha.getMonth() + 1).padStart(2, "0");
+  const d = String(fecha.getDate()).padStart(2, "0");
+  return `${a}-${m}-${d}`;
 }
 
-// Lunes de la semana ISO de la fecha, como AAAA-MM-DD
+// Lunes de la semana ISO de la fecha, como AAAA-MM-DD (también en hora local).
 function claveSemana(fecha: Date): string {
-  const d = new Date(Date.UTC(fecha.getUTCFullYear(), fecha.getUTCMonth(), fecha.getUTCDate()));
-  const dia = d.getUTCDay() || 7; // domingo=7
-  d.setUTCDate(d.getUTCDate() - dia + 1);
-  return d.toISOString().slice(0, 10);
+  const d = new Date(fecha.getFullYear(), fecha.getMonth(), fecha.getDate());
+  const dia = d.getDay() || 7; // domingo=7
+  d.setDate(d.getDate() - dia + 1);
+  return claveDia(d);
 }
 
 // ---------- REPORTE 1: Sentimiento ----------

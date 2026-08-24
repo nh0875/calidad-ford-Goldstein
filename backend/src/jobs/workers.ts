@@ -648,6 +648,26 @@ async function procesarAgradecimiento(job: Job<DatosAgradecimiento>) {
     throw new UnrecoverableError("El caso no tiene teléfono válido para el agradecimiento.");
   }
 
+  // SE RESERVA EL TURNO ANTES DE MANDAR.
+  //
+  // `agradecimientoEnviadoEn` es el único candado de "una sola vez por caso". Si
+  // se escribiera recién después del envío y la base fallara en el medio, el
+  // candado quedaría abierto: el mensaje ya le salió al cliente y un análisis
+  // posterior volvería a programar el agradecimiento, mandándoselo DE NUEVO.
+  // Molestar dos veces a un cliente es peor que no escribirle, así que se marca
+  // primero y se libera solo si el envío falla de verdad.
+  //
+  // El updateMany con `agradecimientoEnviadoEn: null` en el where es además el
+  // seguro contra dos corridas simultáneas: la segunda no actualiza ninguna fila
+  // y se va sin mandar nada.
+  const reserva = await prisma.caso.updateMany({
+    where: { id: caso.id, agradecimientoEnviadoEn: null },
+    data: { agradecimientoEnviadoEn: new Date() },
+  });
+  if (reserva.count === 0) {
+    return { omitido: "otro proceso ya lo estaba mandando" };
+  }
+
   // Texto libre dentro de la ventana de 24hs (el cliente recién escribió). En
   // MODO_DEMO el envío se simula (sendTextMessage → mock). NUNCA se usa template
   // como fallback: si la ventana está cerrada, se marca fallido y no se reintenta.
@@ -655,6 +675,11 @@ async function procesarAgradecimiento(job: Job<DatosAgradecimiento>) {
   try {
     ({ waMessageId } = await sendTextMessage(telefono, mensaje));
   } catch (err) {
+    // No salió: se libera el turno para que se pueda volver a intentar.
+    await prisma.caso.updateMany({
+      where: { id: caso.id },
+      data: { agradecimientoEnviadoEn: null },
+    });
     if (err instanceof WhatsappApiError && !err.reintenable) {
       console.error(
         `[agradecimiento] fallo definitivo para caso ${caso.numeroOrden} (ej. ventana de 24hs cerrada): ${err.message}`
@@ -679,12 +704,11 @@ async function procesarAgradecimiento(job: Job<DatosAgradecimiento>) {
           esAgradecimiento: true, // lo distingue del template inicial
         },
       }),
-      prisma.caso.update({
-        where: { id: caso.id },
-        data: { agradecimientoEnviadoEn: new Date() },
-      }),
     ]);
   } catch (err) {
+    // La fecha ya quedó escrita antes de mandar, así que aunque esto falle el
+    // cliente NO va a recibir el mensaje dos veces. Solo se pierde el registro
+    // de la conversación, y eso queda avisado en el log.
     throw new UnrecoverableError(
       `El agradecimiento se envió (id ${waMessageId}) pero no se pudo registrar en la base: ${
         err instanceof Error ? err.message.slice(0, 300) : String(err)

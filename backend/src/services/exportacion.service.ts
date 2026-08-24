@@ -159,8 +159,10 @@ export async function excelCasos(where: Prisma.CasoWhereInput): Promise<Buffer> 
     { header: "Estado de contacto", key: "estado", width: 18 },
     { header: "Clasificación", key: "clasificacion", width: 14 },
     { header: "Resumen IA", key: "resumen", width: 55 },
-    { header: "Encuesta Ford", key: "encuestaFord", width: 20 },
-    { header: "Fecha encuesta Ford", key: "encuestaFordFecha", width: 16 },
+    // El nombre de la marca, no "Ford" fijo: esta exportación la comparten las
+    // dos instancias y en Volkswagen la columna decía la marca equivocada.
+    { header: `Encuesta ${marca.nombre}`, key: "encuestaFord", width: 20 },
+    { header: `Fecha encuesta ${marca.nombre}`, key: "encuestaFordFecha", width: 22 },
     { header: "Pidió baja", key: "optOut", width: 10 },
     { header: "Último error de envío", key: "error", width: 30 },
     { header: "Comentario del asesor", key: "comentario", width: 40 },

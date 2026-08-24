@@ -504,6 +504,29 @@ export async function editarCaso(req: Request, res: Response) {
     throw err;
   }
 
+  // Si se corrigió el ÁREA, hay que arrastrar sus RQR.
+  //
+  // RQR.area es una copia del área del caso que se fija al crearlo, y es la que
+  // decide quién ve ese RQR. Sin esto, corregir un caso mal cargado —de Ventas a
+  // Posventa, por ejemplo— dejaba sus reclamos en el área vieja: el equipo que
+  // ahora es dueño del caso no los veía, y el que ya no lo es los seguía viendo.
+  // Un RQR abierto que nadie mira es exactamente lo que este sistema existe para
+  // evitar.
+  let rqrsMovidos = 0;
+  if (caso.area !== existente.area) {
+    const r = await prisma.rQR.updateMany({
+      where: { casoId: existente.id, eliminadoEn: null },
+      data: { area: caso.area },
+    });
+    rqrsMovidos = r.count;
+    if (rqrsMovidos > 0) {
+      console.log(
+        `[caso] ${caso.numeroOrden} pasó de ${existente.area} a ${caso.area}: ` +
+          `se movieron ${rqrsMovidos} RQR con él.`
+      );
+    }
+  }
+
   await auditar(req, {
     accion: ACCIONES.CASO_EDITADO,
     entidad: "Caso",
@@ -513,7 +536,9 @@ export async function editarCaso(req: Request, res: Response) {
       ordenDespues: caso.numeroOrden,
       cliente: caso.nombrePropietario,
       sucursal: caso.sucursal,
+      areaAntes: existente.area,
       area: caso.area,
+      ...(rqrsMovidos > 0 ? { rqrsMovidos } : {}),
     },
   });
 
