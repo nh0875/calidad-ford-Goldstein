@@ -110,11 +110,28 @@ META_PHONE_NUMBER_ID=<del panel de Meta>
 META_WEBHOOK_VERIFY_TOKEN=<inventar uno, distinto del de Ford>
 META_TEMPLATE_NAME=contacto_posventa
 META_TEMPLATE_LANG=es_AR
+META_TEMPLATE_VENTA_NAME=contacto_venta
+
+# LA IA QUE CLASIFICA. Sin estas dos líneas el sistema levanta igual, pero NO
+# clasifica NADA: en el arranque avisa "sin API key (fallará al llamar)" y cada
+# respuesta de cliente queda sin analizar. Es la misma key que usa Ford.
+AI_PROVIDER=gemini
+GEMINI_API_KEY=<la misma key de Gemini que usa Ford>
 
 # Correo saliente: los avisos a los vendedores de las encuestas de fábrica.
 MAIL_USUARIO=calidadvolkswagengoldstein@gmail.com
 MAIL_PASSWORD=<contraseña de aplicación de Google>
 ```
+
+> **Lo más fácil de olvidar es `GEMINI_API_KEY`.** Se probó levantando una PC
+> limpia siguiendo este instructivo al pie de la letra y el sistema arrancó
+> perfecto — con la clasificación muerta. Después de levantar, mirá el arranque:
+>
+> ```
+> docker compose -f docker-compose.prod.yml --env-file .env.prod logs backend | Select-String "\[IA\]"
+> ```
+>
+> Tiene que decir **`IA REAL vía gemini`**. Si dice `sin API key`, falta esa línea.
 
 **No poner `COMPOSE_PROFILES=vw`.** Esa línea es para cuando las dos marcas
 comparten una PC; acá sobra y levantaría contenedores de más.
