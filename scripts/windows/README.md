@@ -326,6 +326,54 @@ sistema. Si no aparece en el escritorio, entrá a la carpeta y hacé doble clic 
 
 ---
 
+## Que el sistema se actualice solo (recomendado)
+
+Sin esto, alguien tiene que acordarse de correr `Actualizar-AHORA.bat` cada vez
+que hay una versión nueva. No funciona: la PC de Ford estuvo **21 versiones
+atrasada durante una semana**, y nos enteramos porque un arreglo que ya estaba
+hecho no aparecía.
+
+Se instala **una sola vez por PC**: entrá a la carpeta `scripts\windows` y hacé
+**doble clic** en **`Instalar-Actualizacion-Automatica.bat`**. Windows va a pedir
+permiso de administrador (es para registrar la tarea): dale que sí.
+
+*(Si preferís por consola: `powershell -ExecutionPolicy Bypass -File Instalar-Actualizacion-Automatica.ps1`, con PowerShell abierto como administrador.)*
+
+Desde ahí, todas las noches a las **4 de la mañana** la PC mira si hay algo nuevo
+en GitHub. Si no hay (que es casi siempre), **no toca nada**. Si hay, actualiza.
+
+> **Por qué a las 4 AM:** actualizar reinicia los contenedores y aplica
+> migraciones, así que hay un par de minutos sin sistema. A esa hora no hay nadie
+> usando y los WhatsApp tampoco salen (la ventana de envío arranca a las 9).
+
+**Si la versión nueva arranca rota, vuelve sola a la anterior.** Antes de
+construir se anota qué imágenes estaban andando; si después de 5 minutos el
+sistema no responde, las vuelve a poner y levanta la versión de antes.
+
+Todo queda escrito con fecha y hora en:
+
+```
+scripts\windowsctualizacion-automatica.log
+```
+
+Para cambiar la hora, o para desactivarla:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Instalar-Actualizacion-Automatica.ps1 -Hora 05:30
+powershell -ExecutionPolicy Bypass -File Instalar-Actualizacion-Automatica.ps1 -Quitar
+```
+
+> **Un límite que conviene saber:** la vuelta atrás devuelve el **código**, no la
+> **base de datos**. Si la versión nueva alcanzó a aplicar una migración antes de
+> romperse, esa migración queda aplicada. En la práctica no molesta (las
+> migraciones agregan columnas y el código viejo las ignora), pero si alguna vez
+> el log dice que volvió atrás, **avisale a Ignacio** antes de seguir trabajando.
+
+**`Actualizar-AHORA.bat` sigue existiendo** y se puede usar cuando haga falta una
+actualización en el momento, sin esperar a la madrugada.
+
+---
+
 ## Cómo entra el resto del equipo
 
 La PC de Vanina es el "servidor": mientras esté **prendida y andando**, los demás

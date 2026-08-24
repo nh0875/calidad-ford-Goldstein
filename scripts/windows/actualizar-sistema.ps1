@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 #  Actualizar el Sistema de Calidad a la última versión
 # ============================================================================
 #  Trae los cambios, reconstruye y verifica QUE HAYAN QUEDADO PUESTOS.
@@ -24,6 +24,37 @@ $ProgressPreference = "SilentlyContinue"
 $ProjectDir = if ($PSScriptRoot) { Split-Path (Split-Path $PSScriptRoot -Parent) -Parent } else { (Get-Location).Path }
 $ComposeFile = "docker-compose.prod.yml"
 $EnvFile = ".env.prod"
+
+# --- A qué stack le hablamos -------------------------------------------------
+# docker compose bautiza al proyecto con el nombre de la CARPETA. Como cada PC
+# tiene el sistema donde quiere (C:\Calidad\Vanina, Downloads\..., etc.), el
+# nombre cambia de máquina en máquina; y si alguna vez se mueve o se renombra la
+# carpeta, compose deja de ver el stack que está andando y un "up -d" levantaría
+# uno NUEVO en paralelo, con la base VACÍA y los datos viejos huérfanos.
+#
+# Por eso no se confía en el nombre: se busca el proyecto que YA esté andando con
+# ESTE mismo archivo de compose y se le habla a ese. Si no hay ninguno (PC recién
+# instalada), se deja que compose elija como siempre y el stack nace con su nombre.
+function ProyectoQueYaAnda {
+    $rutaCompose = (Resolve-Path (Join-Path $ProjectDir $ComposeFile) -ErrorAction SilentlyContinue).Path
+    if (-not $rutaCompose) { return $null }
+    try {
+        $crudo = (& docker compose ls --format json --all) -join ""
+        if (-not $crudo) { return $null }
+        foreach ($p in ($crudo | ConvertFrom-Json)) {
+            foreach ($cf in ("$($p.ConfigFiles)" -split ",")) {
+                if ("$cf".Trim() -eq $rutaCompose) { return "$($p.Name)" }
+            }
+        }
+    } catch { }
+    return $null
+}
+
+$ArgsProyecto = @()
+$proyectoAdoptado = ProyectoQueYaAnda
+if ($proyectoAdoptado) { $ArgsProyecto = @("-p", $proyectoAdoptado) }
+
+
 
 Set-Location $ProjectDir
 Write-Host ""
@@ -164,7 +195,7 @@ $env:GIT_COMMIT = $commit
 
 Write-Host ""
 Write-Host "  Reconstruyendo (esto tarda varios minutos)..." -ForegroundColor Cyan
-& docker compose -f $ComposeFile --env-file $EnvFile build
+& docker compose @ArgsProyecto -f $ComposeFile --env-file $EnvFile build
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  Fallo la reconstruccion. El sistema sigue con la version anterior." -ForegroundColor Red
     exit 1
@@ -172,7 +203,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "  Levantando..." -ForegroundColor Cyan
-& docker compose -f $ComposeFile --env-file $EnvFile up -d
+& docker compose @ArgsProyecto -f $ComposeFile --env-file $EnvFile up -d
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  Fallo al levantar los contenedores." -ForegroundColor Red
     exit 1
@@ -203,7 +234,7 @@ if ($despues.version -eq $commit) {
     Write-Host ""
     Write-Host "  Puede ser que todavia este arrancando (mirar en un minuto), o que" -ForegroundColor Yellow
     Write-Host "  algo haya fallado. Para ver que paso:" -ForegroundColor Yellow
-    Write-Host "    docker compose -f $ComposeFile --env-file $EnvFile logs --tail 50 backend" -ForegroundColor Gray
+    Write-Host "    docker compose @ArgsProyecto -f $ComposeFile --env-file $EnvFile logs --tail 50 backend" -ForegroundColor Gray
     exit 1
 }
 Write-Host ""

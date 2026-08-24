@@ -11,6 +11,12 @@
 # TAG elige la rama de las imágenes:  main = producción · dev = staging.
 # Como Dev y Prod son VMs distintas, el mismo HTTP_PORT no colisiona.
 # ============================================================================
+# Nombre fijo del proyecto: sin esto compose usa el nombre de la CARPETA y
+# renombrarla o moverla hace que deje de ver el stack que ya está andando.
+# Distinto del de producción (vanina-local) a propósito: los dos stacks tienen
+# que poder convivir en la misma PC sin pisarse las bases.
+name: vanina-dev
+
 services:
   postgres:
     image: postgres:16-alpine

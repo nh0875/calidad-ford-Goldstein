@@ -23,6 +23,22 @@
 #   docker compose -f docker-compose.prod.yml --env-file .env.prod --profile vw up -d
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# EL NOMBRE DEL PROYECTO NO SE FIJA ACÁ, A PROPÓSITO
+# ---------------------------------------------------------------------------
+# docker compose bautiza al proyecto con el nombre de la CARPETA, así que cada PC
+# tiene el suyo (en una quedó "vanina", en otra "vanina-local"). Sería tentador
+# poner acá un "name:" fijo, pero eso ROMPERÍA las PCs que ya están andando: el
+# nombre nuevo no coincidiría con el del stack existente y el próximo arranque
+# levantaría un SEGUNDO stack en paralelo, con la base VACÍA y los datos viejos
+# huérfanos en los volúmenes del proyecto anterior.
+#
+# El problema de fondo (que compose "pierda de vista" el stack si se mueve o se
+# renombra la carpeta) se resuelve del lado de los scripts: actualizar-sistema.ps1
+# y Actualizacion-Automatica.ps1 buscan el proyecto que YA esté andando con este
+# mismo archivo y le hablan a ese, se llame como se llame.
+# ---------------------------------------------------------------------------
+
 # Config común a los backends de las dos marcas. Lo que cambia por marca (base,
 # credenciales de Meta, admin inicial) se declara en cada servicio.
 x-backend-comun: &backend-comun
