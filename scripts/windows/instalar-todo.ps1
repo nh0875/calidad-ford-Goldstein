@@ -32,6 +32,24 @@ $ComposeFile = Join-Path $Proyecto "docker-compose.prod.yml"
 $EnvFile     = Join-Path $Proyecto ".env.prod"
 $Vigilante   = Join-Path $PSScriptRoot "vigilante.ps1"
 
+# Lee una clave del .env.prod de ESTA PC. Igual que en vigilante.ps1 y en
+# iniciar-sistema.bat: nada que dependa de la marca puede quedar escrito en el
+# script, porque el mismo instalador corre en la PC de Ford y en la de VW.
+function Leer-EnvProd([string]$clave, [string]$porDefecto = "") {
+  if (-not (Test-Path $EnvFile)) { return $porDefecto }
+  foreach ($linea in (Get-Content $EnvFile -ErrorAction SilentlyContinue)) {
+    $l = "$linea".Trim()
+    if ($l -eq "" -or $l.StartsWith("#")) { continue }
+    $i = $l.IndexOf("=")
+    if ($i -lt 1) { continue }
+    if ($l.Substring(0, $i).Trim() -eq $clave) {
+      $v = $l.Substring($i + 1).Trim()
+      if ($v -ne "") { return $v }
+    }
+  }
+  return $porDefecto
+}
+
 # Contenedor de un servicio, resuelto por el PROPIO compose (no por filtro de
 # nombre, que es substring y podría pegarle a otro stack).
 function Contenedor($svc) {
@@ -121,10 +139,18 @@ sh.Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 
   #    terminal y no puede cerrarla sin querer. El VBS espera a ngrok, así la tarea
   #    sigue "corriendo" mientras ngrok vive.
   if ($NgrokExe -and (Test-Path $NgrokExe)) {
+    # El dominio y el puerto salen del .env.prod, NO del script: cada marca tiene
+    # su propia cuenta de ngrok y su propio dominio (el plan gratuito da uno solo
+    # por cuenta). Con el dominio escrito acá, la PC de Volkswagen levantaría un
+    # túnel al dominio de Ford, que ni siquiera es de su cuenta, y ngrok fallaría
+    # cada 5 minutos para siempre.
+    $dominioNgrok = Leer-EnvProd "NGROK_DOMAIN" "dealer-occupant-brigade.ngrok-free.dev"
+    $puertoNgrok  = Leer-EnvProd "HTTP_PORT" "80"
+    Info "Túnel de esta PC: https://$dominioNgrok -> localhost:$puertoNgrok"
     $vbsPath = Join-Path $PSScriptRoot "ngrok-oculto.vbs"
     $vbs = @"
 Set sh = CreateObject("WScript.Shell")
-sh.Run """$NgrokExe"" http --domain=dealer-occupant-brigade.ngrok-free.dev 80", 0, True
+sh.Run """$NgrokExe"" http --domain=$dominioNgrok $puertoNgrok", 0, True
 "@
     Set-Content -Path $vbsPath -Value $vbs -Encoding ASCII
     $accionN = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vbsPath + '"')
@@ -301,10 +327,17 @@ if ($adminOk) {
 Write-Host "`n=========================================================" -ForegroundColor Cyan
 Write-Host "  Pasos manuales que quedan:" -ForegroundColor White
 Write-Host ""
-Write-Host "  1) Abrí http://localhost  ->  login + tienen que estar los datos." -ForegroundColor White
-Write-Host "  2) Webhook en Meta (dominio nuevo):" -ForegroundColor White
-Write-Host "       URL:          https://dealer-occupant-brigade.ngrok-free.dev/api/webhooks/whatsapp" -ForegroundColor Gray
-Write-Host "       Verify token: calidad-ford-2026-xK9m" -ForegroundColor Gray
+$marcaPC   = Leer-EnvProd "MARCA" "FORD"
+$dominioPC = Leer-EnvProd "NGROK_DOMAIN" "dealer-occupant-brigade.ngrok-free.dev"
+$tokenPC   = Leer-EnvProd "META_WEBHOOK_VERIFY_TOKEN" "(el META_WEBHOOK_VERIFY_TOKEN de esta PC)"
+$puertoPC  = Leer-EnvProd "HTTP_PORT" "80"
+$urlLocal  = if ($puertoPC -eq "80") { "http://localhost" } else { "http://localhost:$puertoPC" }
+Write-Host "  Esta PC quedó instalada como: $marcaPC" -ForegroundColor White
+Write-Host ""
+Write-Host "  1) Abrí $urlLocal  ->  login + tienen que estar los datos." -ForegroundColor White
+Write-Host "  2) Webhook en Meta (los datos de ESTA PC):" -ForegroundColor White
+Write-Host "       URL:          https://$dominioPC/api/webhooks/whatsapp" -ForegroundColor Gray
+Write-Host "       Verify token: $tokenPC" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  Para probar que anda solo: reiniciá, iniciá sesión y esperá 2-3 min." -ForegroundColor White
 Write-Host "=========================================================" -ForegroundColor Cyan
