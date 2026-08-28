@@ -2,7 +2,15 @@
 
 Este documento explica, en lenguaje simple, **qué protege cada medida de seguridad** del sistema, para que sirva de referencia si en algún momento hay que auditarlo desde afuera. Está pensado para que lo entienda tanto alguien de Sistemas como alguien del área de Calidad.
 
-El sistema ya tiene, de base, **login con usuario y contraseña (JWT)** y **dos roles**: `ADMIN` (gestiona usuarios y ve la auditoría) y `CALIDAD` (todo el trabajo diario). Sobre eso se agregaron cuatro frentes de refuerzo.
+El sistema ya tiene, de base, **login con usuario y contraseña (JWT)** y **tres roles**: `ADMIN` (gestiona usuarios y ve la auditoría), `CALIDAD` (todo el trabajo diario) y `FIDELIZACION` (un puesto acotado: solo la pantalla de Fidelización y el Seguimiento de esos clientes). Sobre eso se agregaron cuatro frentes de refuerzo.
+
+> **Cómo se acota `FIDELIZACION`, y por qué así.** El resto del backend *permite
+> por defecto*: solo `requireAdmin` cierra puertas y todo lo demás queda abierto a
+> cualquier usuario autenticado. Con una lista negra ruta por ruta, cada endpoint
+> nuevo nacería abierto para este rol sin que nadie se entere. Por eso se hace al
+> revés: `acotarPorRol` (`backend/src/middlewares/auth.ts`) se monta una sola vez
+> junto a `requireAuth` y solo deja pasar una **lista blanca** de rutas. Toda ruta
+> que se agregue en el futuro le queda cerrada hasta que alguien la sume a mano.
 
 ---
 

@@ -105,7 +105,15 @@ function coincideFiltro(
 }
 
 /** 403 si el caso no es del área+provincia del usuario. */
+/** true si este usuario solo puede ver conversaciones de fidelizacion. */
+function soloFidelizacion(req: Request): boolean {
+  return req.usuario?.rol === "FIDELIZACION";
+}
+
 function autorizadoSobreCaso(req: Request, caso: { area: any; sucursal: string | null }): boolean {
+  // Aunque el listado ya no se los muestre, hay que cerrar tambien la puerta de
+  // atras: entrar a /seguimiento/caso:<id> escribiendo la URL a mano.
+  if (soloFidelizacion(req)) return false;
   return puedeAcceder(req.usuario!, caso.area) && mismaProvincia(req.usuario!.sucursal, caso.sucursal);
 }
 
@@ -248,7 +256,12 @@ export async function listarConversaciones(req: Request, res: Response) {
 
   // Alcance real del usuario (su provincia; null = ve todas). Se filtra en JS
   // por los acentos (Postgres no los pliega).
-  const casosVis = casos.filter((c) => mismaProvincia(req.usuario!.sucursal, c.sucursal));
+  // El rol FIDELIZACION no ve Contacto Posterior: su pantalla es el chat con los
+  // clientes de fidelizacion y nada mas. Se corta aca, despues de la consulta,
+  // porque la misma pantalla sirve a los dos roles y asi no se duplica la query.
+  const casosVis = soloFidelizacion(req)
+    ? []
+    : casos.filter((c) => mismaProvincia(req.usuario!.sucursal, c.sucursal));
   const fidelsVis = fidels.filter((f) => mismaProvincia(req.usuario!.sucursal, f.sucursal));
 
   // Opciones para los desplegables: todo lo que el usuario PUEDE ver, ANTES de
@@ -348,7 +361,9 @@ export async function contarPendientesSeguimiento(req: Request, res: Response) {
       select: { sucursal: true },
     }),
   ]);
-  const pendCasos = analisis.filter((a) => mismaProvincia(req.usuario!.sucursal, a.caso?.sucursal)).length;
+  const pendCasos = soloFidelizacion(req)
+    ? 0
+    : analisis.filter((a) => mismaProvincia(req.usuario!.sucursal, a.caso?.sucursal)).length;
   const pendFidel = fidelAsesor.filter((f) => mismaProvincia(req.usuario!.sucursal, f.sucursal)).length;
   res.json({ pendientes: pendCasos + pendFidel });
 }

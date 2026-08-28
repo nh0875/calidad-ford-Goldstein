@@ -18,7 +18,7 @@ interface UsuarioFila {
   id: string;
   nombre: string;
   email: string;
-  rol: "ADMIN" | "CALIDAD";
+  rol: "ADMIN" | "CALIDAD" | "FIDELIZACION";
   area: AreaUsuario;
   sucursal: string | null; // provincia; null = todas
   activo: boolean;
@@ -26,7 +26,11 @@ interface UsuarioFila {
   createdAt: string;
 }
 
-const ROL_LABEL: Record<string, string> = { ADMIN: "Administrador", CALIDAD: "Calidad" };
+const ROL_LABEL: Record<string, string> = {
+  ADMIN: "Administrador",
+  CALIDAD: "Calidad",
+  FIDELIZACION: "Fidelizacion",
+};
 const AREAS_USUARIO: AreaUsuario[] = ["AMBAS", "VENTAS", "POSVENTA"];
 const TODAS_PROVINCIAS = "__todas__"; // valor del select "Todas" (el back recibe "")
 
@@ -40,7 +44,7 @@ export default function Usuarios() {
   const [nombre, setNombre] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rol, setRol] = useState<"ADMIN" | "CALIDAD">("CALIDAD");
+  const [rol, setRol] = useState<"ADMIN" | "CALIDAD" | "FIDELIZACION">("CALIDAD");
   const [areaNueva, setAreaNueva] = useState<AreaUsuario>("AMBAS");
   const [sucursalNueva, setSucursalNueva] = useState(""); // "" = todas las provincias
   const [creando, setCreando] = useState(false);
@@ -205,8 +209,9 @@ export default function Usuarios() {
             />
           </Campo>
           <Campo etiqueta="Rol">
-            <Select value={rol} onChange={(e) => setRol(e.target.value as "ADMIN" | "CALIDAD")}>
+            <Select value={rol} onChange={(e) => setRol(e.target.value as "ADMIN" | "CALIDAD" | "FIDELIZACION")}>
               <option value="CALIDAD">Calidad</option>
+              <option value="FIDELIZACION">Fidelización — solo esa pestaña y Seguimiento</option>
               <option value="ADMIN">Administrador</option>
             </Select>
           </Campo>

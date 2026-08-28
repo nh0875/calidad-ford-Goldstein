@@ -6,7 +6,7 @@ export interface UsuarioSesion {
   id: string;
   nombre: string;
   email: string;
-  rol: "ADMIN" | "CALIDAD";
+  rol: "ADMIN" | "CALIDAD" | "FIDELIZACION";
   area: "VENTAS" | "POSVENTA" | "AMBAS";
 }
 
@@ -14,6 +14,13 @@ export interface UsuarioSesion {
 // mostrar el filtro y el desglose por área; el backend igual valida todo.
 export function veTodasLasAreas(u: UsuarioSesion | null): boolean {
   return !!u && (u.rol === "ADMIN" || u.area === "AMBAS");
+}
+
+// El puesto acotado de Fidelizacion: solo su pantalla y el Seguimiento de esos
+// clientes. El backend lo corta igual (middlewares/auth.ts, acotarPorRol); esto
+// es para no mostrarle puertas que le van a dar 403.
+export function esSoloFidelizacion(u: UsuarioSesion | null): boolean {
+  return u?.rol === "FIDELIZACION";
 }
 
 const CLAVE_TOKEN = "calidad.token";

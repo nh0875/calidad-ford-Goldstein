@@ -24,7 +24,7 @@ import {
   Users,
 } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { getModoDemo, getUsuario, limpiarSesion, veTodasLasAreas } from "../lib/auth";
+import { getModoDemo, getUsuario, limpiarSesion, veTodasLasAreas, esSoloFidelizacion } from "../lib/auth";
 import { etiquetaArea } from "../lib/area";
 import { apiGet, apiPostJson } from "../lib/api";
 import { Badge } from "../components/ui/Badge";
@@ -93,9 +93,12 @@ export default function MainLayout() {
   // Badge del sidebar: casos que esperan clasificación manual (del área del usuario)
   const [pendientesRevision, setPendientesRevision] = useState(0);
   useEffect(() => {
-    apiGet<{ pendientes: number }>("/api/refuerzos/mias/pendientes")
-      .then((r) => setPendientesRefuerzo(r.pendientes))
-      .catch(() => {});
+    // El puesto de Fidelizacion no trabaja refuerzos: pedirlo seria un 403 seguro.
+    if (!esSoloFidelizacion(usuario)) {
+      apiGet<{ pendientes: number }>("/api/refuerzos/mias/pendientes")
+        .then((r) => setPendientesRefuerzo(r.pendientes))
+        .catch(() => {});
+    }
     apiGet<{ pendientes: number }>("/api/seguimiento/pendientes")
       .then((r) => setPendientesRevision(r.pendientes))
       .catch(() => {});
@@ -113,7 +116,14 @@ export default function MainLayout() {
   // en Volkswagen). El backend igual responde 404 en esos endpoints: esconder
   // la pestaña es comodidad, no la barrera.
   const modulos = getMarca().modulos;
-  const itemsDeLaMarca = navItems.filter((i) => !i.modulo || modulos[i.modulo]);
+  // Las dos pantallas del puesto de Fidelizacion. Tienen que coincidir con la
+  // lista blanca del backend (middlewares/auth.ts, RUTAS_FIDELIZACION): si aca
+  // se muestra algo de mas, el usuario lo abre y come un 403.
+  const RUTAS_DE_FIDELIZACION = ["/fidelizacion", "/fidelizacion/clientes", "/seguimiento"];
+  const soloFidelizacion = esSoloFidelizacion(usuario);
+  const itemsDeLaMarca = navItems
+    .filter((i) => !i.modulo || modulos[i.modulo])
+    .filter((i) => !soloFidelizacion || RUTAS_DE_FIDELIZACION.includes(i.to));
 
   // Los links de administración solo aparecen para ADMIN (el backend también lo
   // exige, así que ocultarlos acá es cosmético, no la protección real)
@@ -230,7 +240,9 @@ export default function MainLayout() {
         {/* Cartel rojo: RQR sin atender, clientes que escalaron, amarillos.
             Va debajo del encabezado y arriba del contenido, en todas las
             pantallas, hasta que alguien lo agarre. */}
-        <CartelAvisos />
+        {/* Los avisos son de RQR y clientes escalados: Contacto Posterior puro.
+            El puesto de Fidelizacion no los trabaja (y /api/avisos le da 403). */}
+        {!soloFidelizacion && <CartelAvisos />}
         <main className="flex-1 overflow-y-auto p-6">
           <PageTransition>
             <Outlet />

@@ -59,6 +59,12 @@ export async function usuariosDelPool(
     where: {
       activo: true,
       participaEnRefuerzos: true,
+      // El rol FIDELIZACION nunca reparte tareas de refuerzo: no trabaja
+      // Contacto Posterior. Sin esto entraria solo al pool (participaEnRefuerzos
+      // viene en true por defecto y el alta de usuarios ni siquiera lo pide), y
+      // el sistema creeria que el area esta cubierta: dejaria de avisar que esas
+      // tareas no las esta mirando nadie.
+      rol: { not: "FIDELIZACION" },
       ...(area
         ? { area: { in: [area === AreaTrabajo.VENTAS ? AreaUsuario.VENTAS : AreaUsuario.POSVENTA, AreaUsuario.AMBAS] } }
         : {}),

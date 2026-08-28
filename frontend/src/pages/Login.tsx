@@ -36,7 +36,7 @@ export default function Login() {
       const { token, usuario, modoDemo } = await apiPostJson<RespuestaLogin>("/api/auth/login", { email, password });
       guardarSesion(token, usuario);
       guardarModoDemo(Boolean(modoDemo));
-      navigate("/dashboard", { replace: true });
+      navigate(usuario.rol === "FIDELIZACION" ? "/fidelizacion" : "/dashboard", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos iniciar sesión. Probá de nuevo en un momento.");
     } finally {

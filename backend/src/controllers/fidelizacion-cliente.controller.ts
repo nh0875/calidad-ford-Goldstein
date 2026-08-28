@@ -169,6 +169,22 @@ const camposSchema = z.object({
   comentarioAsesor: z.string().trim().max(2000).optional().or(z.literal("")),
 });
 
+/**
+ * Provincia con la que se guarda un cliente de fidelizacion.
+ *
+ * Un usuario acotado a una provincia NO puede mandar un registro a otra ni
+ * dejarlo sin provincia: con sucursal en null el cliente desaparece de su propia
+ * pantalla (mismaProvincia lo excluye) y aparece en la de otro. Se le impone la
+ * suya y listo. Los que ven todas las provincias (sucursal vacia) siguen
+ * eligiendo libremente.
+ */
+function sucursalPermitida(req: Request, pedida?: string | null): string | null {
+  const propia = req.usuario?.sucursal?.trim();
+  if (propia) return propia;
+  const limpia = (pedida ?? "").trim();
+  return limpia === "" ? null : limpia;
+}
+
 export async function crearClienteFidelizacion(req: Request, res: Response) {
   const parsed = camposSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -187,7 +203,7 @@ export async function crearClienteFidelizacion(req: Request, res: Response) {
     });
   }
 
-  const sucursal = d.sucursal || req.usuario!.sucursal || "General";
+  const sucursal = sucursalPermitida(req, d.sucursal) ?? "General";
   const fechaEntrega = d.fechaEntrega ? new Date(`${d.fechaEntrega}T12:00:00`) : null;
   const periodo = (fechaEntrega ?? new Date()).toISOString().slice(0, 7); // AAAA-MM
 
@@ -276,7 +292,7 @@ export async function editarClienteFidelizacion(req: Request, res: Response) {
   if (d.asesor !== undefined) datos.asesor = d.asesor || null;
   if (d.numeroServicio !== undefined) datos.numeroServicio = d.numeroServicio ?? null;
   if (d.comentarioAsesor !== undefined) datos.comentarioAsesor = d.comentarioAsesor || null;
-  if (d.sucursal !== undefined) datos.sucursal = d.sucursal || null;
+  if (d.sucursal !== undefined) datos.sucursal = sucursalPermitida(req, d.sucursal);
   if (d.fechaEntrega !== undefined) {
     datos.fechaEntrega = d.fechaEntrega ? new Date(`${d.fechaEntrega}T12:00:00`) : null;
   }

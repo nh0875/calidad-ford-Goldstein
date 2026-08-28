@@ -117,6 +117,11 @@ enum EstadoRQR {
 enum RolUsuario {
   ADMIN
   CALIDAD
+  // Puesto acotado: solo Fidelizacion y el Seguimiento de esos clientes. No ve
+  // Contacto Posterior, ni RQR, ni tableros. Que provincia trabaja lo sigue
+  // decidiendo Usuario.sucursal, igual que para CALIDAD, asi que manana se puede
+  // crear el mismo rol para otra provincia sin tocar codigo.
+  FIDELIZACION
 }
 
 // Motivo por el que un teléfono queda en la lista de supresión (no contactar).

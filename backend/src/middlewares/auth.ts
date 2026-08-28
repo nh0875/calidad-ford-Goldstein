@@ -54,6 +54,34 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
+// Lo que puede tocar el rol FIDELIZACION. Es una LISTA BLANCA a proposito.
+//
+// El resto del backend PERMITE POR DEFECTO: solo requireAdmin cierra puertas, y
+// todo lo demas queda abierto a cualquier usuario autenticado. Con una lista
+// negra ruta por ruta, cada endpoint que se agregue en el futuro nace abierto
+// para este rol y nadie se entera. Asi, nace cerrado.
+const RUTAS_FIDELIZACION = [
+  /^\/fidelizacion(\/|$)/,  // su pantalla: cargas y destinatarios
+  /^\/seguimiento(\/|$)/,   // el chat con esos clientes (el controller acota a fidelizacion)
+  /^\/auth(\/|$)/,          // login, cambiar su propia contrasena
+  /^\/marca(\/|$)/,         // que marca es el sistema, para dibujar la pantalla
+];
+
+/**
+ * Encierra al rol FIDELIZACION en sus dos pantallas.
+ *
+ * Va montado JUNTO a requireAuth, antes que cualquier ruta, para que valga para
+ * todas de una sola vez y no haya que acordarse de nada al agregar la proxima.
+ */
+export function acotarPorRol(req: Request, res: Response, next: NextFunction) {
+  if (req.usuario?.rol !== "FIDELIZACION") return next();
+  const ruta = req.path || "";
+  if (RUTAS_FIDELIZACION.some((patron) => patron.test(ruta))) return next();
+  return res.status(403).json({
+    message: "Tu usuario es de Fidelizacion: solo tiene acceso a Fidelizacion y a Seguimiento.",
+  });
+}
+
 // Va después de requireAuth: exige rol ADMIN para las rutas de gestión de usuarios
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (req.usuario?.rol !== "ADMIN") {

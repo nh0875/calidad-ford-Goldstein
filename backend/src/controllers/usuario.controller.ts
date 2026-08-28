@@ -76,7 +76,19 @@ export async function createUsuario(req: Request, res: Response) {
   const area = esAdminNuevo ? AreaUsuario.AMBAS : parsed.data.area;
   const sucursal = esAdminNuevo ? null : await normalizarSucursalUsuario(parsed.data.sucursal);
   const usuario = await prisma.usuario.create({
-    data: { nombre: parsed.data.nombre, email, passwordHash, rol: parsed.data.rol, area, sucursal },
+    data: {
+      nombre: parsed.data.nombre,
+      email,
+      passwordHash,
+      rol: parsed.data.rol,
+      area,
+      sucursal,
+      // participaEnRefuerzos viene en true por defecto en el schema. Para el rol
+      // de Fidelizacion eso estaria mal: no trabaja Contacto Posterior, y el
+      // sistema contaria su cuenta como cobertura del area y dejaria de avisar
+      // que esas tareas no las mira nadie.
+      participaEnRefuerzos: parsed.data.rol !== RolUsuario.FIDELIZACION,
+    },
     select: SELECT_USUARIO,
   });
 

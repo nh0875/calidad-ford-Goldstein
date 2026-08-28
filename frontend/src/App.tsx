@@ -1,3 +1,4 @@
+import { esSoloFidelizacion, getUsuario } from "./lib/auth";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import MainLayout from "./layouts/MainLayout";
 import RutaPrivada from "./components/RutaPrivada";
@@ -23,6 +24,13 @@ import ClientesFidelizacion from "./pages/ClientesFidelizacion";
 import Supresion from "./pages/Supresion";
 import Normalizacion from "./pages/Normalizacion";
 
+// A donde cae cada usuario al entrar. El puesto de Fidelizacion no tiene
+// Dashboard (el backend le responde 403), asi que mandarlo ahi seria dejarlo
+// mirando un error apenas se loguea.
+function inicioSegun(): string {
+  return esSoloFidelizacion(getUsuario()) ? "/fidelizacion" : "/dashboard";
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -35,7 +43,7 @@ export default function App() {
             </RutaPrivada>
           }
         >
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/" element={<Navigate to={inicioSegun()} replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/upload" element={<Upload />} />
           <Route path="/casos" element={<Casos />} />
@@ -58,7 +66,7 @@ export default function App() {
           <Route path="/auditoria" element={<Auditoria />} />
           <Route path="/configuracion" element={<Configuracion />} />
           <Route path="/cambiar-password" element={<CambiarPassword />} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to={inicioSegun()} replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

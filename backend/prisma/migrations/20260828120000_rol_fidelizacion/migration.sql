@@ -1,0 +1,12 @@
+-- Rol nuevo: FIDELIZACION.
+--
+-- Puesto acotado para quien trabaja el programa de fidelización: solo ve la
+-- pantalla de Fidelización y el Seguimiento de esos clientes. No ve Contacto
+-- Posterior, ni RQR, ni tableros.
+--
+-- Qué provincia atiende lo sigue decidiendo "Usuario"."sucursal", igual que para
+-- CALIDAD. Así, el mismo rol sirve para San Juan, para Mendoza o para las dos,
+-- sin tocar código.
+--
+-- ALTER TYPE ... ADD VALUE es aditivo: no toca ni un usuario existente.
+ALTER TYPE "RolUsuario" ADD VALUE IF NOT EXISTS 'FIDELIZACION';

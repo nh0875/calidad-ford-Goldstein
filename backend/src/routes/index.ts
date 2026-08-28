@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../middlewares/asyncHandler";
-import { requireAuth } from "../middlewares/auth";
+import { acotarPorRol, requireAuth } from "../middlewares/auth";
 import { rateLimitGlobal } from "../middlewares/rateLimit";
 import healthRoutes from "./health.routes";
 import marcaRoutes from "./marca.routes";
@@ -58,6 +58,13 @@ router.use("/auth", authRoutes);
 // para que un fallo de Redis/DB se derive al manejador de errores y no quede
 // como una promesa rechazada sin capturar (que podría voltear el proceso).
 router.use(asyncHandler(requireAuth));
+
+// Inmediatamente despues de requireAuth: el rol FIDELIZACION solo pasa a sus dos
+// pantallas. Va aca, una sola vez, para que cualquier ruta que se agregue de
+// ahora en adelante le quede CERRADA salvo que se la sume a mano a la lista
+// blanca de middlewares/auth.ts. Es lo contrario de como esta el resto del
+// backend (que permite por defecto), y es a proposito.
+router.use(acotarPorRol);
 
 router.use("/uploads", uploadRoutes);
 router.use("/casos", casoRoutes);
