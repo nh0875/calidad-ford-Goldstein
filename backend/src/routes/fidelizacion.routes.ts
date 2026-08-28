@@ -7,6 +7,7 @@ import {
   eliminarFidelizacion,
   enviarFidelizacion,
   estadoPlantillaFidelizacion,
+  hojasDelExcel,
   listarFidelizacion,
   progresoFidelizacion,
   subirFidelizacion,
@@ -36,6 +37,10 @@ router.delete("/clientes/:id", requireAdmin, asyncHandler(eliminarClienteFideliz
 // Subir el Excel de agendamientos: detecta los clientes con service 1°-5°
 // pendiente y los deja PENDIENTE (mismo formato Ford, .xls o .xlsx).
 router.post("/", recibirXlsx("archivo"), asyncHandler(subirFidelizacion));
+
+// Las hojas que trae el Excel, para que la pantalla pueda ofrecer cual procesar.
+// No persiste nada: solo abre el archivo y devuelve los nombres.
+router.post("/hojas", recibirXlsx("archivo"), asyncHandler(hojasDelExcel));
 
 // Listado de cargas de fidelización con sus conteos.
 router.get("/", asyncHandler(listarFidelizacion));

@@ -123,10 +123,43 @@ export function detectarNumeroServicio(comentario: unknown): number | null {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, ""); // quita acentos (no afecta a "mantenimiento")
-  const m = texto.match(/(\d{1,2})\s*[°º]?\s*servicio/);
-  if (!m) return null;
-  const n = parseInt(m[1], 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
+
+  const numero = (crudo: string): number | null => {
+    const n = parseInt(crudo, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+
+  // ORDEN DE LAS REGLAS: NO tocar. La primera es la de siempre y tiene que
+  // seguir ganando; las otras tres son respaldo para las planillas que no
+  // escriben el service asi.
+  //
+  // Si alguna de las de abajo se evalua ANTES, Ford pierde 1 de cada 4
+  // recordatorios: sus comentarios traen el codigo de campana pegado despues de
+  // la palabra servicio ("SSD:3 Servicio de Mantenimiento+23S60"), asi que una
+  // regla de "numero DESPUES de servicio" leeria 23 en vez de 3 y el service se
+  // iria fuera del rango 1-5. Medido: 228 candidatos -> 167.
+
+  // 1) "3 servicio" / "3° servicio": el numero JUSTO ANTES de la palabra.
+  const antes = texto.match(/(\d{1,2})\s*[°º]?\s*servicio/);
+  if (antes) return numero(antes[1]);
+
+  // 2) Codigo de service del DMS: SM01..SM25 (columna "Cod. Serv." de la base de
+  //    Posventa de San Juan). Es el dato mas limpio de esa planilla: no depende
+  //    de como haya escrito el comentario el asesor.
+  const codigo = texto.match(/\bsm\s*0*(\d{1,2})\b/);
+  if (codigo) return numero(codigo[1]);
+
+  // 3) Ordinales escritos: "1er servicio", "2do servicio", "10mo servicio".
+  const ordinal = texto.match(/\b(\d{1,2})\s*(?:er|do|ro|to|mo|vo|no)\b[^a-z0-9]{0,4}servicio/);
+  if (ordinal) return numero(ordinal[1]);
+
+  // 4) Numero DESPUES, pero SOLO pegado a "servicio de mantenimiento" completo
+  //    ("SERVICIO DE MANTENIMIENTO 04"). Va ultima y es deliberadamente estrecha:
+  //    cualquier version mas suelta se come los codigos de campana de Ford.
+  const despues = texto.match(/servicio\s+de\s+mantenimiento\s+0*(\d{1,2})\b/);
+  if (despues) return numero(despues[1]);
+
+  return null;
 }
 
 /** true si ese número de service entra en el recordatorio de fidelización (1..5). */
@@ -233,7 +266,29 @@ export function parsearFidelizacion(
   // Los dos exports de Ford lo traen; algunos turnos lo tienen SOLO en una de las
   // dos columnas, así que se detecta de AMBAS (se toma el número de la que lo tenga).
   const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
-  const colServicio = hoja.columnas.find((c) => norm(c) === "servicio") ?? null;
+
+  // Columnas donde puede venir el service, EN ORDEN DE PRIORIDAD.
+  //
+  // Por que una lista y no un `includes`: en el export de Ford hay cuatro
+  // columnas que contienen la palabra "servicio" ("Servicio", "Orden de
+  // servicio", "Dias en Servicio", "Ultima actualizacion del servicio web") y
+  // hoy funciona de casualidad, porque la buena viene primera en el archivo. Y
+  // en la base de Posventa de San Juan un `includes` agarraria "Tipo Servicio"
+  // y nunca llegaria a "Cod. Serv.", que es la columna limpia.
+  //
+  // Se leen TODAS las que existan y se toma el numero de la primera que lo tenga:
+  // algunas planillas dejan una vacia y cargan la otra.
+  const NOMBRES_COLUMNA_SERVICIO = [
+    "servicio",       // export de turnos de Ford
+    "cod. serv.",     // base de Posventa de San Juan: SM01..SM25
+    "cod serv",
+    "codigo de servicio",
+    "tipo servicio",  // "SERVICIO DE MANTENIMIENTO 04"
+  ];
+  const colsServicio = NOMBRES_COLUMNA_SERVICIO.map((n) =>
+    hoja.columnas.find((c) => norm(c) === n)
+  ).filter((c): c is string => Boolean(c));
+  const colServicio = colsServicio[0] ?? null;
 
   if (!colComentario && !colServicio) {
     return {
@@ -250,14 +305,35 @@ export function parsearFidelizacion(
   const colPatente = columnaDe("patente");
   const colAsesor = columnaDe("asesor");
 
+  // Algunas planillas no traen "Nombre Propietario" sino el nombre PARTIDO en
+  // dos columnas ("Apellido" y "Nombre"). Solo se usa como respaldo: si la
+  // planilla tiene la columna de nombre completo, gana esa.
+  const colApellido = colNombre ? null : hoja.columnas.find((c) => norm(c) === "apellido") ?? null;
+  const colNombrePila = colNombre ? null : hoja.columnas.find((c) => norm(c) === "nombre") ?? null;
+
+  const nombreDeLaFila = (fila: (typeof hoja.filas)[number]): string => {
+    if (colNombre) return textoCelda(fila.datos[colNombre]) || "(sin nombre)";
+    const partes = [
+      colApellido ? textoCelda(fila.datos[colApellido]) : "",
+      colNombrePila ? textoCelda(fila.datos[colNombrePila]) : "",
+    ].filter((x) => x.trim() !== "");
+    return partes.join(" ").trim() || "(sin nombre)";
+  };
+
   const candidatos: FilaFidelizacion[] = [];
   const resumen = resumenVacio(OrigenFidelizacion.TURNOS, hoja.filas.length);
 
   for (const fila of hoja.filas) {
     const comentario = colComentario ? textoCelda(fila.datos[colComentario]) : "";
-    const servicioTxt = colServicio ? textoCelda(fila.datos[colServicio]) : "";
-    // Número del service tomado de cualquiera de las dos columnas.
-    const numero = detectarNumeroServicio(comentario) ?? detectarNumeroServicio(servicioTxt);
+    const textosServicio = colsServicio.map((c) => textoCelda(fila.datos[c]));
+    const servicioTxt = textosServicio.find((x) => x.trim() !== "") ?? "";
+    // Número del service: primero el comentario del asesor, después cada columna
+    // de servicio en orden de prioridad. Gana la primera que devuelva un número.
+    let numero = detectarNumeroServicio(comentario);
+    for (const texto of textosServicio) {
+      if (numero !== null) break;
+      numero = detectarNumeroServicio(texto);
+    }
 
     if (numero === null) {
       resumen.sinServicio++;
@@ -283,7 +359,7 @@ export function parsearFidelizacion(
     candidatos.push({
       numeroFilaExcel: fila.numeroFilaExcel,
       origen: OrigenFidelizacion.TURNOS,
-      nombre: (colNombre && textoCelda(fila.datos[colNombre])) || "(sin nombre)",
+      nombre: nombreDeLaFila(fila),
       whatsappNorm,
       celularNorm,
       telefonoCrudo: telefonoCrudo || null,

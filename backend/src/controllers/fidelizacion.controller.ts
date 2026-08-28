@@ -4,7 +4,7 @@ import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { env } from "../config/env";
 import { marca } from "../config/marca";
-import { abrirWorkbook } from "../services/excel.service";
+import { abrirWorkbook, derivarPeriodoDeNombreHoja, hojaVacia } from "../services/excel.service";
 import {
   encolarEnviosFidelizacion,
   motivoBloqueoEnvio,
@@ -18,6 +18,29 @@ import {
 } from "../services/configuracion.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 
+// ---------- POST /api/fidelizacion/hojas (que hojas trae el Excel) ----------
+// Existe para las planillas con una hoja POR MES: la pantalla necesita saber que
+// hojas hay para poder ofrecerlas antes de procesar. Las vacias se marcan para
+// que no se puedan elegir (las planillas reales arrastran hojas de sobra).
+export async function hojasDelExcel(req: Request, res: Response) {
+  if (!req.file) {
+    return res.status(400).json({ message: "No se recibio ningun archivo." });
+  }
+  let workbook;
+  try {
+    workbook = abrirWorkbook(req.file.buffer);
+  } catch {
+    return res.status(400).json({
+      message: "El archivo no se pudo leer como Excel. Verifica que sea un .xls/.xlsx valido.",
+    });
+  }
+  const hojas = workbook.SheetNames.map((nombre) => ({
+    nombre,
+    vacia: hojaVacia(workbook, nombre),
+  }));
+  return res.json({ hojas });
+}
+
 // ---------- POST /api/fidelizacion (subir Excel y detectar candidatos) ----------
 // A diferencia del Contacto Posventa, acá NO hay paso de preview/confirm ni
 // mapeo manual: se detecta solo (mismo formato Ford). Persiste la carga y los
@@ -25,6 +48,11 @@ import { ACCIONES, auditar } from "../services/audit.service";
 
 const subirSchema = z.object({
   sucursal: z.string().trim().min(1, "Indicá la sucursal de la carga.").default("General"),
+  // Qué hoja del Excel procesar. Opcional: si no viene, se usa la primera que
+  // tenga datos. Hace falta porque hay planillas con una hoja POR MES (la base
+  // anual de Posventa de San Juan trae doce), y sin esto solo se podría cargar
+  // la primera: las otras once quedan inalcanzables desde la pantalla.
+  hoja: z.string().trim().min(1).optional(),
 });
 
 export async function subirFidelizacion(req: Request, res: Response) {
@@ -39,6 +67,7 @@ export async function subirFidelizacion(req: Request, res: Response) {
     return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Revisá los datos." });
   }
   const sucursal = parsed.data.sucursal;
+  const hojaPedida = parsed.data.hoja;
 
   let workbook;
   try {
@@ -52,15 +81,35 @@ export async function subirFidelizacion(req: Request, res: Response) {
     return res.status(400).json({ message: "El archivo Excel no tiene ninguna hoja." });
   }
 
-  // El formato (turnos de Ford o planilla de ventas) se detecta solo por las
-  // columnas: la usuaria sube el Excel que tenga y no elige nada.
-  const parseo = parsearPlanillaFidelizacion(workbook, workbook.SheetNames[0]);
+  // El FORMATO (turnos de Ford o planilla de ventas) se sigue detectando solo por
+  // las columnas: eso no cambia. Lo que sí se puede elegir ahora es la HOJA.
+  let nombreHoja: string;
+  if (hojaPedida) {
+    const existe = workbook.SheetNames.find((h) => h === hojaPedida);
+    if (!existe) {
+      return res.status(400).json({
+        message: `El Excel no tiene ninguna hoja llamada "${hojaPedida}". Tiene: ${workbook.SheetNames.join(", ")}.`,
+      });
+    }
+    nombreHoja = existe;
+  } else {
+    // Sin hoja elegida: la primera CON DATOS. Se saltean las vacías porque las
+    // planillas reales suelen arrastrar una ("Hoja12" en la base de San Juan) y
+    // si cae justo primera la carga moría con un error que no decía nada.
+    nombreHoja = workbook.SheetNames.find((h) => !hojaVacia(workbook, h)) ?? workbook.SheetNames[0];
+  }
+
+  const parseo = parsearPlanillaFidelizacion(workbook, nombreHoja);
   if ("error" in parseo) {
     return res.status(400).json({ message: parseo.error });
   }
   const esVentas = parseo.resumen.formato === OrigenFidelizacion.VENTAS;
 
-  const periodo = parseo.periodoSugerido ?? new Date().toISOString().slice(0, 7);
+  // Período: primero lo que digan las FECHAS de los datos; si no se puede, el
+  // nombre de la hoja ("Ene25" -> 2025-01), que es como vienen las bases anuales;
+  // y recién como último recurso el mes actual.
+  const periodo =
+    parseo.periodoSugerido ?? derivarPeriodoDeNombreHoja(nombreHoja) ?? new Date().toISOString().slice(0, 7);
 
   // Persistir: la carga (ExcelUpload tipo FIDELIZACION) + un ClienteFidelizacion
   // por candidato. Los que no tienen teléfono válido quedan OMITIDO de entrada.

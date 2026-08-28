@@ -228,21 +228,34 @@ export function extraerKpisResumen(
 }
 
 // ---------- Sugerencia de mapeo de columnas ----------
+//
+// OJO: esta tabla NO es solo de Fidelizacion. La usan tambien el preview de
+// Contacto Posventa/Ventas (upload.controller.ts) e importacion.service.ts, para
+// las DOS marcas. Un alias nuevo cambia el mapeo que el sistema propone por
+// defecto en esas pantallas.
+//
+// Por eso los alias nuevos son lo mas especificos posible. Detalle de
+// sugerirMapeo que hay que tener presente: recorre las columnas EN EL ORDEN DEL
+// ARCHIVO y, una vez que uso un campo, no lo vuelve a asignar. Un alias suelto
+// como "telefono" haria que una columna "Otro Telefono" se quede con `celular`
+// antes de que el recorrido llegue a la columna "Celular" de verdad. Los
+// patrones de 6 caracteres o menos se comparan por IGUALDAD EXACTA (ver abajo),
+// que es justo lo que hace seguro a "telef.".
 
 const ALIAS_CAMPOS: Array<{ patrones: string[]; campo: CampoCaso }> = [
-  { patrones: ["fecha de programacion"], campo: "fechaProgramacion" },
+  { patrones: ["fecha de programacion", "fec. apertura"], campo: "fechaProgramacion" },
   { patrones: ["hora"], campo: "hora" },
   // "agendamento" (sin la i) es como viene en el Excel real de San Juan
   { patrones: ["origen del agendamiento", "origen del agendamento", "origen agendamiento"], campo: "origenAgendamiento" },
   { patrones: ["asesor"], campo: "asesor" },
   { patrones: ["modelo"], campo: "modelo" },
-  { patrones: ["placa / patente", "patente", "placa"], campo: "patente" },
+  { patrones: ["placa / patente", "patente", "placa", "dominio"], campo: "patente" },
   { patrones: ["chasis"], campo: "chasisVIN" },
   { patrones: ["nombre propietario"], campo: "nombrePropietario" },
   { patrones: ["e-mail propietario", "email propietario", "e-mail", "email"], campo: "emailPropietario" },
-  { patrones: ["celular"], campo: "celular" },
+  { patrones: ["celular", "telef."], campo: "celular" },
   { patrones: ["whatsapp"], campo: "whatsapp" },
-  { patrones: ["comentario del asesor"], campo: "comentarioAsesor" },
+  { patrones: ["comentario del asesor", "observa asesor"], campo: "comentarioAsesor" },
   { patrones: ["fecha salida", "fecha de salida"], campo: "fechaSalida" },
   { patrones: ["dias en servicio"], campo: "diasEnServicio" },
   { patrones: ["estado"], campo: "estado" },
@@ -320,6 +333,42 @@ export function derivarPeriodo(nombreHoja: string, anio: number): string | null 
     }
   }
   return null;
+}
+
+/**
+ * Período a partir del nombre de la hoja CUANDO el nombre trae también el año
+ * ("Ene25" -> 2025-01, "Marzo 2024" -> 2024-03).
+ *
+ * Existe por las bases ANUALES, que traen una hoja por mes. Sin esto las doce
+ * cargas quedan con el período del mes en que se subieron y el historial de
+ * cargas no se puede leer.
+ */
+export function derivarPeriodoDeNombreHoja(nombreHoja: string): string | null {
+  const norm = normalizarTexto(nombreHoja);
+  const anioMatch = norm.match(/(\d{4})|(\d{2})/);
+  if (!anioMatch) return null;
+  const crudo = anioMatch[1] ?? anioMatch[2];
+  const anio = crudo.length === 4 ? parseInt(crudo, 10) : 2000 + parseInt(crudo, 10);
+  if (!Number.isFinite(anio) || anio < 2000 || anio > 2100) return null;
+  return derivarPeriodo(nombreHoja, anio);
+}
+
+/**
+ * true si la hoja no tiene ni una celda con datos.
+ *
+ * Las planillas reales arrastran hojas vacías de sobra (la base de Posventa de
+ * San Juan trae una "Hoja12"). Si una de esas cae primera, la carga moría con un
+ * error que no explicaba nada.
+ */
+export function hojaVacia(workbook: XLSX.WorkBook, nombreHoja: string): boolean {
+  const hoja = workbook.Sheets[nombreHoja];
+  if (!hoja || !hoja["!ref"]) return true;
+  const filas: unknown[][] = XLSX.utils.sheet_to_json(hoja, {
+    header: 1,
+    blankrows: false,
+    defval: "",
+  });
+  return filas.every((fila) => fila.every((celda) => String(celda ?? "").trim() === ""));
 }
 
 // ---------- Lectura de una hoja ----------

@@ -127,6 +127,10 @@ export default function Fidelizacion() {
   const [mensaje, setMensaje] = useState<string | null>(null);
   const inputArchivo = useRef<HTMLInputElement>(null);
   const [sucursal, setSucursal] = useState("General");
+  // Hojas del Excel elegido. Solo se muestran cuando el archivo trae MAS DE UNA
+  // con datos: las bases anuales vienen con una hoja por mes y hay que decir cual.
+  const [hojas, setHojas] = useState<string[]>([]);
+  const [hoja, setHoja] = useState("");
 
   const [detalle, setDetalle] = useState<DetalleCarga | null>(null);
   const [progreso, setProgreso] = useState<Progreso | null>(null);
@@ -153,6 +157,30 @@ export default function Fidelizacion() {
     };
   }, []);
 
+  // Al elegir el archivo se le pregunta al backend que hojas tiene. Si trae una
+  // sola (el caso de siempre en Ford) no se muestra nada y la pantalla queda igual.
+  async function alElegirArchivo() {
+    setHojas([]);
+    setHoja("");
+    const archivo = inputArchivo.current?.files?.[0];
+    if (!archivo) return;
+    try {
+      const form = new FormData();
+      form.append("archivo", archivo);
+      const data = await apiPostForm<{ hojas: { nombre: string; vacia: boolean }[] }>(
+        "/api/fidelizacion/hojas",
+        form
+      );
+      const conDatos = data.hojas.filter((h) => !h.vacia).map((h) => h.nombre);
+      if (conDatos.length > 1) {
+        setHojas(conDatos);
+        setHoja(conDatos[0]);
+      }
+    } catch {
+      // Si falla, no pasa nada: se sube sin elegir hoja y el backend usa la primera con datos.
+    }
+  }
+
   async function subir(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -164,9 +192,12 @@ export default function Fidelizacion() {
       const form = new FormData();
       form.append("archivo", archivo);
       form.append("sucursal", sucursal.trim() || "General");
+      if (hoja) form.append("hoja", hoja);
       const data = await apiPostForm<RespuestaSubida>("/api/fidelizacion", form);
       setMensaje(data.message);
       if (inputArchivo.current) inputArchivo.current.value = "";
+      setHojas([]);
+      setHoja("");
       await cargarLista();
       await verDetalle(data.uploadId); // abrir directo la carga recién subida
     } catch (err) {
@@ -274,6 +305,7 @@ export default function Fidelizacion() {
               <span className="mb-1 block text-xs font-medium text-ink-muted">Archivo Excel</span>
               <input
                 ref={inputArchivo}
+                onChange={alElegirArchivo}
                 type="file"
                 accept=".xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 className="block w-full text-sm text-ink-muted file:mr-3 file:rounded-md file:border-0 file:bg-navy file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-navy-dark"
@@ -289,6 +321,27 @@ export default function Fidelizacion() {
               />
             </label>
           </div>
+          {hojas.length > 1 && (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-ink-muted">
+                Hoja a procesar — el archivo trae {hojas.length}
+              </span>
+              <select
+                value={hoja}
+                onChange={(e) => setHoja(e.target.value)}
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-accent focus:outline-none sm:w-64"
+              >
+                {hojas.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs text-ink-muted">
+                Se procesa una hoja por vez. Para cargar el año entero, subí el archivo una vez por mes.
+              </span>
+            </label>
+          )}
           <button type="submit" disabled={subiendo} className={claseBoton("primario")}>
             <FileUp className="h-4 w-4" aria-hidden="true" />
             {subiendo ? "Detectando…" : "Cargar y detectar clientes"}
