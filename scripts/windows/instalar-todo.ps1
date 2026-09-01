@@ -102,17 +102,22 @@ if ($FaseAdmin) {
   #    Limited (no Highest) para que, corriendo en la sesión de la usuaria, SÍ
   #    llegue a Docker y pueda levantar/reparar los contenedores y ngrok.
   if (Test-Path $Vigilante) {
-    # Se lanza OCULTO vía VBS (wscript, ventana 0): asi la tarea NO hace parpadear
-    # una ventana de consola cada 5 min. Con "powershell -WindowStyle Hidden" directo,
-    # Windows alcanza a mostrar la consola un instante antes de esconderla. El VBS la
-    # crea ya invisible. True = espera al powershell (la tarea sigue "corriendo").
+    # SIN .vbs, A PROPOSITO. Antes esto se lanzaba con un VBS de dos lineas cuyo
+    # unico trabajo era ocultar la ventana (wscript con ventana 0). Funcionaba,
+    # pero un .vbs en carpeta de usuario que ejecuta "powershell -ExecutionPolicy
+    # Bypass" es el patron de malware que todo antivirus busca: en la PC de Ford
+    # el antivirus lo borro y el vigilante dejo de correr, o sea que el sistema
+    # se quedo sin nadie que lo repare. Restaurarlo no sirve, lo vuelve a borrar.
+    #
+    # Lo que se pierde: con -WindowStyle Hidden, Windows puede alcanzar a mostrar
+    # la consola un instante antes de esconderla. Es un parpadeo de milisegundos
+    # cada 5 minutos. Molesto, pero infinitamente mejor que quedarse sin
+    # vigilante. Se limpia el .vbs viejo si quedo dando vueltas de una
+    # instalacion anterior.
     $vbsVig = Join-Path $PSScriptRoot "vigilante-oculto.vbs"
-    $vbsVigTxt = @"
-Set sh = CreateObject("WScript.Shell")
-sh.Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""$Vigilante""", 0, True
-"@
-    Set-Content -Path $vbsVig -Value $vbsVigTxt -Encoding ASCII
-    $accion = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vbsVig + '"')
+    if (Test-Path $vbsVig) { Remove-Item $vbsVig -Force -ErrorAction SilentlyContinue }
+    $accion = New-ScheduledTaskAction -Execute "powershell.exe" `
+      -Argument ("-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"" + $Vigilante + "`"")
     $trig = New-ScheduledTaskTrigger -AtLogOn
     $trig.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
       -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
@@ -135,9 +140,9 @@ sh.Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 
   # 4) ngrok como TAREA PROPIA. Un ngrok lanzado como HIJO del vigilante lo mata
   #    Windows al terminar la tarea; su propia tarea (login + repite cada 5 min con
   #    IgnoreNew) lo mantiene vivo y lo recupera solo.
-  #    Se lanza OCULTO vía un VBS (wscript, ventana 0): la usuaria no ve ninguna
-  #    terminal y no puede cerrarla sin querer. El VBS espera a ngrok, así la tarea
-  #    sigue "corriendo" mientras ngrok vive.
+  #    Se lanza OCULTO con powershell -WindowStyle Hidden: la usuaria no ve una
+  #    terminal que pueda cerrar sin querer. El powershell espera a ngrok, así la
+  #    tarea sigue "corriendo" mientras ngrok vive.
   if ($NgrokExe -and (Test-Path $NgrokExe)) {
     # El dominio y el puerto salen del .env.prod, NO del script: cada marca tiene
     # su propia cuenta de ngrok y su propio dominio (el plan gratuito da uno solo
@@ -147,13 +152,15 @@ sh.Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 
     $dominioNgrok = Leer-EnvProd "NGROK_DOMAIN" "dealer-occupant-brigade.ngrok-free.dev"
     $puertoNgrok  = Leer-EnvProd "HTTP_PORT" "80"
     Info "Túnel de esta PC: https://$dominioNgrok -> localhost:$puertoNgrok"
+    # Mismo motivo que el vigilante: sin .vbs, que el antivirus se los come.
+    # Se usa powershell como envoltorio en vez de llamar a ngrok directo porque
+    # hace falta que el proceso QUEDE VIVO: "& ngrok ..." bloquea hasta que ngrok
+    # termina, asi la tarea sigue figurando en ejecucion y MultipleInstances
+    # IgnoreNew evita que la repeticion de 5 minutos abra un segundo tunel.
     $vbsPath = Join-Path $PSScriptRoot "ngrok-oculto.vbs"
-    $vbs = @"
-Set sh = CreateObject("WScript.Shell")
-sh.Run """$NgrokExe"" http --domain=$dominioNgrok $puertoNgrok", 0, True
-"@
-    Set-Content -Path $vbsPath -Value $vbs -Encoding ASCII
-    $accionN = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vbsPath + '"')
+    if (Test-Path $vbsPath) { Remove-Item $vbsPath -Force -ErrorAction SilentlyContinue }
+    $accionN = New-ScheduledTaskAction -Execute "powershell.exe" `
+      -Argument ("-NoProfile -NonInteractive -WindowStyle Hidden -Command `"& '" + $NgrokExe + "' http --domain=" + $dominioNgrok + " " + $puertoNgrok + "`"")
     $trigN = New-ScheduledTaskTrigger -AtLogOn
     $trigN.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
       -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
