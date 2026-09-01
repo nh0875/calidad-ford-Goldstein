@@ -155,6 +155,18 @@ Tiene que responder `"codigo":"VOLKSWAGEN"` y `"escala":"ESTRELLAS"`.
 
 ### 4. Configurar el webhook en Meta
 
+**Antes de tocar el panel de Meta, correr esto:**
+
+```
+scripts\windows\Preparar-Webhook.bat
+```
+
+Meta valida la URL **en el momento** en que apretás "Verificar y guardar". Si el
+túnel de ngrok no está vivo justo en ese instante, rebota con un error que no
+explica nada. Ya pasó una vez. Ese script deja el túnel levantado, comprueba que
+llegue desde internet y que conteste el saludo exacto de Meta, y recién ahí te
+imprime qué pegar. **No cierres esa ventana hasta que Meta haya aceptado.**
+
 | Campo        | Valor                                              |
 | ------------ | -------------------------------------------------- |
 | Callback URL | `https://<dominio-de-vw>/api/webhooks/whatsapp`     |
