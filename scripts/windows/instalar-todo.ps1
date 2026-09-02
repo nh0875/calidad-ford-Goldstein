@@ -32,6 +32,88 @@ $ComposeFile = Join-Path $Proyecto "docker-compose.prod.yml"
 $EnvFile     = Join-Path $Proyecto ".env.prod"
 $Vigilante   = Join-Path $PSScriptRoot "vigilante.ps1"
 
+# ---------------------------------------------------------------------------
+#  Registrar una tarea programada SIN CIM/WMI
+# ---------------------------------------------------------------------------
+#  Los cmdlets New-ScheduledTaskAction / -Trigger / -SettingsSet hablan con el
+#  Programador de tareas a traves de WMI. En la PC de Volkswagen eso esta roto y
+#  todos fallan con "No se puede conectar al servidor CIM", aunque el servicio
+#  Programador de tareas este corriendo perfecto.
+#
+#  schtasks.exe habla por RPC, sin pasar por WMI, asi que funciona igual. Se usa
+#  SIEMPRE, no como respaldo: un camino solo, probado en todas las PCs, en vez de
+#  una rama alternativa que unicamente corre en las maquinas rotas y que por eso
+#  nadie prueba nunca.
+#
+#  Va por XML y no por los parametros sueltos de schtasks porque los parametros
+#  NO alcanzan: schtasks rechaza /RI sobre un disparador ONLOGON, y no tiene flag
+#  para IgnoreNew, StartWhenAvailable ni "sin limite de tiempo". El XML expresa
+#  todo eso, que es lo mismo que usa la consola de Windows por dentro.
+function Registrar-Tarea {
+  param(
+    [string]$Nombre,
+    [string]$Comando,
+    [string]$Argumentos,
+    [string]$Usuario,
+    [string]$Descripcion,
+    [string]$LimiteTiempo = "PT30M"   # PT0S = sin limite (para ngrok, que queda vivo)
+  )
+
+  $argEsc = [System.Security.SecurityElement]::Escape($Argumentos)
+  $desEsc = [System.Security.SecurityElement]::Escape($Descripcion)
+
+  $xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>$desEsc</Description></RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <UserId>$Usuario</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <ExecutionTimeLimit>$LimiteTiempo</ExecutionTimeLimit>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+  </Settings>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>$Usuario</UserId>
+      <Repetition>
+        <Interval>PT5M</Interval>
+        <Duration>P3650D</Duration>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+    </LogonTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>$Comando</Command>
+      <Arguments>$argEsc</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"@
+
+  # UTF-16 OBLIGATORIO. Con -Encoding utf8, PowerShell 5.1 escribe BOM y schtasks
+  # rechaza el archivo con "sintaxis de documento no valida".
+  $tmp = Join-Path $env:TEMP ("calidad-tarea-" + ($Nombre -replace '[^A-Za-z0-9]', '') + ".xml")
+  $xml | Out-File $tmp -Encoding unicode
+
+  $salida = schtasks /create /TN "$Nombre" /XML "$tmp" /F 2>&1
+  $codigo = $LASTEXITCODE
+  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+  if ($codigo -ne 0) { return @{ ok = $false; detalle = ($salida | Out-String).Trim() } }
+  return @{ ok = $true; detalle = "" }
+}
+
 # Lee una clave del .env.prod de ESTA PC. Igual que en vigilante.ps1 y en
 # iniciar-sistema.bat: nada que dependa de la marca puede quedar escrito en el
 # script, porque el mismo instalador corre en la PC de Ford y en la de VW.
@@ -116,20 +198,16 @@ if ($FaseAdmin) {
     # instalacion anterior.
     $vbsVig = Join-Path $PSScriptRoot "vigilante-oculto.vbs"
     if (Test-Path $vbsVig) { Remove-Item $vbsVig -Force -ErrorAction SilentlyContinue }
-    $accion = New-ScheduledTaskAction -Execute "powershell.exe" `
-      -Argument ("-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"" + $Vigilante + "`"")
-    $trig = New-ScheduledTaskTrigger -AtLogOn
-    $trig.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
-      -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
-    $opts = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-      -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
-    try {
-      Register-ScheduledTask -TaskName "Sistema de Calidad - Vigilante" -Action $accion -Trigger $trig `
-        -Settings $opts -RunLevel Limited -User $usuarioDestino -Force -ErrorAction Stop | Out-Null
+    $argVig = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $Vigilante + '"'
+    $r = Registrar-Tarea -Nombre "Sistema de Calidad - Vigilante" -Comando "powershell.exe" `
+      -Argumentos $argVig -Usuario $usuarioDestino -LimiteTiempo "PT30M" `
+      -Descripcion "Vigilante del Sistema de Calidad: levanta y repara el stack cada 5 minutos."
+    if ($r.ok) {
       Ok "Vigilante registrado (arranca y repara solo, en modo normal)."
-      if ($mismoUsuario) { Start-ScheduledTask -TaskName "Sistema de Calidad - Vigilante" -ErrorAction SilentlyContinue }
-    } catch {
-      Aviso "No pude registrar el vigilante: $($_.Exception.Message)"
+      # schtasks /run tampoco usa CIM, a diferencia de Start-ScheduledTask.
+      if ($mismoUsuario) { schtasks /run /TN "Sistema de Calidad - Vigilante" 2>&1 | Out-Null }
+    } else {
+      Aviso "No pude registrar el vigilante: $($r.detalle)"
       $errores++
     }
   } else {
@@ -159,21 +237,16 @@ if ($FaseAdmin) {
     # IgnoreNew evita que la repeticion de 5 minutos abra un segundo tunel.
     $vbsPath = Join-Path $PSScriptRoot "ngrok-oculto.vbs"
     if (Test-Path $vbsPath) { Remove-Item $vbsPath -Force -ErrorAction SilentlyContinue }
-    $accionN = New-ScheduledTaskAction -Execute "powershell.exe" `
-      -Argument ("-NoProfile -NonInteractive -WindowStyle Hidden -Command `"& '" + $NgrokExe + "' http --domain=" + $dominioNgrok + " " + $puertoNgrok + "`"")
-    $trigN = New-ScheduledTaskTrigger -AtLogOn
-    $trigN.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
-      -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
-    $optsN = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-      -StartWhenAvailable -MultipleInstances IgnoreNew
-    $optsN.ExecutionTimeLimit = "PT0S"   # sin limite de tiempo: ngrok corre indefinidamente
-    try {
-      Register-ScheduledTask -TaskName "Sistema de Calidad - ngrok" -Action $accionN -Trigger $trigN `
-        -Settings $optsN -RunLevel Limited -User $usuarioDestino -Force -ErrorAction Stop | Out-Null
+    $argNg = "-NoProfile -NonInteractive -WindowStyle Hidden -Command `"& '$NgrokExe' http --domain=$dominioNgrok $puertoNgrok`""
+    # PT0S = sin limite de tiempo: ngrok corre indefinidamente sirviendo el tunel.
+    $r = Registrar-Tarea -Nombre "Sistema de Calidad - ngrok" -Comando "powershell.exe" `
+      -Argumentos $argNg -Usuario $usuarioDestino -LimiteTiempo "PT0S" `
+      -Descripcion "Tunel ngrok del Sistema de Calidad. Se mantiene vivo solo."
+    if ($r.ok) {
       Ok "ngrok registrado como tarea propia (se mantiene vivo solo)."
-      if ($mismoUsuario) { Start-ScheduledTask -TaskName "Sistema de Calidad - ngrok" -ErrorAction SilentlyContinue }
-    } catch {
-      Aviso "No pude registrar la tarea de ngrok: $($_.Exception.Message)"
+      if ($mismoUsuario) { schtasks /run /TN "Sistema de Calidad - ngrok" 2>&1 | Out-Null }
+    } else {
+      Aviso "No pude registrar la tarea de ngrok: $($r.detalle)"
       $errores++
     }
   } else {
