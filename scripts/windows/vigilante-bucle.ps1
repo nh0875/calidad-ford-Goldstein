@@ -60,8 +60,31 @@ $RespaldoConfig = Join-Path $PSScriptRoot "Respaldo-Config.json"
 $HoraRespaldo   = 12
 $SelloRespaldo  = Join-Path $PSScriptRoot "ultimo-respaldo.txt"
 
+# El log va en la carpeta del script, pero si no se puede escribir ahi (pasa
+# cuando la carpeta la creo OTRA cuenta, por ejemplo un administrador que hizo el
+# git clone) se cae a la carpeta temporal del usuario.
+#
+# Antes esto tragaba el error en silencio, y el resultado era lo peor posible: el
+# bucle moria sin dejar rastro y desde afuera parecia que nunca habia arrancado.
+# Costo varias vueltas darse cuenta.
+if (-not $Registro -or -not (Test-Path (Split-Path $Registro -Parent))) {
+    $Registro = Join-Path $env:TEMP "vigilante-bucle.log"
+}
+try {
+    Add-Content -Path $Registro -Value "" -Encoding UTF8 -ErrorAction Stop
+} catch {
+    $alternativo = Join-Path $env:TEMP "vigilante-bucle.log"
+    Write-Host "  No puedo escribir el log en $Registro" -ForegroundColor Yellow
+    Write-Host "  ($($_.Exception.Message))" -ForegroundColor Gray
+    Write-Host "  Se usa en su lugar: $alternativo" -ForegroundColor Yellow
+    $Registro = $alternativo
+}
+
 function Anotar($texto) {
     $linea = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $texto
+    # Siempre a la consola tambien: si alguien corre esto a mano para ver que
+    # pasa, tiene que VER algo. Corriendo oculto no molesta a nadie.
+    Write-Host "  $linea"
     try { Add-Content -Path $Registro -Value $linea -Encoding UTF8 } catch { }
 }
 
@@ -70,7 +93,12 @@ function Anotar($texto) {
 # dos bucles igual harían el doble de trabajo al pedo.
 $mutex = New-Object System.Threading.Mutex($false, "Global\CalidadVigilanteBucle")
 if (-not $mutex.WaitOne(0)) {
-    Anotar "Ya hay otro bucle corriendo: este se cierra."
+    Anotar "Ya hay otro bucle corriendo en esta sesion: este se cierra."
+    Write-Host ""
+    Write-Host "  (si esperabas que arrancara uno nuevo, primero cerra el que ya esta:" -ForegroundColor Yellow
+    Write-Host "   Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" |" -ForegroundColor Gray
+    Write-Host "     Where-Object { \$_.CommandLine -like '*vigilante-bucle*' } |" -ForegroundColor Gray
+    Write-Host "     ForEach-Object { Stop-Process -Id \$_.ProcessId -Force } )" -ForegroundColor Gray
     exit 0
 }
 
@@ -87,6 +115,8 @@ if ((Test-Path $Registro) -and ((Get-Item $Registro).Length -gt 2MB)) {
 }
 
 Anotar "Bucle iniciado (cada $($CadaSegundos / 60) minutos). Usuario: $env:USERNAME"
+Anotar "Registro en: $Registro"
+Anotar "Primera pasada en 45 segundos (se le da tiempo a Docker)."
 
 # Al iniciar sesión, Windows todavía está levantando cosas y Docker Desktop tarda
 # bastante en estar listo. Se espera un poco antes de la primera pasada para no
