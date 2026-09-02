@@ -390,7 +390,11 @@ try {
         # Se prefiere la TAREA dedicada de ngrok: un proceso lanzado como hijo de
         # esta tarea programada lo mata Windows al terminar la tarea. La tarea propia
         # lo mantiene como proceso de primera clase (y se auto-recupera sola).
-        $tareaNgrok = Get-ScheduledTask -TaskName $NgrokTask -ErrorAction SilentlyContinue
+        # Con schtasks y no con Get-ScheduledTask: ese cmdlet habla por WMI, y en
+        # las PCs donde esa capa esta rota se come el timeout de CIM en CADA
+        # pasada (cada 5 minutos, para siempre) antes de devolver nada.
+        $null = & schtasks /query /TN $NgrokTask 2>&1
+        $tareaNgrok = ($LASTEXITCODE -eq 0)
         if ($proc -and -not $tunel) {
             Log-Accion "ngrok corria pero sin el tunel de ${NgrokDomain}: reiniciandolo."
             Stop-Process -Name ngrok -Force -ErrorAction SilentlyContinue
@@ -399,7 +403,7 @@ try {
             Log-Accion "ngrok no estaba corriendo: relanzandolo."
         }
         if ($tareaNgrok) {
-            Start-ScheduledTask -TaskName $NgrokTask -ErrorAction SilentlyContinue
+            $null = & schtasks /run /TN $NgrokTask 2>&1
         } else {
             $exe = Resolver-Ngrok
             if ($exe) {

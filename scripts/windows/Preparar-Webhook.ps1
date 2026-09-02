@@ -122,28 +122,73 @@ if (NgrokVivo) {
   Bien "ngrok ya estaba corriendo"
 } else {
   Info "ngrok no estaba corriendo: lo levanto"
-  # Si el instalador ya dejo la tarea programada, se usa esa (queda oculta y se
-  # mantiene sola). Si no, se lanza a mano.
-  $tarea = Get-ScheduledTask -TaskName "Sistema de Calidad - ngrok" -ErrorAction SilentlyContinue
-  if ($tarea) {
-    Start-ScheduledTask -TaskName "Sistema de Calidad - ngrok" -ErrorAction SilentlyContinue
+
+  # Se consulta con schtasks y NO con Get-ScheduledTask: ese cmdlet habla por WMI
+  # y en algunas PCs esa capa esta rota (tira "No se puede conectar al servidor
+  # CIM" y ensucia la pantalla con un error que no es el problema real).
+  $null = & schtasks /query /TN "Sistema de Calidad - ngrok" 2>&1
+  $hayTarea = ($LASTEXITCODE -eq 0)
+
+  if ($hayTarea) {
+    $null = & schtasks /run /TN "Sistema de Calidad - ngrok" 2>&1
     Info "arrancado por su tarea programada"
   } else {
     $exe = (Get-Command ngrok -ErrorAction SilentlyContinue).Source
     if (-not $exe) {
-      $wg = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe"
-      if (Test-Path $wg) { $exe = $wg }
+      foreach ($c in @(
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe",
+        "$env:ProgramFiles\ngrok\ngrok.exe")) {
+        if (Test-Path $c) { $exe = $c; break }
+      }
+    }
+    if (-not $exe) {
+      $hallado = Get-ChildItem "C:\Users" -Filter "ngrok.exe" -Recurse -ErrorAction SilentlyContinue -Depth 6 |
+                 Select-Object -First 1
+      if ($hallado) { $exe = $hallado.FullName }
     }
     if (-not $exe) {
       Mal "No encuentro ngrok instalado."
       Info "Instalalo con:  winget install --id Ngrok.Ngrok -e --source winget"
       Read-Host "`nEnter para cerrar"; exit 1
     }
-    Start-Process -FilePath $exe -ArgumentList "http --domain=$dominio $puerto" -WindowStyle Hidden
+    Info "usando: $exe"
+
+    # La salida de ngrok se guarda en un archivo. Sin esto, cuando no arranca solo
+    # se ve "no pude levantar ngrok", que no dice nada: los motivos reales
+    # (token no configurado, dominio de otra cuenta, ya hay otra sesion abierta)
+    # los explica el propio ngrok y hay que poder leerlos.
+    $salidaNgrok = Join-Path $env:TEMP "ngrok-arranque.txt"
+    Remove-Item $salidaNgrok -Force -ErrorAction SilentlyContinue
+    Start-Process -FilePath $exe -ArgumentList "http --domain=$dominio $puerto --log=stdout" `
+      -WindowStyle Hidden -RedirectStandardOutput $salidaNgrok -RedirectStandardError "$salidaNgrok.err"
     Info "arrancado a mano"
   }
+
   foreach ($i in 1..20) { Start-Sleep -Seconds 2; if (NgrokVivo) { break } }
-  if (NgrokVivo) { Bien "ngrok arriba" } else { Mal "no pude levantar ngrok"; Read-Host "`nEnter para cerrar"; exit 1 }
+  if (NgrokVivo) {
+    Bien "ngrok arriba"
+  } else {
+    Mal "no pude levantar ngrok"
+    # Lo que ngrok haya alcanzado a decir antes de morirse.
+    foreach ($archivo in @((Join-Path $env:TEMP "ngrok-arranque.txt"), (Join-Path $env:TEMP "ngrok-arranque.txt.err"))) {
+      if (Test-Path $archivo) {
+        $txt = (Get-Content $archivo -Raw -ErrorAction SilentlyContinue)
+        if ($txt -and $txt.Trim()) {
+          Write-Host ""
+          Info "Esto dijo ngrok:"
+          ($txt.Trim() -split "`n" | Select-Object -Last 12) | ForEach-Object { Write-Host "          $_" -ForegroundColor Yellow }
+        }
+      }
+    }
+    Write-Host ""
+    Info "Los motivos mas comunes:"
+    Info "  - el token no esta cargado:  ngrok config add-authtoken <token>"
+    Info "  - el dominio es de OTRA cuenta de ngrok (cada cuenta tiene el suyo)"
+    Info "  - ya hay otra sesion de ngrok abierta con esa misma cuenta"
+    Info "Probalo a mano para verlo en vivo:"
+    Info "  ngrok http --domain=$dominio $puerto"
+    Read-Host "`nEnter para cerrar"; exit 1
+  }
 }
 
 # ---------- 3. El tunel llega DESDE AFUERA ----------
