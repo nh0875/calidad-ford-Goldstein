@@ -91,6 +91,45 @@ if (-not (Test-Path $inicio)) {
     Read-Host "`nEnter para cerrar"; exit 1
 }
 
+# ---------- Bajar la "firma de malware" del arranque ----------
+#
+# Lo que borran los antivirus no es PowerShell: es el PATRON
+# "algo que arranca solo y ejecuta powershell -ExecutionPolicy Bypass".
+# Ese Bypass es la bandera roja, porque es como el malware saltea la politica
+# de ejecucion de la maquina.
+#
+# Se puede evitar: si la politica de ejecucion del USUARIO permite correr
+# scripts locales, el Bypass sobra. Y ponerla NO necesita ser administrador,
+# porque es del usuario, no de la maquina.
+#
+# RemoteSigned deja correr scripts locales sin firmar (los nuestros) y sigue
+# bloqueando los descargados de internet sin firma, asi que no se afloja la
+# seguridad de la PC.
+$sinBypass = $false
+try {
+    $actual = Get-ExecutionPolicy -Scope CurrentUser -ErrorAction Stop
+    if ($actual -in @("RemoteSigned", "Unrestricted", "Bypass")) {
+        $sinBypass = $true
+        Info "La politica de ejecucion del usuario ya permite scripts locales ($actual)."
+    } else {
+        Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -ErrorAction Stop
+        $sinBypass = $true
+        Bien "Politica de ejecucion del usuario puesta en RemoteSigned."
+        Info "Asi el arranque no necesita el -ExecutionPolicy Bypass, que es"
+        Info "justamente lo que los antivirus marcan como sospechoso."
+    }
+} catch {
+    Info "No pude cambiar la politica de ejecucion del usuario: se usa -ExecutionPolicy Bypass."
+    Info "($($_.Exception.Message))"
+}
+
+# Los argumentos del arranque: con Bypass solo si no quedo otra.
+$argsArranque = if ($sinBypass) {
+    "-NoProfile -NonInteractive -WindowStyle Hidden -File `"$Bucle`""
+} else {
+    "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Bucle`""
+}
+
 # Se crea un ACCESO DIRECTO, no un .bat ni un .vbs.
 #
 # Un .lnk apuntando a powershell.exe es lo que menos se parece a malware de todas
@@ -101,7 +140,7 @@ try {
     $sh = New-Object -ComObject WScript.Shell
     $lnk = $sh.CreateShortcut($acceso)
     $lnk.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $lnk.Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Bucle`""
+    $lnk.Arguments = $argsArranque
     $lnk.WorkingDirectory = $PSScriptRoot
     $lnk.WindowStyle = 7      # 7 = minimizado, para que no moleste
     $lnk.Description = "Levanta y repara el Sistema de Calidad cada 5 minutos."
@@ -121,7 +160,7 @@ if ($Usuario -and ($cuenta -ne $env:USERNAME)) {
     Info "Que $cuenta corra este mismo script en SU sesion para dejarla."
 } else {
     try {
-        $comando = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Bucle`""
+        $comando = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" $argsArranque"
         if (-not (Test-Path $claveRun)) { New-Item -Path $claveRun -Force | Out-Null }
         Set-ItemProperty -Path $claveRun -Name $nombreRun -Value $comando -Force
         $run = $true
