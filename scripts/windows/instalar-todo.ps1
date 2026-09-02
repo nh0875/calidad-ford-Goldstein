@@ -186,6 +186,29 @@ if ($FaseAdmin) {
     }
   }
 
+  # 2b) Y que arranque SIN abrir su ventana.
+  #     Para quien usa la PC todos los días, el panel de Docker abriéndose solo es
+  #     una ventana más que aparece, que hay que cerrar, y que se puede cerrar mal:
+  #     cerrar el panel está bien, pero "Quit Docker Desktop" apaga el motor y se
+  #     cae el sistema entero. El motor arranca igual; solo no se muestra.
+  $cuentaDocker = ($usuarioDestino -split "\\")[-1]
+  $confDocker = if ($mismoUsuario) { "$env:APPDATA\Docker\settings-store.json" }
+                else { "C:\Users\$cuentaDocker\AppData\Roaming\Docker\settings-store.json" }
+  if (Test-Path $confDocker) {
+    try {
+      $cfg = Get-Content $confDocker -Raw | ConvertFrom-Json
+      if ($cfg.PSObject.Properties.Name -contains "OpenUIOnStartupDisabled") { $cfg.OpenUIOnStartupDisabled = $true }
+      else { $cfg | Add-Member -NotePropertyName "OpenUIOnStartupDisabled" -NotePropertyValue $true }
+      $cfg | ConvertTo-Json -Depth 20 | Set-Content $confDocker -Encoding UTF8
+      Ok "Docker no va a abrir su ventana al arrancar."
+    } catch {
+      Aviso "No pude configurar que Docker no abra su ventana: $($_.Exception.Message)"
+      Info  "Se puede hacer despues con scripts\windows\Docker-Sin-Ventana.bat"
+    }
+  } else {
+    Info "Docker todavia no tiene configuracion de '$cuentaDocker': correr despues Docker-Sin-Ventana.bat"
+  }
+
   # 3) VIGILANTE en modo NORMAL (RunLevel Limited): al iniciar sesión + cada 5 min.
   #    Limited (no Highest) para que, corriendo en la sesión de la usuaria, SÍ
   #    llegue a Docker y pueda levantar/reparar los contenedores y ngrok.
