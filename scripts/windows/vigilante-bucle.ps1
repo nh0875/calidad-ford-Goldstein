@@ -34,6 +34,22 @@ $Vigilante = Join-Path $PSScriptRoot "vigilante.ps1"
 $Registro  = Join-Path $PSScriptRoot "vigilante-bucle.log"
 $CadaSegundos = 300   # 5 minutos, igual que la tarea programada
 
+# ---------------------------------------------------------------------------
+#  Actualizacion diaria, enganchada aca
+# ---------------------------------------------------------------------------
+#  En las PCs donde no se pueden crear tareas programadas, la actualizacion
+#  automatica tampoco se puede instalar como tarea. Pero este bucle YA corre en la
+#  sesion de la persona, que es justo donde hace falta: el actualizador hace
+#  "docker compose build" y Docker solo le responde a esa sesion.
+#
+#  Se aprovecha, entonces: una vez por dia, a la hora del almuerzo, el bucle corre
+#  el actualizador en vez de la pasada normal del vigilante. Si no hay nada nuevo
+#  en GitHub, el actualizador se da cuenta en dos segundos y no toca nada.
+$Actualizador   = Join-Path $PSScriptRoot "Actualizacion-Automatica.ps1"
+$HoraActualizar = 13     # 13:00, hora del almuerzo: la PC esta prendida y no hay nadie usando
+$MargenHoras    = 3      # hasta las 16:00; mas tarde se deja para manana
+$SelloUltima    = Join-Path $PSScriptRoot "ultima-actualizacion.txt"
+
 function Anotar($texto) {
     $linea = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $texto
     try { Add-Content -Path $Registro -Value $linea -Encoding UTF8 } catch { }
@@ -69,8 +85,29 @@ Start-Sleep -Seconds 45
 
 while ($true) {
     try {
-        & powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden `
-            -ExecutionPolicy Bypass -File $Vigilante 2>&1 | Out-Null
+        # Una vez al dia, en la ventana del mediodia, toca actualizar.
+        $ahora = Get-Date
+        $tocaActualizar = $false
+        if ((Test-Path $Actualizador) -and
+            ($ahora.Hour -ge $HoraActualizar) -and ($ahora.Hour -lt ($HoraActualizar + $MargenHoras))) {
+            $ultima = ""
+            if (Test-Path $SelloUltima) { $ultima = (Get-Content $SelloUltima -Raw -EA SilentlyContinue).Trim() }
+            if ($ultima -ne $ahora.ToString("yyyy-MM-dd")) { $tocaActualizar = $true }
+        }
+
+        if ($tocaActualizar) {
+            # El sello se escribe ANTES de correr, no despues: si la actualizacion
+            # falla, no queremos que el bucle la reintente cada 5 minutos toda la
+            # tarde. Se reintenta manana, y el problema queda en el log.
+            Set-Content -Path $SelloUltima -Value $ahora.ToString("yyyy-MM-dd") -Encoding UTF8
+            Anotar "Toca la revision diaria de actualizaciones."
+            & powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden `
+                -ExecutionPolicy Bypass -File $Actualizador -HoraPrevista "$($HoraActualizar):00" 2>&1 | Out-Null
+            Anotar "Revision de actualizaciones terminada (ver actualizacion-automatica.log)."
+        } else {
+            & powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden `
+                -ExecutionPolicy Bypass -File $Vigilante 2>&1 | Out-Null
+        }
     } catch {
         # Nunca cortar el bucle por un error de una pasada: la próxima puede
         # andar, y si el bucle muere el sistema se queda sin vigilante hasta que
