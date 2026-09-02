@@ -15,6 +15,17 @@
 #  Se corre COMO ADMINISTRADOR (registrar tareas lo exige).
 # ============================================================================
 
+param(
+    # Cuenta que va a CORRER las tareas: la que usa la PC todos los dias.
+    # Si se omite, se usa la cuenta desde la que se corre el script.
+    #
+    # Existe porque en la empresa instala un administrador con SU cuenta, pero
+    # quien usa la PC es otra persona que no puede ser administrador por politica
+    # del dominio. Ejemplo:
+    #     .\Reparar-Arranque-Automatico.ps1 -Usuario MARIOGOLDSTEIN\ldip
+    [string]$Usuario = ""
+)
+
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
@@ -95,8 +106,26 @@ function Registrar-Tarea {
 "@
   $tmp = Join-Path $env:TEMP ("calidad-tarea-" + ($Nombre -replace '[^A-Za-z0-9]', '') + ".xml")
   $xml | Out-File $tmp -Encoding unicode   # UTF-16: con utf8 schtasks lo rechaza
-  $salida = schtasks /create /TN "$Nombre" /XML "$tmp" /F 2>&1
+  # /RU + /IT: registra la tarea A NOMBRE DE OTRO USUARIO sin pedir su contrasena.
+  #
+  # Hace falta porque en la empresa el que instala es un administrador (una cuenta
+  # distinta de la que usa la PC todos los dias), y las politicas del dominio no
+  # dejan hacer administrador al usuario comun. Sin /RU la tarea queda a nombre
+  # del que instalo, que no es quien va a tener la sesion abierta: el vigilante
+  # nunca correria, y encima no llegaria a Docker.
+  #
+  # /IT (interactive only) es lo que evita tener que pedir la contrasena: la
+  # tarea SOLO corre cuando ese usuario tiene sesion iniciada. Que es justo lo
+  # que se quiere, porque fuera de su sesion no llegaria a Docker igual.
+  $salida = schtasks /create /TN "$Nombre" /XML "$tmp" /RU "$Usuario" /IT /F 2>&1
   $codigo = $LASTEXITCODE
+  if ($codigo -ne 0) {
+    # Reintento sin /RU, por si en esta PC el que instala ES el usuario de todos
+    # los dias: ahi /RU sobra y alguna politica puede rechazarlo.
+    $salida2 = schtasks /create /TN "$Nombre" /XML "$tmp" /F 2>&1
+    if ($LASTEXITCODE -eq 0) { $codigo = 0; $salida = $salida2 }
+    else { $salida = (($salida | Out-String) + "`n" + ($salida2 | Out-String)) }
+  }
   Remove-Item $tmp -Force -ErrorAction SilentlyContinue
   if ($codigo -ne 0) { return @{ ok = $false; detalle = ($salida | Out-String).Trim() } }
   return @{ ok = $true; detalle = "" }
@@ -115,10 +144,12 @@ if (-not (EsAdmin)) {
 # La cuenta que va a correr las tareas. Tiene que ser la que USA la PC todos los
 # días, no la que eleva: el vigilante corre en SU sesión, que es la única que
 # llega a Docker.
-$usuarioDestino = "$env:USERDOMAIN\$env:USERNAME"
+$usuarioDestino = if ($Usuario) { $Usuario } else { "$env:USERDOMAIN\$env:USERNAME" }
 Write-Host "  Las tareas van a correr como: $usuarioDestino" -ForegroundColor White
-Write-Host "  (si esa NO es la cuenta que usa la PC todos los dias, cerra y corre"
-Write-Host "   este script desde la sesion de esa persona)" -ForegroundColor Gray
+if (-not $Usuario) {
+  Write-Host "  Si esa NO es la cuenta que usa la PC todos los dias, corre en su lugar:" -ForegroundColor Gray
+  Write-Host "     .\Reparar-Arranque-Automatico.ps1 -Usuario DOMINIO\usuario" -ForegroundColor Gray
+}
 Write-Host ""
 
 $errores = 0
@@ -136,10 +167,22 @@ if (Test-Path $Vigilante) {
 }
 
 # ---------- ngrok ----------
+# Se busca ngrok tambien en el perfil del usuario DESTINO: winget instala POR
+# USUARIO, asi que si lo instalo el, el administrador no lo ve en el suyo. Eso
+# ya paso una vez y el script dijo "no encuentro ngrok" estando instalado.
 $ngrok = (Get-Command ngrok -ErrorAction SilentlyContinue).Source
 if (-not $ngrok) {
-  $wg = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe"
-  if (Test-Path $wg) { $ngrok = $wg }
+  $sufijo = "AppData\Local\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe"
+  $cuenta = ($usuarioDestino -split "\\")[-1]
+  foreach ($c in @("$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe",
+                   "C:\Users\$cuenta\$sufijo")) {
+    if (Test-Path $c) { $ngrok = $c; break }
+  }
+}
+if (-not $ngrok) {
+  $hallado = Get-ChildItem "C:\Users" -Filter "ngrok.exe" -Recurse -ErrorAction SilentlyContinue -Depth 6 |
+             Select-Object -First 1
+  if ($hallado) { $ngrok = $hallado.FullName }
 }
 if ($ngrok) {
   $dominio = Leer "NGROK_DOMAIN"

@@ -107,8 +107,26 @@ function Registrar-Tarea {
   $tmp = Join-Path $env:TEMP ("calidad-tarea-" + ($Nombre -replace '[^A-Za-z0-9]', '') + ".xml")
   $xml | Out-File $tmp -Encoding unicode
 
-  $salida = schtasks /create /TN "$Nombre" /XML "$tmp" /F 2>&1
+  # /RU + /IT: registra la tarea A NOMBRE DE OTRO USUARIO sin pedir su contrasena.
+  #
+  # Hace falta porque en la empresa el que instala es un administrador (una cuenta
+  # distinta de la que usa la PC todos los dias), y las politicas del dominio no
+  # dejan hacer administrador al usuario comun. Sin /RU la tarea queda a nombre
+  # del que instalo, que no es quien va a tener la sesion abierta: el vigilante
+  # nunca correria, y encima no llegaria a Docker.
+  #
+  # /IT (interactive only) es lo que evita tener que pedir la contrasena: la
+  # tarea SOLO corre cuando ese usuario tiene sesion iniciada. Que es justo lo
+  # que se quiere, porque fuera de su sesion no llegaria a Docker igual.
+  $salida = schtasks /create /TN "$Nombre" /XML "$tmp" /RU "$Usuario" /IT /F 2>&1
   $codigo = $LASTEXITCODE
+  if ($codigo -ne 0) {
+    # Reintento sin /RU, por si en esta PC el que instala ES el usuario de todos
+    # los dias: ahi /RU sobra y alguna politica puede rechazarlo.
+    $salida2 = schtasks /create /TN "$Nombre" /XML "$tmp" /F 2>&1
+    if ($LASTEXITCODE -eq 0) { $codigo = 0; $salida = $salida2 }
+    else { $salida = (($salida | Out-String) + "`n" + ($salida2 | Out-String)) }
+  }
   Remove-Item $tmp -Force -ErrorAction SilentlyContinue
   if ($codigo -ne 0) { return @{ ok = $false; detalle = ($salida | Out-String).Trim() } }
   return @{ ok = $true; detalle = "" }
