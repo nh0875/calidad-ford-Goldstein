@@ -81,3 +81,6 @@ backend/assets/logo-*
 # actualización se lo lleva puesto. El respaldo seguiría corriendo, pero con los
 # valores por defecto —sin copiar a OneDrive— y sin ningún error visible.
 scripts/windows/Respaldo-Config.json
+
+# Repo de pruebas suelto, no es parte del sistema
+gtest/
