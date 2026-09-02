@@ -33,22 +33,41 @@ $EnvFile     = Join-Path $Proyecto ".env.prod"
 $Vigilante   = Join-Path $PSScriptRoot "vigilante.ps1"
 
 # ---------------------------------------------------------------------------
-#  Registrar una tarea programada SIN CIM/WMI
+#  Registrar una tarea programada
 # ---------------------------------------------------------------------------
-#  Los cmdlets New-ScheduledTaskAction / -Trigger / -SettingsSet hablan con el
-#  Programador de tareas a traves de WMI. En la PC de Volkswagen eso esta roto y
-#  todos fallan con "No se puede conectar al servidor CIM", aunque el servicio
-#  Programador de tareas este corriendo perfecto.
+#  DOS COSAS QUE NO SE PUEDEN USAR ACA, Y POR QUE:
 #
-#  schtasks.exe habla por RPC, sin pasar por WMI, asi que funciona igual. Se usa
-#  SIEMPRE, no como respaldo: un camino solo, probado en todas las PCs, en vez de
-#  una rama alternativa que unicamente corre en las maquinas rotas y que por eso
-#  nadie prueba nunca.
+#  1. Los cmdlets New-ScheduledTaskAction / -Trigger / -SettingsSet.
+#     Hablan con el Programador a traves de WMI, y en la PC de Volkswagen esa
+#     capa esta rota: todos fallan con "No se puede conectar al servidor CIM"
+#     aunque el servicio Programador de tareas este corriendo perfecto.
 #
-#  Va por XML y no por los parametros sueltos de schtasks porque los parametros
-#  NO alcanzan: schtasks rechaza /RI sobre un disparador ONLOGON, y no tiene flag
-#  para IgnoreNew, StartWhenAvailable ni "sin limite de tiempo". El XML expresa
-#  todo eso, que es lo mismo que usa la consola de Windows por dentro.
+#  2. schtasks /create /XML.
+#     Probado en esa misma PC: devuelve "Acceso denegado", con y sin /RU. En
+#     cambio schtasks con PARAMETROS SUELTOS funciona sin problema; se comprobo
+#     creando tareas de prueba con cmd.exe y con powershell -ExecutionPolicy
+#     Bypass, y las dos se crearon bien. Asi que el problema es el XML: no son
+#     los permisos, ni el antivirus, ni una politica de dominio.
+#
+#  Por eso: parametros sueltos. Lo que se pierde con ellos, y como queda cubierto:
+#
+#    - IgnoreNew (no arrancar una segunda instancia): NO hace falta. El propio
+#      vigilante.ps1 se protege con un archivo de candado (vigilante-calidad.lock,
+#      con vencimiento por si queda huerfano).
+#    - StartWhenAvailable: irrelevante con /SC MINUTE, que vuelve a intentar a los
+#      5 minutos de todas formas.
+#    - ExecutionTimeLimit: schtasks no tiene flag para esto, asi que las tareas
+#      quedan con el limite por defecto de 72 horas. Para el vigilante da igual
+#      (una corrida dura segundos). Para ngrok significa que a los 3 dias Windows
+#      lo corta; lo revive el vigilante en la pasada siguiente, que es el
+#      comportamiento que ya estaba previsto.
+#
+#  /RU + /IT registra la tarea A NOMBRE DE OTRO USUARIO sin pedir su contrasena.
+#  Hace falta porque en la empresa el que instala es un administrador y el que usa
+#  la PC es otra persona que, por politica del dominio, no puede ser
+#  administrador. /IT (interactive only) es lo que evita la contrasena: la tarea
+#  corre solo cuando ese usuario tiene sesion iniciada, que es justo lo que se
+#  quiere, porque fuera de su sesion no llegaria a Docker igual.
 function Registrar-Tarea {
   param(
     [string]$Nombre,
@@ -56,80 +75,36 @@ function Registrar-Tarea {
     [string]$Argumentos,
     [string]$Usuario,
     [string]$Descripcion,
-    [string]$LimiteTiempo = "PT30M"   # PT0S = sin limite (para ngrok, que queda vivo)
+    [int]$CadaMinutos = 0   # 0 = al iniciar sesion; >0 = cada N minutos
   )
 
-  $argEsc = [System.Security.SecurityElement]::Escape($Argumentos)
-  $desEsc = [System.Security.SecurityElement]::Escape($Descripcion)
+  $tr = "$Comando $Argumentos"
+  $parametros = @("/create", "/TN", $Nombre, "/TR", $tr)
+  if ($CadaMinutos -gt 0) { $parametros += @("/SC", "MINUTE", "/MO", "$CadaMinutos") }
+  else                    { $parametros += @("/SC", "ONLOGON") }
 
-  $xml = @"
-<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>$desEsc</Description></RegistrationInfo>
-  <Principals>
-    <Principal id="Author">
-      <UserId>$Usuario</UserId>
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <StartWhenAvailable>true</StartWhenAvailable>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <ExecutionTimeLimit>$LimiteTiempo</ExecutionTimeLimit>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-  </Settings>
-  <Triggers>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-      <UserId>$Usuario</UserId>
-      <Repetition>
-        <Interval>PT5M</Interval>
-        <Duration>P3650D</Duration>
-        <StopAtDurationEnd>false</StopAtDurationEnd>
-      </Repetition>
-    </LogonTrigger>
-  </Triggers>
-  <Actions Context="Author">
-    <Exec>
-      <Command>$Comando</Command>
-      <Arguments>$argEsc</Arguments>
-    </Exec>
-  </Actions>
-</Task>
-"@
+  # Si la tarea es para OTRA cuenta hace falta /RU. Si es para uno mismo, /RU
+  # sobra y en algunas PCs molesta, asi que se omite.
+  $propio = (-not $Usuario) -or ($Usuario -eq "$env:USERDOMAIN\$env:USERNAME")
+  if (-not $propio) { $parametros += @("/RU", $Usuario, "/IT") }
+  $parametros += "/F"
 
-  # UTF-16 OBLIGATORIO. Con -Encoding utf8, PowerShell 5.1 escribe BOM y schtasks
-  # rechaza el archivo con "sintaxis de documento no valida".
-  $tmp = Join-Path $env:TEMP ("calidad-tarea-" + ($Nombre -replace '[^A-Za-z0-9]', '') + ".xml")
-  $xml | Out-File $tmp -Encoding unicode
+  $salida = & schtasks @parametros 2>&1
+  if ($LASTEXITCODE -eq 0) { return @{ ok = $true; detalle = "" } }
 
-  # /RU + /IT: registra la tarea A NOMBRE DE OTRO USUARIO sin pedir su contrasena.
-  #
-  # Hace falta porque en la empresa el que instala es un administrador (una cuenta
-  # distinta de la que usa la PC todos los dias), y las politicas del dominio no
-  # dejan hacer administrador al usuario comun. Sin /RU la tarea queda a nombre
-  # del que instalo, que no es quien va a tener la sesion abierta: el vigilante
-  # nunca correria, y encima no llegaria a Docker.
-  #
-  # /IT (interactive only) es lo que evita tener que pedir la contrasena: la
-  # tarea SOLO corre cuando ese usuario tiene sesion iniciada. Que es justo lo
-  # que se quiere, porque fuera de su sesion no llegaria a Docker igual.
-  $salida = schtasks /create /TN "$Nombre" /XML "$tmp" /RU "$Usuario" /IT /F 2>&1
-  $codigo = $LASTEXITCODE
-  if ($codigo -ne 0) {
-    # Reintento sin /RU, por si en esta PC el que instala ES el usuario de todos
-    # los dias: ahi /RU sobra y alguna politica puede rechazarlo.
-    $salida2 = schtasks /create /TN "$Nombre" /XML "$tmp" /F 2>&1
-    if ($LASTEXITCODE -eq 0) { $codigo = 0; $salida = $salida2 }
-    else { $salida = (($salida | Out-String) + "`n" + ($salida2 | Out-String)) }
+  # Reintento sin /RU: sirve cuando el que instala ES el usuario de todos los dias.
+  if (-not $propio) {
+    $p2 = @("/create", "/TN", $Nombre, "/TR", $tr)
+    if ($CadaMinutos -gt 0) { $p2 += @("/SC", "MINUTE", "/MO", "$CadaMinutos") }
+    else                    { $p2 += @("/SC", "ONLOGON") }
+    $p2 += "/F"
+    $salida2 = & schtasks @p2 2>&1
+    if ($LASTEXITCODE -eq 0) {
+      return @{ ok = $true; detalle = "OJO: quedo a nombre de $env:USERNAME, no de $Usuario" }
+    }
+    $salida = (($salida | Out-String) + ($salida2 | Out-String))
   }
-  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-  if ($codigo -ne 0) { return @{ ok = $false; detalle = ($salida | Out-String).Trim() } }
-  return @{ ok = $true; detalle = "" }
+  return @{ ok = $false; detalle = ($salida | Out-String).Trim() }
 }
 
 # Lee una clave del .env.prod de ESTA PC. Igual que en vigilante.ps1 y en
@@ -216,9 +191,9 @@ if ($FaseAdmin) {
     # instalacion anterior.
     $vbsVig = Join-Path $PSScriptRoot "vigilante-oculto.vbs"
     if (Test-Path $vbsVig) { Remove-Item $vbsVig -Force -ErrorAction SilentlyContinue }
-    $argVig = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $Vigilante + '"'
+    $argVig = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command & '$Vigilante'"
     $r = Registrar-Tarea -Nombre "Sistema de Calidad - Vigilante" -Comando "powershell.exe" `
-      -Argumentos $argVig -Usuario $usuarioDestino -LimiteTiempo "PT30M" `
+      -Argumentos $argVig -Usuario $usuarioDestino -CadaMinutos 5 `
       -Descripcion "Vigilante del Sistema de Calidad: levanta y repara el stack cada 5 minutos."
     if ($r.ok) {
       Ok "Vigilante registrado (arranca y repara solo, en modo normal)."
@@ -255,10 +230,10 @@ if ($FaseAdmin) {
     # IgnoreNew evita que la repeticion de 5 minutos abra un segundo tunel.
     $vbsPath = Join-Path $PSScriptRoot "ngrok-oculto.vbs"
     if (Test-Path $vbsPath) { Remove-Item $vbsPath -Force -ErrorAction SilentlyContinue }
-    $argNg = "-NoProfile -NonInteractive -WindowStyle Hidden -Command `"& '$NgrokExe' http --domain=$dominioNgrok $puertoNgrok`""
+    $argNg = "-NoProfile -NonInteractive -WindowStyle Hidden -Command & '$NgrokExe' http --domain=$dominioNgrok $puertoNgrok"
     # PT0S = sin limite de tiempo: ngrok corre indefinidamente sirviendo el tunel.
     $r = Registrar-Tarea -Nombre "Sistema de Calidad - ngrok" -Comando "powershell.exe" `
-      -Argumentos $argNg -Usuario $usuarioDestino -LimiteTiempo "PT0S" `
+      -Argumentos $argNg -Usuario $usuarioDestino -CadaMinutos 0 `
       -Descripcion "Tunel ngrok del Sistema de Calidad. Se mantiene vivo solo."
     if ($r.ok) {
       Ok "ngrok registrado como tarea propia (se mantiene vivo solo)."
