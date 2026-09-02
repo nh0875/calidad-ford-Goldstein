@@ -1,9 +1,22 @@
 ﻿# ============================================================================
 #  Dejar el sistema arrancando solo, SIN tareas programadas
 # ============================================================================
-#  Pone un acceso directo en la CARPETA DE INICIO de Windows. Desde ahí el
-#  sistema arranca cuando la persona inicia sesión, y se repara solo cada 5
-#  minutos, igual que con la tarea programada.
+#  Deja el arranque por DOS caminos a la vez, a propósito:
+#
+#    1. Un acceso directo en la CARPETA DE INICIO.
+#    2. Una entrada en la clave Run del registro del usuario (HKCU).
+#
+#  ¿Por qué los dos? Porque en la PC de Volkswagen el antivirus BORRÓ el acceso
+#  directo: un .lnk en la carpeta de Inicio que lanza PowerShell es una firma
+#  clásica de persistencia de malware, y ya se había comido un .vbs en la PC de
+#  Ford por lo mismo. La clave Run, en cambio, es el mecanismo que usa el propio
+#  Docker Desktop en esa misma máquina y ahí sí funciona.
+#
+#  Con los dos puestos, si uno desaparece el otro sigue levantando el sistema. Y
+#  el script avisa cuál de los dos sobrevivió, así se sabe en qué confiar.
+#
+#  Desde ahí el sistema arranca cuando la persona inicia sesión, y se repara solo
+#  cada 5 minutos, igual que con la tarea programada.
 #
 #  CUANDO USAR ESTO: cuando Reparar-Arranque-Automatico falla con "Acceso
 #  denegado". En algunas PCs de empresa las políticas del dominio y el antivirus
@@ -46,13 +59,19 @@ if ($Usuario) {
 $acceso = Join-Path $inicio "Sistema de Calidad.lnk"
 
 Write-Host ""
+$claveRun = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$nombreRun = "Sistema de Calidad"
+
 if ($Quitar) {
-    if (Test-Path $acceso) {
-        Remove-Item $acceso -Force
-        Bien "Sacado el arranque automatico de la cuenta $cuenta."
-    } else {
-        Info "No estaba instalado en la cuenta $cuenta."
+    $algo = $false
+    if (Test-Path $acceso) { Remove-Item $acceso -Force; Bien "Sacado el acceso directo."; $algo = $true }
+    if ($Usuario) {
+        Info "La entrada del registro solo se puede sacar desde la sesion de $cuenta."
+    } elseif ((Get-ItemProperty $claveRun -Name $nombreRun -EA SilentlyContinue)) {
+        Remove-ItemProperty $claveRun -Name $nombreRun -Force -EA SilentlyContinue
+        Bien "Sacada la entrada del registro."; $algo = $true
     }
+    if (-not $algo) { Info "No estaba instalado en la cuenta $cuenta." }
     Write-Host ""
     Read-Host "Enter para cerrar"; exit 0
 }
@@ -93,8 +112,44 @@ try {
     Read-Host "`nEnter para cerrar"; exit 1
 }
 
-if (-not (Test-Path $acceso)) {
-    Mal "El acceso directo no quedo escrito. Revisá los permisos sobre esa carpeta."
+# ---------- Camino 2: la clave Run del registro ----------
+# Solo se puede escribir en el HKCU de la sesion abierta. Si un administrador
+# instala para otra persona, esa parte la tiene que correr ella.
+$run = $false
+if ($Usuario -and ($cuenta -ne $env:USERNAME)) {
+    Info "La entrada del registro no se puede poner desde otra cuenta."
+    Info "Que $cuenta corra este mismo script en SU sesion para dejarla."
+} else {
+    try {
+        $comando = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Bucle`""
+        if (-not (Test-Path $claveRun)) { New-Item -Path $claveRun -Force | Out-Null }
+        Set-ItemProperty -Path $claveRun -Name $nombreRun -Value $comando -Force
+        $run = $true
+        Bien "Entrada del registro creada."
+    } catch {
+        Mal "No pude crear la entrada del registro: $($_.Exception.Message)"
+    }
+}
+
+# ---------- Que sobrevivio ----------
+# Se vuelve a mirar despues de crear: si el antivirus se lleva alguno, se lo
+# lleva en el momento, y conviene saberlo ahora y no dentro de una semana.
+Start-Sleep -Seconds 2
+$vivoAcceso = Test-Path $acceso
+$vivoRun = $false
+if (-not ($Usuario -and ($cuenta -ne $env:USERNAME))) {
+    $vivoRun = [bool](Get-ItemProperty $claveRun -Name $nombreRun -EA SilentlyContinue)
+}
+
+Write-Host ""
+Info ("acceso directo en Inicio : " + $(if ($vivoAcceso) { "OK" } else { "NO QUEDO (se lo llevo el antivirus?)" }))
+Info ("entrada en el registro   : " + $(if ($vivoRun) { "OK" } else { "no puesta" }))
+
+if (-not $vivoAcceso -and -not $vivoRun) {
+    Write-Host ""
+    Mal "No quedo ninguno de los dos: el sistema NO va a arrancar solo."
+    Info "Si el antivirus los esta borrando, hay que pedirle una excepcion a Sistemas"
+    Info "para: $Bucle"
     Read-Host "`nEnter para cerrar"; exit 1
 }
 
