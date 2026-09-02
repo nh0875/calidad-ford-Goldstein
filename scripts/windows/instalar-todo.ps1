@@ -80,18 +80,21 @@ function Registrar-Tarea {
 
   $tr = "$Comando $Argumentos"
   $parametros = @("/create", "/TN", $Nombre, "/TR", $tr)
-  # SIEMPRE /SC MINUTE, nunca /SC ONLOGON.
+  # CadaMinutos > 0  -> /SC MINUTE /MO N   (el vigilante)
+  # CadaMinutos = 0  -> /SC ONLOGON        (ngrok, que tiene que quedar vivo)
   #
-  # En la PC de Volkswagen se probaron las variantes una por una y ONLOGON es la
-  # UNICA que devuelve "Acceso denegado": con /SC MINUTE, /SC ONCE, con cmd.exe,
-  # con powershell y con /RU de otra cuenta, la tarea se crea sin problema. Debe
-  # ser una regla anti-persistencia del EDR corporativo, que es exactamente el
-  # disparador que usa el malware para arrancar con la sesion.
+  # OJO CON ONLOGON: en la PC de Volkswagen es la UNICA variante que devuelve
+  # "Acceso denegado". Se probaron todas las demas y se crean bien: /SC MINUTE,
+  # /SC ONCE, con cmd.exe, con powershell, y con /RU de otra cuenta. Debe ser una
+  # regla anti-persistencia del EDR corporativo, que es justo el disparador que
+  # usa el malware para arrancar con la sesion.
   #
-  # No se pierde nada: /SC MINUTE con /IT solo corre cuando el usuario tiene
-  # sesion iniciada, asi que el efecto practico es el mismo que "al iniciar
-  # sesion", con 5 minutos de demora en el peor caso.
-  $parametros += @("/SC", "MINUTE", "/MO", "$(if ($CadaMinutos -gt 0) { $CadaMinutos } else { 5 })")
+  # NO se cambia ONLOGON por MINUTE para ngrok: sin IgnoreNew (que schtasks no
+  # sabe expresar) una tarea cada 5 minutos abriria un tunel nuevo cada vez.
+  # En las PCs donde ONLOGON falla, la tarea de ngrok simplemente no se crea y el
+  # vigilante se encarga; ver el aviso mas abajo.
+  if ($CadaMinutos -gt 0) { $parametros += @("/SC", "MINUTE", "/MO", "$CadaMinutos") }
+  else                    { $parametros += @("/SC", "ONLOGON") }
 
   # Si la tarea es para OTRA cuenta hace falta /RU. Si es para uno mismo, /RU
   # sobra y en algunas PCs molesta, asi que se omite.
@@ -104,8 +107,10 @@ function Registrar-Tarea {
 
   # Reintento sin /RU: sirve cuando el que instala ES el usuario de todos los dias.
   if (-not $propio) {
-    $p2 = @("/create", "/TN", $Nombre, "/TR", $tr,
-            "/SC", "MINUTE", "/MO", "$(if ($CadaMinutos -gt 0) { $CadaMinutos } else { 5 })", "/F")
+    $p2 = @("/create", "/TN", $Nombre, "/TR", $tr)
+    if ($CadaMinutos -gt 0) { $p2 += @("/SC", "MINUTE", "/MO", "$CadaMinutos") }
+    else                    { $p2 += @("/SC", "ONLOGON") }
+    $p2 += "/F"
     $salida2 = & schtasks @p2 2>&1
     if ($LASTEXITCODE -eq 0) {
       return @{ ok = $true; detalle = "OJO: quedo a nombre de $env:USERNAME, no de $Usuario" }
@@ -216,12 +221,39 @@ if ($FaseAdmin) {
     $errores++
   }
 
-  # 4) ngrok NO lleva tarea propia.
-  #    Lo levanta y lo mantiene vivo el vigilante, que en cada pasada revisa si
-  #    esta corriendo con el tunel del dominio correcto y si no lo relanza.
-  #    Se saco su tarea a proposito: usaba /SC ONLOGON, la unica variante que la
-  #    PC de Volkswagen rechaza con "Acceso denegado" (probado contra las otras).
-  Info "ngrok no lleva tarea propia: lo mantiene vivo el vigilante."
+  # 4) ngrok CON TAREA PROPIA. Esto NO es opcional donde se pueda registrar.
+  #
+  #    Un ngrok lanzado por el vigilante queda como proceso HIJO de la tarea del
+  #    vigilante, y Windows mata a los hijos cuando la tarea termina. En la PC de
+  #    Ford eso se veia como "ngrok no estaba corriendo: relanzandolo" cada pocos
+  #    minutos, para siempre. Con su propia tarea, ngrok es un proceso de primera
+  #    clase y sobrevive.
+  #
+  #    Si la tarea no se puede crear (en Volkswagen /SC ONLOGON da "Acceso
+  #    denegado"), NO es fatal: el vigilante detecta que la tarea no existe y
+  #    lanza ngrok el mismo. Ahi no hay tarea que lo mate, porque en esas PCs el
+  #    vigilante corre desde la carpeta de Inicio, no como tarea programada
+  #    (ver Instalar-Arranque-Sin-Tareas.ps1).
+  if ($NgrokExe -and (Test-Path $NgrokExe)) {
+    $dominioNgrok = Leer-EnvProd "NGROK_DOMAIN" "dealer-occupant-brigade.ngrok-free.dev"
+    $puertoNgrok  = Leer-EnvProd "HTTP_PORT" "80"
+    Info "Tunel de esta PC: https://$dominioNgrok -> localhost:$puertoNgrok"
+    $argNg = "-NoProfile -NonInteractive -WindowStyle Hidden -Command & '$NgrokExe' http --domain=$dominioNgrok $puertoNgrok"
+    $r = Registrar-Tarea -Nombre "Sistema de Calidad - ngrok" -Comando "powershell.exe" `
+      -Argumentos $argNg -Usuario $usuarioDestino -CadaMinutos 0 `
+      -Descripcion "Tunel ngrok del Sistema de Calidad. Se mantiene vivo solo."
+    if ($r.ok) {
+      Ok "ngrok registrado como tarea propia (se mantiene vivo solo)."
+      if ($mismoUsuario) { schtasks /run /TN "Sistema de Calidad - ngrok" 2>&1 | Out-Null }
+    } else {
+      Aviso "No pude registrar la tarea de ngrok: lo va a levantar el vigilante."
+      Info  "Si el vigilante quedo como TAREA programada, ngrok se le puede morir seguido."
+      Info  "En ese caso conviene el arranque por carpeta de Inicio:"
+      Info  "   scripts\windows\Instalar-Arranque-Sin-Tareas.bat"
+    }
+  } else {
+    Aviso "No encontre ngrok: no registro su tarea (lo intentara el vigilante)."
+  }
 
   if ($errores -gt 0) { Read-Host "`nHubo un problema en el arranque automático. Enter para cerrar"; exit 1 }
   Start-Sleep 2
