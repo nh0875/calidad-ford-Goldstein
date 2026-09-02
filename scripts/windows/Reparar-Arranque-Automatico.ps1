@@ -105,8 +105,18 @@ function Registrar-Tarea {
 
   $tr = "$Comando $Argumentos"
   $parametros = @("/create", "/TN", $Nombre, "/TR", $tr)
-  if ($CadaMinutos -gt 0) { $parametros += @("/SC", "MINUTE", "/MO", "$CadaMinutos") }
-  else                    { $parametros += @("/SC", "ONLOGON") }
+  # SIEMPRE /SC MINUTE, nunca /SC ONLOGON.
+  #
+  # En la PC de Volkswagen se probaron las variantes una por una y ONLOGON es la
+  # UNICA que devuelve "Acceso denegado": con /SC MINUTE, /SC ONCE, con cmd.exe,
+  # con powershell y con /RU de otra cuenta, la tarea se crea sin problema. Debe
+  # ser una regla anti-persistencia del EDR corporativo, que es exactamente el
+  # disparador que usa el malware para arrancar con la sesion.
+  #
+  # No se pierde nada: /SC MINUTE con /IT solo corre cuando el usuario tiene
+  # sesion iniciada, asi que el efecto practico es el mismo que "al iniciar
+  # sesion", con 5 minutos de demora en el peor caso.
+  $parametros += @("/SC", "MINUTE", "/MO", "$(if ($CadaMinutos -gt 0) { $CadaMinutos } else { 5 })")
 
   # Si la tarea es para OTRA cuenta hace falta /RU. Si es para uno mismo, /RU
   # sobra y en algunas PCs molesta, asi que se omite.
@@ -119,10 +129,8 @@ function Registrar-Tarea {
 
   # Reintento sin /RU: sirve cuando el que instala ES el usuario de todos los dias.
   if (-not $propio) {
-    $p2 = @("/create", "/TN", $Nombre, "/TR", $tr)
-    if ($CadaMinutos -gt 0) { $p2 += @("/SC", "MINUTE", "/MO", "$CadaMinutos") }
-    else                    { $p2 += @("/SC", "ONLOGON") }
-    $p2 += "/F"
+    $p2 = @("/create", "/TN", $Nombre, "/TR", $tr,
+            "/SC", "MINUTE", "/MO", "$(if ($CadaMinutos -gt 0) { $CadaMinutos } else { 5 })", "/F")
     $salida2 = & schtasks @p2 2>&1
     if ($LASTEXITCODE -eq 0) {
       return @{ ok = $true; detalle = "OJO: quedo a nombre de $env:USERNAME, no de $Usuario" }
@@ -136,9 +144,17 @@ Write-Host ""
 Write-Host "  Reparando el arranque automatico..." -ForegroundColor Cyan
 Write-Host ""
 
-if (-not (EsAdmin)) {
-  Mal "Hay que abrir PowerShell COMO ADMINISTRADOR."
-  Info "(clic derecho en PowerShell -> Ejecutar como administrador)"
+# Solo hace falta ser administrador para registrar una tarea A NOMBRE DE OTRO
+# usuario. Para la propia cuenta, Windows deja hacerlo sin elevar.
+#
+# Esto importa: en esta empresa el usuario comun no puede ser administrador, asi
+# que la forma MAS SIMPLE de que la tarea quede bien es que la persona que usa la
+# PC corra este script en SU sesion, sin elevar y sin -Usuario.
+$paraOtro = $Usuario -and ($Usuario -ne "$env:USERDOMAIN\$env:USERNAME")
+if ($paraOtro -and -not (EsAdmin)) {
+  Mal "Para registrar la tarea a nombre de OTRA cuenta hace falta ser administrador."
+  Info "O bien: que $Usuario abra su sesion y corra este script SIN -Usuario"
+  Info "(para su propia cuenta no hace falta elevar)."
   Read-Host "`nEnter para cerrar"; exit 1
 }
 
@@ -167,50 +183,21 @@ if (Test-Path $Vigilante) {
   Mal "No encuentro vigilante.ps1 en $PSScriptRoot"; $errores++
 }
 
-# ---------- ngrok ----------
-# Se busca ngrok tambien en el perfil del usuario DESTINO: winget instala POR
-# USUARIO, asi que si lo instalo el, el administrador no lo ve en el suyo. Eso
-# ya paso una vez y el script dijo "no encuentro ngrok" estando instalado.
-$ngrok = (Get-Command ngrok -ErrorAction SilentlyContinue).Source
-if (-not $ngrok) {
-  $sufijo = "AppData\Local\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe"
-  $cuenta = ($usuarioDestino -split "\\")[-1]
-  foreach ($c in @("$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe",
-                   "C:\Users\$cuenta\$sufijo")) {
-    if (Test-Path $c) { $ngrok = $c; break }
-  }
-}
-if (-not $ngrok) {
-  $hallado = Get-ChildItem "C:\Users" -Filter "ngrok.exe" -Recurse -ErrorAction SilentlyContinue -Depth 6 |
-             Select-Object -First 1
-  if ($hallado) { $ngrok = $hallado.FullName }
-}
-if ($ngrok) {
-  $dominio = Leer "NGROK_DOMAIN"
-  $puerto  = Leer "HTTP_PORT" "80"
-  if (-not $dominio) {
-    Mal "Falta NGROK_DOMAIN en el .env.prod: no registro la tarea de ngrok."
-    Info "Sin eso, el tunel apuntaria a un dominio equivocado."
-    $errores++
-  } else {
-    Info "Tunel: https://$dominio -> localhost:$puerto"
-    $argNg = "-NoProfile -NonInteractive -WindowStyle Hidden -Command & '$ngrok' http --domain=$dominio $puerto"
-    $r = Registrar-Tarea -Nombre "Sistema de Calidad - ngrok" -Comando "powershell.exe" `
-      -Argumentos $argNg -Usuario $usuarioDestino -CadaMinutos 0 `
-      -Descripcion "Tunel ngrok del Sistema de Calidad. Se mantiene vivo solo."
-    if ($r.ok) { Bien "ngrok registrado (se mantiene vivo solo)."; schtasks /run /TN "Sistema de Calidad - ngrok" 2>&1 | Out-Null }
-    else { Mal "No pude registrar la tarea de ngrok: $($r.detalle)"; $errores++ }
-  }
-} else {
-  Mal "No encuentro ngrok instalado: no registro su tarea."
-  Info "winget install --id Ngrok.Ngrok -e --source winget"
-  $errores++
-}
+# ---------- ngrok: NO lleva tarea propia ----------
+# El vigilante ya se encarga: en cada pasada mira si ngrok esta vivo y con el
+# tunel del dominio correcto, y si no, lo relanza el mismo (vigilante.ps1, seccion
+# "4) ngrok"). Cuando NO existe la tarea dedicada lo lanza con Start-Process
+# oculto, que es justo lo que queremos aca.
+#
+# Se saco a proposito: su disparador era /SC ONLOGON, la unica variante que la PC
+# de Volkswagen rechaza con "Acceso denegado". Y tenerla no aportaba nada que el
+# vigilante no cubra.
+Info "ngrok no lleva tarea propia: lo levanta y lo mantiene vivo el vigilante."
 
 # ---------- Verificacion, sin CIM ----------
 Write-Host ""
 Write-Host "  Como quedaron:" -ForegroundColor White
-foreach ($n in @("Sistema de Calidad - Vigilante", "Sistema de Calidad - ngrok")) {
+foreach ($n in @("Sistema de Calidad - Vigilante")) {
   $q = schtasks /query /TN "$n" /FO LIST /V 2>&1
   if ($LASTEXITCODE -eq 0) {
     $txt = ($q | Out-String)
