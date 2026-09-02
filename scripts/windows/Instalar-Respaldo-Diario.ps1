@@ -54,8 +54,23 @@ $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" 
 $settings  = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
 
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName $taskName -Action $accion -Trigger $trigger -Principal $principal `
-  -Settings $settings -Description "Copia diaria de la base del Sistema de Calidad a SharePoint (M365)." | Out-Null
+try {
+  Register-ScheduledTask -TaskName $taskName -Action $accion -Trigger $trigger -Principal $principal `
+    -Settings $settings -Description "Copia diaria de la base del Sistema de Calidad a SharePoint (M365)." | Out-Null
+  Write-Host "Tarea diaria registrada." -ForegroundColor Green
+} catch {
+  # En algunas PCs de empresa no se pueden crear tareas programadas de ninguna
+  # forma (WMI roto, politicas del dominio, el usuario no es administrador).
+  # No es fatal: la configuracion YA quedo guardada arriba, y el bucle del
+  # vigilante corre el respaldo todos los dias a las 12:00 si encuentra ese
+  # archivo. O sea que con el bucle instalado esto ya funciona.
+  Write-Host ""
+  Write-Host "No se pudo registrar la tarea diaria: $($_.Exception.Message)" -ForegroundColor Yellow
+  Write-Host "No pasa nada: la configuracion quedo guardada y el respaldo lo va a" -ForegroundColor Yellow
+  Write-Host "hacer el vigilante todos los dias a las 12:00." -ForegroundColor Yellow
+  Write-Host "Verifica que el bucle este instalado:  Instalar-Arranque-Sin-Tareas.bat" -ForegroundColor Gray
+  Write-Host ""
+}
 Write-Host "Tarea '$taskName' registrada: todos los días a las $Hora."
 
 # 3) Prueba inmediata: hace un respaldo ahora para confirmar que todo el circuito anda.
