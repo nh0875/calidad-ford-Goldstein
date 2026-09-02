@@ -95,6 +95,37 @@ function Log {
 function Log-Accion { param([string]$m) ; $script:huboAccion = $true ; Log "ACCION" $m }
 function Log-Error  { param([string]$m) ; $script:huboAccion = $true ; Log "ERROR"  $m }
 
+# ---------------------------------------------------------------------------
+#  Consulta HTTP que NO pasa por el proxy cuando el destino es esta misma PC
+# ---------------------------------------------------------------------------
+#  Invoke-WebRequest usa el proxy del sistema por defecto. En una PC de empresa
+#  eso hace que hasta una consulta a http://localhost se vaya por el proxy
+#  corporativo y falle: el sistema anda perfecto, se ve bien en el navegador, y
+#  el script dice "no responde".
+#
+#  Paso en la PC de Volkswagen. Y lo peligroso es que el vigilante usa la misma
+#  consulta: si le da que el sistema esta caido, reinicia los contenedores cada 5
+#  minutos sin necesidad, y llena el log de "requiere revision manual".
+#
+#  Para localhost se anula el proxy. Para lo de afuera (el tunel de ngrok) se
+#  deja el del sistema, que en una red corporativa hace falta para salir.
+function Consultar-Web([string]$url, [int]$segundos = 10) {
+  try {
+    $req = [System.Net.HttpWebRequest]::Create($url)
+    $req.Timeout = $segundos * 1000
+    $req.ReadWriteTimeout = $segundos * 1000
+    $req.UserAgent = "SistemaCalidad"
+    if ($url -match "^https?://(localhost|127\.0\.0\.1)") { $req.Proxy = $null }
+    $resp = $req.GetResponse()
+    $lector = New-Object System.IO.StreamReader($resp.GetResponseStream())
+    $texto = $lector.ReadToEnd()
+    $lector.Close(); $resp.Close()
+    return @{ ok = $true; texto = $texto; error = "" }
+  } catch {
+    return @{ ok = $false; texto = ""; error = $_.Exception.Message }
+  }
+}
+
 # Ejecuta docker compose del stack de produccion, sin ventana ni salida.
 # OJO: el parametro NO puede llamarse $Args (es variable automatica de PowerShell).
 function Compose {
@@ -112,10 +143,9 @@ function Engine-Listo {
 
 function Salud-Ok {
     try {
-        $r = Invoke-WebRequest -Uri "http://localhost:$Puerto/api/health" -TimeoutSec 10 -UseBasicParsing
-        if ($r.StatusCode -ne 200) { return $false }
-        $j = $r.Content | ConvertFrom-Json
-        return ($j.status -eq "ok")
+        $r = Consultar-Web "http://localhost:$Puerto/api/health" 10
+        if (-not $r.ok) { return $false }
+        return ((($r.texto | ConvertFrom-Json).status) -eq "ok")
     } catch { return $false }
 }
 
@@ -155,7 +185,7 @@ function Backend-Arrancando {
 # salud de Ford no dice NADA de VW: son dos backends y dos bases distintas.
 function Salud-VW-Ok {
     try {
-        $r = Invoke-WebRequest -Uri "http://localhost:$PuertoVW/api/health" -TimeoutSec 10 -UseBasicParsing
+        $r = Consultar-Web "http://localhost:$PuertoVW/api/health" 10
         if ($r.StatusCode -ne 200) { return $false }
         return ((($r.Content | ConvertFrom-Json).status) -eq "ok")
     } catch { return $false }
@@ -164,7 +194,7 @@ function Salud-VW-Ok {
 function Tunel-Ok {
     # Se consulta la API local de ngrok: es fiable y no depende de internet.
     try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 8 -UseBasicParsing
+        $r = Consultar-Web "http://127.0.0.1:4040/api/tunnels" 8
         return ($r.Content -match [regex]::Escape($NgrokDomain))
     } catch { return $false }
 }

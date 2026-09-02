@@ -37,6 +37,37 @@ function Leer([string]$clave, [string]$porDefecto = "") {
   return $porDefecto
 }
 
+# ---------------------------------------------------------------------------
+#  Consulta HTTP que NO pasa por el proxy cuando el destino es esta misma PC
+# ---------------------------------------------------------------------------
+#  Invoke-WebRequest usa el proxy del sistema por defecto. En una PC de empresa
+#  eso hace que hasta una consulta a http://localhost se vaya por el proxy
+#  corporativo y falle: el sistema anda perfecto, se ve bien en el navegador, y
+#  el script dice "no responde".
+#
+#  Paso en la PC de Volkswagen. Y lo peligroso es que el vigilante usa la misma
+#  consulta: si le da que el sistema esta caido, reinicia los contenedores cada 5
+#  minutos sin necesidad, y llena el log de "requiere revision manual".
+#
+#  Para localhost se anula el proxy. Para lo de afuera (el tunel de ngrok) se
+#  deja el del sistema, que en una red corporativa hace falta para salir.
+function Consultar-Web([string]$url, [int]$segundos = 10) {
+  try {
+    $req = [System.Net.HttpWebRequest]::Create($url)
+    $req.Timeout = $segundos * 1000
+    $req.ReadWriteTimeout = $segundos * 1000
+    $req.UserAgent = "SistemaCalidad"
+    if ($url -match "^https?://(localhost|127\.0\.0\.1)") { $req.Proxy = $null }
+    $resp = $req.GetResponse()
+    $lector = New-Object System.IO.StreamReader($resp.GetResponseStream())
+    $texto = $lector.ReadToEnd()
+    $lector.Close(); $resp.Close()
+    return @{ ok = $true; texto = $texto; error = "" }
+  } catch {
+    return @{ ok = $false; texto = ""; error = $_.Exception.Message }
+  }
+}
+
 function Bien($t) { Write-Host "  [OK]  $t" -ForegroundColor Green }
 function Mal($t)  { Write-Host "  [!]   $t" -ForegroundColor Red }
 function Info($t) { Write-Host "        $t" -ForegroundColor Gray }
@@ -62,18 +93,22 @@ if (-not $verify)  { Mal "Falta META_WEBHOOK_VERIFY_TOKEN en el .env.prod"; Read
 Write-Host "  1/4  El sistema en esta PC" -ForegroundColor White
 $urlLocal = if ($puerto -eq "80") { "http://localhost" } else { "http://localhost:$puerto" }
 $vivo = $false
+$ultimoError = ""
 foreach ($intento in 1..30) {
-  try {
-    $r = Invoke-WebRequest -Uri "$urlLocal/api/health" -TimeoutSec 8 -UseBasicParsing
-    $j = $r.Content | ConvertFrom-Json
-    if ($j.status -eq "ok") { $vivo = $true; break }
-  } catch { }
+  $r = Consultar-Web "$urlLocal/api/health" 8
+  if ($r.ok) {
+    try { if (($r.texto | ConvertFrom-Json).status -eq "ok") { $vivo = $true; break } } catch { }
+  }
+  $ultimoError = $r.error
   if ($intento -eq 1) { Info "todavia no responde, esperando (puede estar arrancando)..." }
   Start-Sleep -Seconds 5
 }
 if (-not $vivo) {
   Mal "El sistema no responde en $urlLocal"
-  Info "Levantalo primero con Levantar-sistema.bat y volve a correr esto."
+  if ($ultimoError) { Info "Motivo exacto: $ultimoError" }
+  Info "Si en el navegador SI se ve, avisale a Ignacio con ese motivo: puede ser"
+  Info "el proxy de la empresa metiendose en una consulta local."
+  Info "Si tampoco se ve, levantalo con Levantar-sistema.bat y volve a correr esto."
   Read-Host "`nEnter para cerrar"; exit 1
 }
 Bien "responde, y esta configurado como $marca"
@@ -116,17 +151,19 @@ Write-Host ""
 Write-Host "  3/4  Que el tunel llegue desde internet" -ForegroundColor White
 Info "https://$dominio  ->  $urlLocal"
 $llega = $false
+$errorTunel = ""
 foreach ($intento in 1..24) {
-  try {
-    $r = Invoke-WebRequest -Uri "https://$dominio/api/health" -TimeoutSec 10 -UseBasicParsing
-    $j = $r.Content | ConvertFrom-Json
-    if ($j.status -eq "ok") { $llega = $true; break }
-  } catch { }
+  $r = Consultar-Web "https://$dominio/api/health" 10
+  if ($r.ok) {
+    try { if (($r.texto | ConvertFrom-Json).status -eq "ok") { $llega = $true; break } } catch { }
+  }
+  $errorTunel = $r.error
   if ($intento -eq 1) { Info "el tunel tarda unos segundos en levantar..." }
   Start-Sleep -Seconds 5
 }
 if (-not $llega) {
   Mal "El tunel NO llega. Meta te va a rechazar el webhook."
+  if ($errorTunel) { Info "Motivo exacto: $errorTunel" }
   Info "Revisa: (a) que el dominio del .env.prod sea el de ESTA cuenta de ngrok,"
   Info "        (b) que ngrok tenga cargado el token correcto,"
   Info "            ngrok config add-authtoken <el token de la cuenta>"
@@ -141,17 +178,17 @@ Write-Host "  4/4  El saludo de verificacion de Meta" -ForegroundColor White
 $desafio = "prueba" + (Get-Random -Minimum 100000 -Maximum 999999)
 $url = "https://$dominio/api/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=" +
        [uri]::EscapeDataString($verify) + "&hub.challenge=$desafio"
-try {
-  $r = Invoke-WebRequest -Uri $url -TimeoutSec 20 -UseBasicParsing
-  $cuerpo = "$($r.Content)".Trim()
+$rs = Consultar-Web $url 20
+if ($rs.ok) {
+  $cuerpo = "$($rs.texto)".Trim()
   if ($cuerpo -eq $desafio) {
     Bien "contesta el saludo correctamente"
   } else {
     Mal "contesta, pero devuelve '$cuerpo' en vez de '$desafio'"
     Read-Host "`nEnter para cerrar"; exit 1
   }
-} catch {
-  Mal "el saludo fallo: $($_.Exception.Message)"
+} else {
+  Mal "el saludo fallo: $($rs.error)"
   Info "Casi siempre es que el META_WEBHOOK_VERIFY_TOKEN del .env.prod no es el"
   Info "mismo que estas poniendo en el panel de Meta. Tienen que ser IDENTICOS."
   Read-Host "`nEnter para cerrar"; exit 1
