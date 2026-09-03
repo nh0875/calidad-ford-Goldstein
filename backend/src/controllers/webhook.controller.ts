@@ -304,10 +304,24 @@ interface StatusMeta {
   status: string; // sent | delivered | read | failed
 }
 
-export async function recibirWebhook(req: Request, res: Response) {
-  // Meta exige responder 200 rápido; cualquier error se loguea pero no se propaga
+// Procesa la notificación de Meta. Se llama DESPUÉS de haberle contestado, así
+// que acá ya no hay un `res`: nada de lo que pase adentro puede afectar la
+// respuesta, y cualquier error se loguea y se traga.
+async function procesarNotificacion(cuerpo: any) {
   try {
-    const entradas = req.body?.entry ?? [];
+    const entradas = cuerpo?.entry ?? [];
+
+    // Una línea por notificación, SIEMPRE. Hasta ahora solo se anotaba cuando
+    // algo salía mal, y por eso no había forma de distinguir "Meta no está
+    // llamando" de "Meta llama y el mensaje se pierde acá adentro": el log se
+    // veía igual de vacío en los dos casos. Con esto, mirar el log alcanza.
+    const cambios = entradas.flatMap((e: any) => e?.changes ?? []);
+    const nMensajes = cambios.reduce((t: number, c: any) => t + (c?.value?.messages?.length ?? 0), 0);
+    const nEstados = cambios.reduce((t: number, c: any) => t + (c?.value?.statuses?.length ?? 0), 0);
+    console.log(
+      `[webhook] notificación de Meta: ${nMensajes} mensaje(s), ${nEstados} acuse(s)` +
+        (cambios.length ? ` [${[...new Set(cambios.map((c: any) => c?.field))].join(",")}]` : "")
+    );
     for (const entrada of entradas) {
       for (const cambio of entrada?.changes ?? []) {
         const valor = cambio?.value;
@@ -357,5 +371,26 @@ export async function recibirWebhook(req: Request, res: Response) {
   } catch (err) {
     console.error("[webhook] error procesando notificación de Meta:", err);
   }
+}
+
+export async function recibirWebhook(req: Request, res: Response) {
+  // El 200 va PRIMERO, antes de tocar la base.
+  //
+  // Meta espera el acuse en pocos segundos. Antes se procesaba todo el lote y
+  // recién ahí se contestaba: por cada mensaje, hasta cinco consultas a Postgres
+  // y, si venía el botón de asesor, una llamada HTTPS a graph.facebook.com. En
+  // una PC de agencia con Docker bajo presión de memoria (que es exactamente por
+  // lo que existe el vigilante), la primera consulta después de un rato quieto
+  // tarda segundos.
+  //
+  // Si Meta no recibe el 200 a tiempo da la entrega por fallida y reintenta; con
+  // suficientes fallos seguidos deja de mandar y hay que rehabilitar el webhook
+  // a mano. El síntoma es de terror: el envío sigue funcionando y las respuestas
+  // de los clientes no vuelven nunca, sin un solo error a la vista.
+  //
+  // Contestar primero no pierde nada: el procesamiento ya atrapaba todos sus
+  // errores y la respuesta era 200 igual, pasara lo que pasara.
+  const cuerpo = req.body;
   res.sendStatus(200);
+  await procesarNotificacion(cuerpo);
 }

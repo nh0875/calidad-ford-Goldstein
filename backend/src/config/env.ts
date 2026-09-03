@@ -1,8 +1,30 @@
 import "dotenv/config";
 
+/**
+ * Lee una variable de entorno numérica.
+ *
+ * NO usar `Number(process.env.X ?? default)`: el `??` solo cubre undefined y
+ * null, así que una variable DEFINIDA PERO VACÍA (`RATE_LIMIT_WEBHOOK_POR_MINUTO=`
+ * en el .env, que es facilísimo de dejar así) pasa el `??` como string vacío y
+ * `Number("")` da **0**, no el default.
+ *
+ * En un tope de rate limit eso significa "rechazar absolutamente todo", y el
+ * síntoma es de los que no se diagnostican nunca: la página del sistema abre
+ * perfecto, el envío de WhatsApp funciona, y solo los POST del webhook de Meta
+ * se van en 429 sin que nadie lo vea. Lo mismo valdría para un valor con una
+ * letra de más, que da NaN.
+ *
+ * Acá cualquier cosa que no sea un número finito cae al default.
+ */
+function numero(valor: string | undefined, porDefecto: number): number {
+  if (valor === undefined || valor.trim() === "") return porDefecto;
+  const n = Number(valor);
+  return Number.isFinite(n) ? n : porDefecto;
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
-  port: Number(process.env.PORT ?? 3000),
+  port: numero(process.env.PORT, 3000),
   databaseUrl: process.env.DATABASE_URL ?? "",
   redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
   // Correo saliente (SMTP). Lo usa el Refuerzo de Volkswagen para mandarle a
@@ -10,7 +32,7 @@ export const env = {
   // tiene que ser una CONTRASEÑA DE APLICACIÓN, no la de la cuenta.
   mail: {
     host: process.env.MAIL_HOST ?? "smtp.gmail.com",
-    puerto: Number(process.env.MAIL_PUERTO ?? 465),
+    puerto: numero(process.env.MAIL_PUERTO, 465),
     usuario: process.env.MAIL_USUARIO ?? "",
     password: process.env.MAIL_PASSWORD ?? "",
   },
@@ -34,11 +56,11 @@ export const env = {
     respuestaNoRecibidaLang: process.env.META_RESPUESTA_NO_RECIBIDA_LANG ?? "es_AR",
     graphBaseUrl: process.env.META_GRAPH_BASE_URL ?? "https://graph.facebook.com/v20.0",
   },
-  whatsappEnvioDelayMs: Number(process.env.WHATSAPP_ENVIO_DELAY_MS ?? 2500),
-  diasSinRespuestaParaNC: Number(process.env.DIAS_SIN_RESPUESTA_PARA_NC ?? 5),
+  whatsappEnvioDelayMs: numero(process.env.WHATSAPP_ENVIO_DELAY_MS, 2500),
+  diasSinRespuestaParaNC: numero(process.env.DIAS_SIN_RESPUESTA_PARA_NC, 5),
   // Ventana horaria y tope diario de envíos de WhatsApp (protección para no
   // molestar clientes fuera de hora ni saturar Meta). Horas en zona AR.
-  maxEnviosDiarios: Number(process.env.MAX_ENVIOS_DIARIOS ?? 200),
+  maxEnviosDiarios: numero(process.env.MAX_ENVIOS_DIARIOS, 200),
   horaInicioEnvio: process.env.HORA_INICIO_ENVIO ?? "09:00",
   horaFinEnvio: process.env.HORA_FIN_ENVIO ?? "19:00",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
@@ -56,27 +78,27 @@ export const env = {
   analisisModoMock: (process.env.ANALISIS_MODO_MOCK ?? "false").toLowerCase() === "true",
   // Tope de análisis por minuto (rate limiter de BullMQ), para no pasar el RPM
   // del free tier de Gemini. Los jobs que exceden esperan en cola, no fallan.
-  analisisMaxPorMinuto: Number(process.env.ANALISIS_MAX_POR_MINUTO ?? 8),
+  analisisMaxPorMinuto: numero(process.env.ANALISIS_MAX_POR_MINUTO, 8),
   // MODO DEMO: muestra el sistema de punta a punta sin credenciales reales.
   // Simula el envío de WhatsApp y, si NO hay ninguna key de IA real (Anthropic
   // ni Gemini), también simula el análisis. NO cambia nada si está en false.
   modoDemo: (process.env.MODO_DEMO ?? "false").toLowerCase() === "true",
   // Parte A: demora del agradecimiento tras el ÚLTIMO mensaje del cliente
   // (deliberada, para que la conversación no se sienta automatizada). Default 3 min.
-  delayAgradecimientoMs: Number(process.env.DELAY_AGRADECIMIENTO_MS ?? 180000),
+  delayAgradecimientoMs: numero(process.env.DELAY_AGRADECIMIENTO_MS, 180000),
   // Ventana de consolidación: cuánto se espera SIN mensajes nuevos del cliente
   // antes de analizar. Cada mensaje que llega reinicia la cuenta, así una
   // respuesta partida en varios mensajes se analiza junta y una sola vez.
-  delayAnalisisMs: Number(process.env.DELAY_ANALISIS_MS ?? 90000),
+  delayAnalisisMs: numero(process.env.DELAY_ANALISIS_MS, 90000),
   // CORS: dominio(s) del frontend de producción, separados por coma. Vacío en
   // desarrollo (se refleja el origen); en producción, si queda vacío, solo
   // funcionan las llamadas del mismo origen (que es el caso normal detrás de nginx).
   frontendUrl: process.env.FRONTEND_URL ?? "",
   // Tope de requests por minuto por IP para toda la API (mitiga abuso y loops de script).
-  rateLimitPorMinuto: Number(process.env.RATE_LIMIT_POR_MINUTO ?? 100),
+  rateLimitPorMinuto: numero(process.env.RATE_LIMIT_POR_MINUTO, 100),
   // Tope aparte y holgado para /webhooks: Meta entrega en ráfagas, así que el
   // límite es alto y solo corta un pico anómalo o un loop, sin frenar a Meta.
-  rateLimitWebhookPorMinuto: Number(process.env.RATE_LIMIT_WEBHOOK_POR_MINUTO ?? 600),
+  rateLimitWebhookPorMinuto: numero(process.env.RATE_LIMIT_WEBHOOK_POR_MINUTO, 600),
   // Archivo JSON de estado del backup, escrito por el contenedor de backup y
   // leído por el endpoint /api/sistema/estado-backup (volumen compartido).
   backupStatusFile: process.env.BACKUP_STATUS_FILE ?? "/var/backup-status/status.json",

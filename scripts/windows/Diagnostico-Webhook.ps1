@@ -77,6 +77,29 @@ function Web([string]$url) {
 # ============================================================================
 Titulo "1. El sistema esta andando?"
 # ============================================================================
+# Antes de nada: Docker RESPONDE? En este proyecto Docker ya se colgo varias
+# veces (WSL sin tope de memoria), y cuando pasa, cualquier comando se queda
+# esperando para siempre. Sin este tope la ventana se congela sin decir nada y
+# la persona no tiene idea de que hacer.
+$sonda = Start-Job { docker version --format "{{.Server.Version}}" 2>$null }
+if (-not (Wait-Job $sonda -Timeout 45)) {
+    Stop-Job $sonda -ErrorAction SilentlyContinue
+    Remove-Job $sonda -Force -ErrorAction SilentlyContinue
+    Mal "Docker no responde (espere 45 segundos y no contesto)."
+    Info "No esta colgado el diagnostico: esta colgado Docker."
+    Info "Cerra Docker Desktop desde el icono de la barra, volve a abrirlo,"
+    Info "espera a que el icono deje de moverse y proba de nuevo."
+    Pop-Location; Read-Host "`nEnter para cerrar"; exit 1
+}
+$version = (Receive-Job $sonda) -join ""
+Remove-Job $sonda -Force -ErrorAction SilentlyContinue
+if ("$version".Trim() -eq "") {
+    Mal "Docker esta instalado pero el motor no esta andando."
+    Info "Abri Docker Desktop y espera a que diga 'Engine running'."
+    Pop-Location; Read-Host "`nEnter para cerrar"; exit 1
+}
+Bien "Docker responde (motor $($version.Trim()))."
+
 $contenedores = @(docker compose -f $Compose --env-file $EnvProd ps -q 2>$null | Where-Object { "$_".Trim() -ne "" })
 if ($contenedores.Count -eq 0) {
     Mal "No hay contenedores corriendo. El sistema esta apagado."
