@@ -388,6 +388,55 @@ actualización en el momento, sin esperar a la madrugada.
 
 ---
 
+## Si el arranque automático no se puede instalar
+
+En algunas PCs de empresa **no se puede usar ninguno de los mecanismos de arranque
+de Windows**. En la de Volkswagen se probó uno por uno:
+
+| Mecanismo | Resultado |
+|---|---|
+| Tareas programadas por PowerShell | WMI roto: `CimJob_BrokenCimSession` |
+| `schtasks /create /XML` | Acceso denegado |
+| `schtasks` con `/SC ONLOGON` | Acceso denegado |
+| El usuario común creando tareas | Acceso denegado (no es administrador) |
+| Acceso directo en la carpeta de Inicio | El antivirus lo borra |
+
+Lo que **sí** funciona ahí es el bucle: un proceso que corre en la sesión de la
+persona y llama al vigilante cada 5 minutos.
+
+```
+scripts\windows\Instalar-Arranque-Sin-Tareas.bat
+```
+
+Deja el arranque por **dos caminos a la vez** (acceso directo y clave `Run` del
+registro) y avisa cuál sobrevivió al antivirus.
+
+**Para arrancarlo sin reiniciar:**
+
+```powershell
+Start-Process powershell -ArgumentList "-NoProfile","-NonInteractive","-WindowStyle","Hidden","-ExecutionPolicy","Bypass","-File","C:\Calidad\Volkswagen\scripts\windowsigilante-bucle.ps1" -WindowStyle Hidden
+```
+
+**Para cerrar el que esté corriendo** (hace falta antes de arrancar uno nuevo: el
+bucle no deja que haya dos):
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+  Where-Object { $_.CommandLine -like "*vigilante-bucle*" } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+**Para ver qué está haciendo:** `scripts\windowsigilante-bucle.log`
+
+Ahí van enganchados también el respaldo diario (12:00) y la actualización
+automática (13:00), que en esas PCs tampoco se pueden instalar como tarea.
+
+**Si nada de esto sobrevive**, queda el botón manual:
+`scripts\windows\Crear-Boton-Escritorio.ps1` deja en el escritorio un acceso
+directo "Iniciar Sistema de Calidad". Doble clic y arranca todo.
+
+---
+
 ## Cómo entra el resto del equipo
 
 La PC de Vanina es el "servidor": mientras esté **prendida y andando**, los demás

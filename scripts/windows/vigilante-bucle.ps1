@@ -95,10 +95,8 @@ $mutex = New-Object System.Threading.Mutex($false, "Global\CalidadVigilanteBucle
 if (-not $mutex.WaitOne(0)) {
     Anotar "Ya hay otro bucle corriendo en esta sesion: este se cierra."
     Write-Host ""
-    Write-Host "  (si esperabas que arrancara uno nuevo, primero cerra el que ya esta:" -ForegroundColor Yellow
-    Write-Host "   Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" |" -ForegroundColor Gray
-    Write-Host "     Where-Object { \$_.CommandLine -like '*vigilante-bucle*' } |" -ForegroundColor Gray
-    Write-Host "     ForEach-Object { Stop-Process -Id \$_.ProcessId -Force } )" -ForegroundColor Gray
+    Write-Host "  Si querias arrancar uno nuevo, primero cerra el que ya esta corriendo." -ForegroundColor Yellow
+    Write-Host "  El comando para hacerlo esta en el README de scripts/windows." -ForegroundColor Gray
     exit 0
 }
 
