@@ -4,6 +4,7 @@ import { registrarJobsRepetibles } from "./jobs/queues";
 import { startWorkers } from "./jobs/workers";
 import { modoAnalisisActivo } from "./services/sentiment.service";
 import { seedAdmin } from "./scripts/seedAdmin";
+import { detenerLatido, iniciarLatido } from "./services/latido.service";
 
 const app = createApp();
 
@@ -30,6 +31,12 @@ registrarJobsRepetibles()
   .catch((err) => console.error("No se pudo registrar el cron de mantenimiento:", err));
 
 seedAdmin().catch((err) => console.error("[seed] Error creando el admin inicial:", err));
+
+// Latido: deja constancia de que el sistema esta vivo, y al arrancar mide cuanto
+// estuvo caido. Importa porque los mensajes entrantes de WhatsApp llegan SOLO
+// por webhook: con la PC apagada Meta reintenta, pero no para siempre, y no hay
+// forma de pedirle despues lo que no pudo entregar.
+iniciarLatido().catch((err) => console.error("[latido] no pudo arrancar:", err));
 
 // ---------------------------------------------------------------------------
 // Apagado ordenado
@@ -58,6 +65,8 @@ async function apagarOrdenado(senal: string): Promise<void> {
     process.exit(1);
   }, 25_000);
   plazo.unref();
+
+  detenerLatido();
 
   try {
     await Promise.all(workers.map((w) => w.close()));
