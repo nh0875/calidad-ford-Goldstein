@@ -82,7 +82,10 @@ $copia = "$config.antes"
 if (-not (Test-Path $copia)) { Copy-Item $config $copia -Force -ErrorAction SilentlyContinue }
 
 try {
-    $datos | ConvertTo-Json -Depth 20 | Set-Content $config -Encoding UTF8
+    # NO Set-Content -Encoding UTF8: en PowerShell 5.1 escribe BOM, y un JSON que
+    # empieza con BOM lo rechazan muchos lectores. Docker podria no poder leer su
+    # configuracion y no arrancar.
+    [System.IO.File]::WriteAllText($config, ($datos | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
     if ($Mostrar) { Bien "Listo: el panel de Docker VUELVE a abrirse al arrancar." }
     else          { Bien "Listo: Docker arranca sin abrir su ventana." }
 } catch {

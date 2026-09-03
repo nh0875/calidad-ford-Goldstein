@@ -199,7 +199,10 @@ if ($FaseAdmin) {
       $cfg = Get-Content $confDocker -Raw | ConvertFrom-Json
       if ($cfg.PSObject.Properties.Name -contains "OpenUIOnStartupDisabled") { $cfg.OpenUIOnStartupDisabled = $true }
       else { $cfg | Add-Member -NotePropertyName "OpenUIOnStartupDisabled" -NotePropertyValue $true }
-      $cfg | ConvertTo-Json -Depth 20 | Set-Content $confDocker -Encoding UTF8
+      # OJO: NO usar Set-Content -Encoding UTF8. En PowerShell 5.1 eso escribe un
+      # BOM al principio, y muchos lectores de JSON rechazan un archivo que
+      # empieza con BOM. Docker Desktop podria no poder leer su configuracion.
+      [System.IO.File]::WriteAllText($confDocker, ($cfg | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
       Ok "Docker no va a abrir su ventana al arrancar."
     } catch {
       Aviso "No pude configurar que Docker no abra su ventana: $($_.Exception.Message)"
