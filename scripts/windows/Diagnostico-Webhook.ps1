@@ -54,11 +54,26 @@ Push-Location $ProjectDir
 
 # --- Consultar la base. El SQL va por la entrada estandar para no pelear con
 # --- las comillas: adentro del contenedor las variables ya estan puestas.
+#
+# OJO con las comillas dobles adentro de este comando: PowerShell 5.1 se las
+# come al pasarle argumentos a un programa nativo. Con -F "|" (el separador de
+# columnas) sh terminaba recibiendo un | pelado, lo tomaba como PIPE, y fallaba
+# con "psql: option requires an argument: F" y "sh: -v: not found". Probado.
+# No hace falta: el separador por defecto de psql en modo -A ya es |.
+# Un detalle de PowerShell que da dolores de cabeza: `return @()` desde una
+# funcion se DESENROLLA y sale como $null, con lo cual "la consulta no devolvio
+# filas" y "la consulta fallo" se vuelven indistinguibles para el que llama, y
+# el script termina diciendo que la base no responde cuando en realidad esta
+# perfecta y vacia. Por eso el fallo se avisa aparte, con una bandera, y el
+# resultado se devuelve con la coma adelante (,@(...)) que preserva el arreglo
+# vacio tal cual.
+$script:SqlFallo = $false
 function Sql([string]$consulta) {
     $salida = $consulta | docker compose -f $Compose --env-file $EnvProd exec -T postgres `
-        sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB -t -A -F "|" -v ON_ERROR_STOP=1' 2>$null
-    if ($LASTEXITCODE -ne 0) { return $null }
-    return @($salida | Where-Object { "$_".Trim() -ne "" })
+        sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB -t -A -v ON_ERROR_STOP=1' 2>$null
+    if ($LASTEXITCODE -ne 0) { $script:SqlFallo = $true; return $null }
+    $script:SqlFallo = $false
+    return ,@($salida | Where-Object { "$_".Trim() -ne "" })
 }
 
 # --- Consultar a esta misma PC SIN pasar por el proxy de la empresa.
@@ -108,8 +123,8 @@ if ($contenedores.Count -eq 0) {
 }
 Bien "$($contenedores.Count) contenedores corriendo."
 
-$prueba = Sql "SELECT 1;"
-if ($null -eq $prueba) {
+Sql "SELECT 1;" | Out-Null
+if ($script:SqlFallo) {
     Mal "No pude consultar la base de datos."
     Info "Proba de nuevo en un minuto: puede estar todavia arrancando."
     Pop-Location; Read-Host "`nEnter para cerrar"; exit 1
@@ -197,6 +212,7 @@ SELECT telefono, left(content, 40), to_char("receivedAt",'DD/MM HH24:MI')
 FROM "MensajeHuerfano" ORDER BY "receivedAt" DESC LIMIT 5;
 "@
     foreach ($fila in @($ultimos)) {
+        if ("$fila".Trim() -eq "") { continue }
         $p = "$fila".Split("|")
         Write-Host ("          {0,-16} {1,-42} {2}" -f $p[0], $p[1], $p[2]) -ForegroundColor White
     }
