@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = "Continue"
 
-$Bucle = Join-Path $PSScriptRoot "vigilante-bucle.ps1"
+$Levantar = Join-Path $PSScriptRoot "Levantar-Sistema.ps1"
 
 function Bien($t) { Write-Host "  [OK]  $t" -ForegroundColor Green }
 function Mal($t)  { Write-Host "  [!]   $t" -ForegroundColor Red }
@@ -42,8 +42,8 @@ if ($Usuario) {
 }
 
 Write-Host ""
-if (-not (Test-Path $Bucle)) {
-    Mal "No encuentro vigilante-bucle.ps1 en $PSScriptRoot"
+if (-not (Test-Path $Levantar)) {
+    Mal "No encuentro Levantar-Sistema.ps1 en $PSScriptRoot"
     Read-Host "`nEnter para cerrar"; exit 1
 }
 if (-not (Test-Path $escritorio)) {
@@ -55,9 +55,9 @@ if (-not (Test-Path $escritorio)) {
 # -ExecutionPolicy Bypass, que es lo que los antivirus marcan como sospechoso.
 $politica = Get-ExecutionPolicy -Scope CurrentUser -ErrorAction SilentlyContinue
 $args = if ($politica -in @("RemoteSigned", "Unrestricted", "Bypass")) {
-    "-NoProfile -WindowStyle Hidden -File `"$Bucle`""
+    "-NoProfile -ExecutionPolicy Bypass -File `"$Levantar`""
 } else {
-    "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Bucle`""
+    "-NoProfile -ExecutionPolicy Bypass -File `"$Levantar`""
 }
 
 $destino = Join-Path $escritorio "Iniciar Sistema de Calidad.lnk"
@@ -67,7 +67,7 @@ try {
     $lnk.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
     $lnk.Arguments = $args
     $lnk.WorkingDirectory = $PSScriptRoot
-    $lnk.WindowStyle = 7
+    $lnk.WindowStyle = 1      # 1 = normal: la ventana SE VE, a proposito
     $lnk.Description = "Levanta el Sistema de Calidad y lo mantiene andando."
     # El ícono de Docker, si está: se reconoce de un vistazo entre los del escritorio.
     foreach ($i in @("$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
@@ -97,7 +97,7 @@ Write-Host "   Si el sistema no responde, doble clic en el boton" -ForegroundCol
 Write-Host "   'Iniciar Sistema de Calidad' del escritorio." -ForegroundColor Green
 Write-Host "  =========================================================" -ForegroundColor Green
 Write-Host ""
-Info "Tarda 1 o 2 minutos en levantar todo. No abre ninguna ventana:"
-Info "para saber si ya esta, abri http://localhost"
+Info "Abre una ventana que va contando que hace, y cuando termina"
+Info "le abre el sistema en el navegador."
 Write-Host ""
 Read-Host "Enter para cerrar"
