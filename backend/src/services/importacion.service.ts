@@ -335,6 +335,45 @@ async function importarHoja(
   });
   base.uploadId = upload.id;
 
+  // ---- Guardado por lotes ----
+  //
+  // Antes se hacía un INSERT por fila, esperando cada uno antes de armar el
+  // siguiente: para un archivo de 578 filas eran 578 viajes de ida y vuelta a
+  // Postgres, en fila india. Toda la lógica de cada fila (validación, dedupe,
+  // alias del asesor) SIGUE siendo secuencial porque muta estado compartido; lo
+  // único que se paralela son las escrituras, de a lotes chicos.
+  //
+  // El lote se mantiene chico a propósito: el pool de conexiones de Prisma no es
+  // grande, y esto corre en la PC de la agencia, no en un servidor.
+  const TAMANO_LOTE = 25;
+  const pendientes: Array<{
+    data: Prisma.CasoCreateArgs["data"];
+    tieneOrden: boolean;
+    numeroOrden: string;
+  }> = [];
+
+  const guardarLote = async () => {
+    if (pendientes.length === 0) return;
+    const lote = pendientes.splice(0, pendientes.length);
+    await Promise.all(
+      lote.map(async (p) => {
+        try {
+          await prisma.caso.create({ data: p.data });
+          base.insertados++;
+        } catch (err) {
+          // Otra carga concurrente insertó esta orden primero: el índice único la
+          // rechaza (P2002). Se trata como duplicado, NO se aborta la importación.
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+            base.duplicados++;
+            if (p.tieneOrden) base.ordenesDuplicadas.push(p.numeroOrden);
+          } else {
+            throw err;
+          }
+        }
+      })
+    );
+  };
+
   try {
     for (const { numeroFilaExcel, datos: fila } of parseada.filas) {
 
@@ -456,8 +495,9 @@ async function importarHoja(
 
       if (estaSuprimido(telefonosNorm, ctx.suprimidos)) base.suprimidos++;
 
-      try {
-      await prisma.caso.create({
+      pendientes.push({
+        tieneOrden,
+        numeroOrden,
         data: {
           uploadId: upload.id,
           numeroOrden: numeroOrden || "S/N",
@@ -485,18 +525,11 @@ async function importarHoja(
           ...(analisisHistorico ? { analisis: { create: analisisHistorico } } : {}),
         },
       });
-      base.insertados++;
-      } catch (err) {
-        // Otra carga concurrente insertó esta orden primero: el índice único la
-        // rechaza (P2002). Se trata como duplicado, NO se aborta la importación.
-        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-          base.duplicados++;
-          if (tieneOrden) base.ordenesDuplicadas.push(numeroOrden);
-        } else {
-          throw err;
-        }
-      }
+      if (pendientes.length >= TAMANO_LOTE) await guardarLote();
     }
+
+    // Lo que quedó suelto en el último lote incompleto.
+    await guardarLote();
 
     await prisma.excelUpload.update({
       where: { id: upload.id },

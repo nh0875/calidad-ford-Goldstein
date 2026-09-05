@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
 import { marca } from "../config/marca";
 import { AreaTrabajo, EncuestaFordEstado, TipoTareaRefuerzo } from "@prisma/client";
-import { normalizarTexto, parsearFecha } from "./excel.service";
+import { leerFilasCrudas, normalizarTexto, parsearFecha } from "./excel.service";
 
 // ---------- Campos canónicos del export de Ford ----------
 // El archivo real trae 21 columnas; acá mapeamos las que usamos para cruzar,
@@ -102,11 +102,7 @@ export function parsearHojaFord(
   const hoja = workbook.Sheets[nombreHoja];
   if (!hoja) return { error: `La hoja "${nombreHoja}" no existe.` };
 
-  const filasCrudas: unknown[][] = XLSX.utils.sheet_to_json(hoja, {
-    header: 1,
-    defval: null,
-    blankrows: true,
-  });
+  const filasCrudas: unknown[][] = leerFilasCrudas(hoja);
 
   const filaEncabezado = detectarFilaEncabezadoFord(filasCrudas);
   if (filaEncabezado === -1) {

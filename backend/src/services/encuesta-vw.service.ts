@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { normalizarTexto } from "./excel.service";
+import { leerFilasCrudas, normalizarTexto } from "./excel.service";
 
 /**
  * Lector del Excel de encuestas de fábrica de Volkswagen.
@@ -146,7 +146,7 @@ export function esHojaDeVendedores(nombreHoja: string): boolean {
 export function parsearVendedoresVW(workbook: XLSX.WorkBook, nombreHoja: string): VendedorDelArchivo[] {
   const hoja = workbook.Sheets[nombreHoja];
   if (!hoja) return [];
-  const filas: unknown[][] = XLSX.utils.sheet_to_json(hoja, { header: 1, defval: null, blankrows: true });
+  const filas: unknown[][] = leerFilasCrudas(hoja);
 
   const vendedores: VendedorDelArchivo[] = [];
   let sucursal = "";
@@ -243,7 +243,7 @@ export function parsearHojaEncuestaVW(
   const hoja = workbook.Sheets[nombreHoja];
   if (!hoja) return { error: `La hoja "${nombreHoja}" no existe.` };
 
-  const filasCrudas: unknown[][] = XLSX.utils.sheet_to_json(hoja, { header: 1, defval: null, blankrows: true });
+  const filasCrudas: unknown[][] = leerFilasCrudas(hoja);
   if (filasCrudas.length === 0) return { error: `La hoja "${nombreHoja}" está vacía.` };
 
   const encabezados = filasCrudas[0] ?? [];

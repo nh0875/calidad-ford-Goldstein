@@ -31,6 +31,7 @@ import {
   parsearFecha,
   parsearHoja,
   sugerirMapeo,
+  leerFilasCrudas,
 } from "./excel.service";
 import { normalizarTelefonoAR, normalizarTelefonoARFlexible } from "./telefono.service";
 
@@ -90,11 +91,7 @@ export function detectarFormatoFidelizacion(
 ): FormatoFidelizacion {
   const hoja = workbook.Sheets[nombreHoja];
   if (!hoja) return OrigenFidelizacion.TURNOS;
-  const filas: unknown[][] = XLSX.utils.sheet_to_json(hoja, {
-    header: 1,
-    defval: null,
-    blankrows: true,
-  });
+  const filas: unknown[][] = leerFilasCrudas(hoja);
   return buscarEncabezadoVentas(filas) >= 0 ? OrigenFidelizacion.VENTAS : OrigenFidelizacion.TURNOS;
 }
 
@@ -425,11 +422,7 @@ export function parsearFidelizacionVentas(
   const hoja = workbook.Sheets[nombreHoja];
   if (!hoja) return { error: `La hoja "${nombreHoja}" no existe en el archivo.` };
 
-  const filas: unknown[][] = XLSX.utils.sheet_to_json(hoja, {
-    header: 1,
-    defval: null,
-    blankrows: true,
-  });
+  const filas: unknown[][] = leerFilasCrudas(hoja);
 
   const filaEncabezado = buscarEncabezadoVentas(filas);
   if (filaEncabezado === -1) {

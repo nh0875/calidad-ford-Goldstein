@@ -4,7 +4,7 @@
 import { AreaTrabajo, EstadoRQR, Prisma } from "@prisma/client";
 import * as XLSX from "xlsx";
 import { prisma } from "../config/prisma";
-import { abrirWorkbook, normalizarTexto, parsearFecha } from "./excel.service";
+import { abrirWorkbook, leerFilasCrudas, normalizarTexto, parsearFecha } from "./excel.service";
 import { normalizarTelefonoAR } from "./telefono.service";
 import { generarNumeroRQR } from "./rqr.service";
 
@@ -99,11 +99,7 @@ export function parsearFormularioRqr(workbook: XLSX.WorkBook, nombreHoja: string
   const hoja = workbook.Sheets[nombreHoja];
   if (!hoja) return { error: `La hoja "${nombreHoja}" no existe.` };
 
-  const filas: unknown[][] = XLSX.utils.sheet_to_json(hoja, {
-    header: 1,
-    defval: null,
-    blankrows: true,
-  });
+  const filas: unknown[][] = leerFilasCrudas(hoja);
 
   const esFormulario = filas.some((f) =>
     f.some((c) => /fecha apertura rqr/.test(normalizarTexto(c)))

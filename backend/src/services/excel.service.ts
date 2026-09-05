@@ -380,14 +380,83 @@ export function derivarPeriodoDeNombreHoja(nombreHoja: string): string | null {
  * error que no explicaba nada.
  */
 export function hojaVacia(workbook: XLSX.WorkBook, nombreHoja: string): boolean {
-  const hoja = workbook.Sheets[nombreHoja];
-  if (!hoja || !hoja["!ref"]) return true;
-  const filas: unknown[][] = XLSX.utils.sheet_to_json(hoja, {
+  // rangoUtil ya mira celda por celda si hay ALGO con contenido: si no encuentra
+  // nada, la hoja está vacía. Antes esto materializaba la hoja entera para
+  // averiguar lo mismo, y en un archivo con el rango inflado tardaba 40 segundos
+  // por hoja — y esto corre sobre TODAS las hojas del libro en la vista previa.
+  return rangoUtil(workbook.Sheets[nombreHoja]) === undefined;
+}
+
+// ---------- Rango realmente usado de una hoja ----------
+
+/**
+ * Devuelve el rango que la hoja OCUPA DE VERDAD, mirando las celdas una por una
+ * en vez de creerle al "!ref" que declara el archivo.
+ *
+ * POR QUE. El "!ref" miente seguido. El archivo "Carga encuestas internas
+ * 03-09.xls", de 12 KB y CUATRO filas de datos, declara `A1:Y1048576`: un millón
+ * de filas. Pasa cuando alguien selecciona columnas enteras en Excel, o cuando el
+ * sistema que exporta escribe el rango completo de la planilla.
+ *
+ * Y sheet_to_json le cree: materializa el millón de filas para que nos quedemos
+ * con cuatro. Medido sobre ese archivo: **50 segundos** para leerlo. Con el rango
+ * acotado: **0 ms**. Ese era el "el sistema anda lento al cargar".
+ *
+ * Recorrer las celdas es baratísimo porque la hoja es RALA: en ese mismo archivo
+ * hay 85 celdas de verdad, no un millón. Calcular esto tarda 0 ms.
+ *
+ * Devuelve undefined si la hoja no tiene ninguna celda con contenido.
+ */
+export function rangoUtil(hoja: XLSX.WorkSheet | undefined): XLSX.Range | undefined {
+  if (!hoja) return undefined;
+  let ultimaFila = -1;
+  let ultimaColumna = -1;
+  for (const clave of Object.keys(hoja)) {
+    if (clave.startsWith("!")) continue; // !ref, !margins, etc.
+    const celda = hoja[clave] as XLSX.CellObject | undefined;
+    if (!celda || celda.v === undefined || celda.v === null) continue;
+    if (typeof celda.v === "string" && celda.v.trim() === "") continue;
+    let dir: XLSX.CellAddress;
+    try {
+      dir = XLSX.utils.decode_cell(clave);
+    } catch {
+      continue; // clave que no es una dirección de celda
+    }
+    if (dir.r > ultimaFila) ultimaFila = dir.r;
+    if (dir.c > ultimaColumna) ultimaColumna = dir.c;
+  }
+  if (ultimaFila < 0 || ultimaColumna < 0) return undefined;
+  // Siempre desde A1: así los índices coinciden con lo que se ve en Excel.
+  return { s: { r: 0, c: 0 }, e: { r: ultimaFila, c: ultimaColumna } };
+}
+
+/**
+ * Lee las filas crudas de una hoja acotando al rango real.
+ *
+ * `blankrows: true` conserva las filas vacías intermedias para que los índices
+ * sigan coincidiendo con los números de fila que el usuario ve en Excel (los
+ * mensajes de error los usan). Lo que se recorta es la cola de filas fantasma.
+ *
+ * `maxColumnas` es un tope adicional para las hojas que declaran miles de
+ * columnas de puro formato (se vio un `A1:XEV267`).
+ */
+export function leerFilasCrudas(hoja: XLSX.WorkSheet | undefined, maxColumnas?: number): unknown[][] {
+  if (!hoja) return [];
+  const util = rangoUtil(hoja);
+  if (!util) return [];
+  const rango: XLSX.Range = {
+    s: { r: 0, c: 0 },
+    e: {
+      r: util.e.r,
+      c: maxColumnas ? Math.min(util.e.c, maxColumnas - 1) : util.e.c,
+    },
+  };
+  return XLSX.utils.sheet_to_json(hoja, {
     header: 1,
-    blankrows: false,
-    defval: "",
+    defval: null,
+    blankrows: true,
+    range: rango,
   });
-  return filas.every((fila) => fila.every((celda) => String(celda ?? "").trim() === ""));
 }
 
 // ---------- Lectura de una hoja ----------
@@ -409,27 +478,11 @@ export function parsearHoja(workbook: XLSX.WorkBook, nombreHoja: string): HojaPa
   const hoja = workbook.Sheets[nombreHoja];
   if (!hoja) return { error: `La hoja "${nombreHoja}" no existe en el archivo.` };
 
-  // Algunas hojas reales declaran miles de columnas de puro formato
-  // (ej: ref A1:XEV267); se acota el rango para no procesar celdas vacías.
+  // Se acota a lo que la hoja ocupa DE VERDAD, en filas y en columnas: el "!ref"
+  // declarado miente seguido (ver rangoUtil). El tope de 60 columnas es aparte,
+  // para las hojas que arrastran miles de columnas de puro formato (A1:XEV267).
   const MAX_COLUMNAS = 60;
-  let rango: XLSX.Range | undefined;
-  if (hoja["!ref"]) {
-    const original = XLSX.utils.decode_range(hoja["!ref"]);
-    // Siempre desde A1 para que los índices coincidan con lo que se ve en Excel
-    rango = {
-      s: { r: 0, c: 0 },
-      e: { r: original.e.r, c: Math.min(original.e.c, MAX_COLUMNAS - 1) },
-    };
-  }
-
-  // blankrows: true conserva las filas vacías para que los índices coincidan
-  // con los números de fila que el usuario ve en Excel
-  const filasCrudas: unknown[][] = XLSX.utils.sheet_to_json(hoja, {
-    header: 1,
-    defval: null,
-    blankrows: true,
-    ...(rango ? { range: rango } : {}),
-  });
+  const filasCrudas = leerFilasCrudas(hoja, MAX_COLUMNAS);
 
   const filaEncabezado = detectarFilaEncabezado(filasCrudas);
   if (filaEncabezado === -1) {
