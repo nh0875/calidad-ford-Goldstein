@@ -243,18 +243,27 @@ export function extraerKpisResumen(
 // que es justo lo que hace seguro a "telef.".
 
 const ALIAS_CAMPOS: Array<{ patrones: string[]; campo: CampoCaso }> = [
-  { patrones: ["fecha de programacion", "fec. apertura"], campo: "fechaProgramacion" },
+  // "fec. remito" es la fecha de entrega en la encuesta de VENTAS; "fecha cierre"
+  // y "fec. cierre" son las del posventa de Volkswagen y del reporte mensual.
+  { patrones: ["fecha de programacion", "fec. apertura", "fec. remito", "fecha cierre", "fec. cierre"], campo: "fechaProgramacion" },
   { patrones: ["hora"], campo: "hora" },
   // "agendamento" (sin la i) es como viene en el Excel real de San Juan
   { patrones: ["origen del agendamiento", "origen del agendamento", "origen agendamiento"], campo: "origenAgendamiento" },
-  { patrones: ["asesor"], campo: "asesor" },
+  // En VENTAS la persona que atiende se llama "Vendedor". Ojo: el patron tambien
+  // matchearia "Sat. Vendedor" (la nota de satisfaccion), pero no llega a pisarlo
+  // porque las columnas se recorren en orden y "Vendedor" viene antes, se queda
+  // con el campo, y el Set camposUsados impide que otra columna lo reuse.
+  { patrones: ["asesor", "=vendedor"], campo: "asesor" },
   { patrones: ["modelo"], campo: "modelo" },
   { patrones: ["placa / patente", "patente", "placa", "dominio"], campo: "patente" },
   { patrones: ["chasis"], campo: "chasisVIN" },
-  { patrones: ["nombre propietario"], campo: "nombrePropietario" },
+  // Sin esto no entra NINGUN archivo de Volkswagen: validarMapping exige el
+  // nombre y rechaza la hoja entera. El posventa de VW y las dos encuestas de
+  // ventas llaman "Cliente" a esta columna, no "Nombre Propietario".
+  { patrones: ["nombre propietario", "=cliente"], campo: "nombrePropietario" },
   { patrones: ["e-mail propietario", "email propietario", "e-mail", "email"], campo: "emailPropietario" },
-  { patrones: ["celular", "telef."], campo: "celular" },
-  { patrones: ["whatsapp"], campo: "whatsapp" },
+  { patrones: ["celular", "telef.", "=telefono"], campo: "celular" },
+  { patrones: ["whatsapp", "telef.", "=telefono"], campo: "whatsapp" },
   { patrones: ["comentario del asesor", "observa asesor"], campo: "comentarioAsesor" },
   { patrones: ["fecha salida", "fecha de salida"], campo: "fechaSalida" },
   { patrones: ["dias en servicio"], campo: "diasEnServicio" },
@@ -265,7 +274,7 @@ const ALIAS_CAMPOS: Array<{ patrones: string[]; campo: CampoCaso }> = [
   { patrones: ["dejanos tu comentario"], campo: "comentarioCliente" },
   // "orden de servicio" es como viene la columna en el reporte real; "orden"
   // suelto va al final porque es genérico (match exacto para no pisar "origen").
-  { patrones: ["orden de servicio", "orden de servi", "nro de orden", "n° de orden", "orden"], campo: "numeroOrden" },
+  { patrones: ["orden de servicio", "orden de servi", "nro de orden", "nro. orden", "n° de orden", "borrador", "orden"], campo: "numeroOrden" },
 ];
 
 export function sugerirMapeo(columnas: string[]): Record<string, CampoCaso> {
@@ -275,7 +284,17 @@ export function sugerirMapeo(columnas: string[]): Record<string, CampoCaso> {
     const norm = normalizarTexto(columna);
     for (const { patrones, campo } of ALIAS_CAMPOS) {
       if (camposUsados.has(campo)) continue;
-      const coincide = patrones.some((p) => (p.length <= 6 ? norm === p : norm.includes(p)));
+      // Reglas de coincidencia:
+      //   "=algo"  -> igualdad EXACTA, sin importar el largo.
+      //   patron corto (<=6) -> igualdad exacta, para que "orden" no pise "origen".
+      //   patron largo -> alcanza con que la columna lo contenga.
+      //
+      // El "=" hizo falta al sumar los formatos de Volkswagen: "cliente" por
+      // contencion se llevaba puesta a "Entrega a cliente final", y "telefono"
+      // a "Otro Teléfono". Son nombres de columna exactos, no fragmentos.
+      const coincide = patrones.some((p) =>
+        p.startsWith("=") ? norm === p.slice(1) : p.length <= 6 ? norm === p : norm.includes(p)
+      );
       if (coincide) {
         mapeo[columna] = campo;
         camposUsados.add(campo);

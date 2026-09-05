@@ -169,6 +169,31 @@ export async function confirmUpload(req: Request, res: Response) {
   });
 
   const t = resultado.totales;
+
+  // Si NO entro ninguna hoja, el titular NO puede ser "Carga finalizada: 0
+  // casos". Eso fue exactamente lo que paso con la encuesta de ventas de
+  // Volkswagen: el sistema rechazaba la hoja por una razon concreta (faltaba
+  // mapear el nombre del cliente, o no se podia deducir el mes), lo dejaba
+  // escrito en resultados[].mensaje... y la usuaria veia un cartel rojo que
+  // decia "finalizada" con todo en cero, sin una sola pista de que arreglar.
+  //
+  // Peor todavia: como la respuesta va con 400, el frontend cae por la rama de
+  // error y muestra SOLO este texto; la vista de resultados con el detalle por
+  // hoja nunca se llega a dibujar. Asi que el motivo tiene que viajar aca.
+  const ninguna = !resultado.resultados.some((r) => r.ok);
+  if (ninguna) {
+    const motivos = resultado.resultados
+      .map((r) => r.mensaje)
+      .filter((m) => m && m.trim() !== "");
+    const detalle = motivos.length
+      ? motivos.join(" ")
+      : "No se pudo importar ninguna hoja del archivo.";
+    return res.status(400).json({
+      message: `No se cargó ningún caso. ${detalle}`,
+      ...resultado,
+    });
+  }
+
   const message =
     `Carga finalizada: ${t.insertados} casos nuevos guardados, ` +
     `${t.duplicados} ya existían y se omitieron, ${t.conError} filas con problemas. ` +
@@ -181,7 +206,7 @@ export async function confirmUpload(req: Request, res: Response) {
       ? ` ${t.suprimidos} caso(s) son de clientes que solicitaron no ser contactados: quedaron cargados pero nunca entrarán en una campaña.`
       : "");
 
-  res.status(resultado.resultados.some((r) => r.ok) ? 201 : 400).json({
+  res.status(201).json({
     message,
     ...resultado,
   });
