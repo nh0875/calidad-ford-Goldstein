@@ -592,7 +592,11 @@ export default function Casos() {
           Exportar a Excel
         </button>
         {respuesta && (
-          <span className="ml-auto text-sm text-ink-muted">
+          // El contador va al final de la barra. Cuando los botones no entran y
+          // la barra se parte en dos renglones, el ml-auto lo dejaba solo y
+          // pegado a la derecha, como suelto; con basis-full baja prolijo
+          // ocupando el renglon entero. Y sin nowrap se partia en tres lineas.
+          <span className="ml-auto basis-full whitespace-nowrap text-sm text-ink-muted sm:basis-auto">
             {respuesta.pagination.total} caso(s) — página {respuesta.pagination.page} de{" "}
             {respuesta.pagination.totalPages}
           </span>

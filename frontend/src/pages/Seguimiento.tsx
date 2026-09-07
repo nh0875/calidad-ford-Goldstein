@@ -295,7 +295,13 @@ export default function Seguimiento() {
   }, [hilo]);
 
   return (
-    <div className="flex h-[calc(100vh-8.5rem)] overflow-hidden rounded-lg border border-gray-200 bg-white">
+    // El alto descuenta lo que hay ARRIBA del chat: el encabezado (~71 px), el
+    // padding del contenido (48 px) y el cartel de avisos (47 px colapsado), que
+    // se olvidaba en la cuenta. Con 8.5rem el recuadro pedia ~30 px de mas y
+    // aparecian DOS barras de scroll, una encima de la otra, y el cuadro para
+    // escribir quedaba cortado abajo. Solo lo veia quien tenia avisos en
+    // pantalla, y por eso una persona lo sufria y otra no.
+    <div className="flex h-[calc(100vh-11rem)] min-h-[24rem] overflow-hidden rounded-lg border border-gray-200 bg-white">
       {/* ---------- Panel izquierdo: lista de conversaciones ---------- */}
       <aside className="flex w-80 shrink-0 flex-col border-r border-gray-200">
         <div className="space-y-2 border-b border-gray-200 p-3">

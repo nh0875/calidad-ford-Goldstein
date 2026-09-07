@@ -126,7 +126,11 @@ export default function CartelAvisos() {
 
       {abierto && (
         <div className="border-t border-red-200 bg-white/60 px-6 py-3">
-          <ul className="space-y-2">
+          {/* Tope de alto, si no el cartel aplasta la pantalla que tiene abajo.
+              El backend devuelve hasta 20 avisos y cada uno mide ~76 px: sin esto
+              son ~1700 px de cartel empujando el contenido fuera de la ventana,
+              en TODAS las pantallas. Con el tope, la lista scrollea sola. */}
+          <ul className="max-h-[30vh] space-y-2 overflow-y-auto">
             {datos.data.map((a) => (
               <li
                 key={a.id}
