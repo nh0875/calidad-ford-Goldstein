@@ -214,7 +214,7 @@ export default function Usuarios() {
       {error && <Alert tono="error">{error}</Alert>}
       {mensaje && <Alert tono="exito">{mensaje}</Alert>}
 
-      <Card padding="p-5" className="max-w-5xl">
+      <Card padding="p-5">
         <h3 className="mb-3 flex items-center gap-2 font-display text-sm font-bold uppercase tracking-wide text-navy">
           <UserPlus className="h-4 w-4 text-accent" aria-hidden="true" />
           Crear cuenta nueva

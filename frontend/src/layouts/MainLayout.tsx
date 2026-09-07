@@ -243,10 +243,25 @@ export default function MainLayout() {
         {/* Los avisos son de RQR y clientes escalados: Contacto Posterior puro.
             El puesto de Fidelizacion no los trabaja (y /api/avisos le da 403). */}
         {!soloFidelizacion && <CartelAvisos />}
+        {/* Contenedor UNICO del contenido.
+            Antes cada pantalla decidia su propio ancho y convivian tres criterios
+            distintos: la mayoria sin tope (se estiraban hasta donde diera la
+            pantalla), Configuracion y RQR nuevo en max-w-3xl, Carga en max-w-6xl
+            y Usuarios en max-w-4xl. Por eso el sistema se veia tan distinto entre
+            una persona y otra: el zoom del navegador cambia el ancho en pixeles
+            CSS (al 90% la ventana "mide" mas y al 110% menos), asi que sin un
+            tope comun cada zoom daba una composicion diferente.
+
+            Con un tope unico el contenido queda centrado y estable: al 90% deja
+            de estirarse hasta ser ilegible, y al 110% sigue entrando sin scroll
+            horizontal. Las pantallas que quieren ser MAS angostas (un formulario
+            largo) siguen poniendo su propio max-w, que es mas restrictivo y gana. */}
         <main className="flex-1 overflow-y-auto p-6">
-          <PageTransition>
-            <Outlet />
-          </PageTransition>
+          <div className="mx-auto w-full max-w-[1600px]">
+            <PageTransition>
+              <Outlet />
+            </PageTransition>
+          </div>
         </main>
       </div>
     </div>

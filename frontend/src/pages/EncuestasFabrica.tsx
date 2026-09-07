@@ -30,6 +30,9 @@ interface Pendiente {
   fechaEntrega: string | null;
   estado: "PENDIENTE" | "RESPONDIO";
   observacionesFabrica: string[];
+  esManual?: boolean;
+  respondioEn?: string | null;
+  detectadaEn?: string | null;
 }
 
 interface Vendedor {
@@ -47,6 +50,10 @@ interface Resumen {
   totalPendientes: number;
   vendedoresConPendientes: number;
   sinCorreo: number;
+  totalClientes: number;
+  totalRespondidos: number;
+  totalManuales: number;
+  totalVendedores: number;
 }
 
 interface VistaPrevia {
@@ -98,7 +105,9 @@ export default function EncuestasFabrica() {
   const cargar = useCallback(async () => {
     try {
       const [r, m] = await Promise.all([
-        apiGet<{ data: Vendedor[]; resumen: Resumen }>("/api/encuesta-vw"),
+        // Se piden tambien los respondidos: si no, el cliente desaparecia de la
+        // pantalla apenas contestaba y no habia forma de hacerle seguimiento.
+        apiGet<{ data: Vendedor[]; resumen: Resumen }>("/api/encuesta-vw?incluirRespondidos=true"),
         apiGet<EstadoMail>("/api/encuesta-vw/estado-mail").catch(() => null),
       ]);
       setVendedores(r.data);
@@ -230,6 +239,43 @@ export default function EncuestasFabrica() {
     }
   }
 
+  // ---- Clientes cargados ---------------------------------------------------
+  //
+  // Hasta ahora los clientes solo se veian abriendo vendedor por vendedor, y los
+  // que ya habian contestado directamente no se pedian: el seguimiento se cortaba
+  // justo cuando el caso se cerraba. Esta lista los junta a todos, con buscador.
+  const [busquedaCliente, setBusquedaCliente] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState<"TODOS" | "PENDIENTE" | "RESPONDIO">("TODOS");
+
+  const clientes = useMemo(() => {
+    const filas = vendedores.flatMap((v) =>
+      v.pendientes.map((p) => ({
+        ...p,
+        vendedorNombre: v.nombre || v.codigo,
+        vendedorCodigo: v.codigo,
+        sucursal: v.sucursal,
+      }))
+    );
+    const q = busquedaCliente.trim().toLowerCase();
+    return filas
+      .filter((f) => filtroEstado === "TODOS" || f.estado === filtroEstado)
+      .filter(
+        (f) =>
+          q === "" ||
+          f.nombreCliente.toLowerCase().includes(q) ||
+          f.chasis.toLowerCase().includes(q) ||
+          (f.dominio ?? "").toLowerCase().includes(q) ||
+          (f.email ?? "").toLowerCase().includes(q) ||
+          f.vendedorNombre.toLowerCase().includes(q)
+      )
+      .sort((a, b) => {
+        // Primero los que faltan contactar; dentro de cada grupo, el mas viejo
+        // arriba, que es el que mas espero.
+        if (a.estado !== b.estado) return a.estado === "PENDIENTE" ? -1 : 1;
+        return (a.fechaEntrega ?? "").localeCompare(b.fechaEntrega ?? "");
+      });
+  }, [vendedores, busquedaCliente, filtroEstado]);
+
   // ---- Alta manual de una encuesta pendiente --------------------------------
   const [altaManual, setAltaManual] = useState(false);
   const [manual, setManual] = useState({
@@ -302,7 +348,9 @@ export default function EncuestasFabrica() {
             </h2>
             <p className="mt-1 text-sm text-ink-muted">
               {resumen
-                ? `${resumen.totalPendientes} cliente(s) pendientes, repartidos entre ${resumen.vendedoresConPendientes} vendedor(es).`
+                ? `${resumen.totalPendientes} pendiente(s) entre ${resumen.vendedoresConPendientes} vendedor(es). ` +
+                  `En total hay ${resumen.totalClientes} cliente(s) cargado(s), de los cuales ` +
+                  `${resumen.totalRespondidos} ya respondieron.`
                 : "Cargando…"}
             </p>
           </div>
@@ -444,6 +492,86 @@ export default function EncuestasFabrica() {
           </div>
         </Card>
       )}
+
+      {/* Clientes cargados */}
+      <Card padding="p-0">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-5 py-3">
+          <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">
+            Clientes cargados{resumen ? ` (${clientes.length} de ${resumen.totalClientes})` : ""}
+          </h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={busquedaCliente}
+              onChange={(e) => setBusquedaCliente(e.target.value)}
+              placeholder="Buscar por cliente, chasis, dominio, correo o vendedor"
+              className="!w-72"
+            />
+            <Select
+              value={filtroEstado}
+              onChange={(e) => setFiltroEstado(e.target.value as "TODOS" | "PENDIENTE" | "RESPONDIO")}
+              className="!w-44"
+            >
+              <option value="TODOS">Todos</option>
+              <option value="PENDIENTE">Solo pendientes</option>
+              <option value="RESPONDIO">Solo respondidos</option>
+            </Select>
+          </div>
+        </div>
+
+        {clientes.length === 0 ? (
+          <p className="px-5 py-6 text-sm text-ink-muted">
+            {busquedaCliente || filtroEstado !== "TODOS"
+              ? "Ningún cliente coincide con lo que buscaste."
+              : "Todavía no hay clientes cargados. Subí el Excel de fábrica o agregá uno a mano."}
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                  <th className="px-4 py-3">Cliente</th>
+                  <th className="px-4 py-3">Correo</th>
+                  <th className="whitespace-nowrap px-4 py-3">Chasis / Dominio</th>
+                  <th className="whitespace-nowrap px-4 py-3">Vendedor</th>
+                  <th className="whitespace-nowrap px-4 py-3">Sucursal</th>
+                  <th className="whitespace-nowrap px-4 py-3">Entrega</th>
+                  <th className="whitespace-nowrap px-4 py-3">Estado</th>
+                  <th className="whitespace-nowrap px-4 py-3">Origen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clientes.map((c) => (
+                  <tr key={c.id} className="border-b border-gray-100 transition-colors hover:bg-gray-50">
+                    <td className="px-4 py-3 text-ink">{c.nombreCliente}</td>
+                    <td className="px-4 py-3 text-ink-muted">{c.email || "—"}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-ink-muted">
+                      <span className="font-mono text-xs">{c.chasis}</span>
+                      {c.dominio && <span className="ml-2 text-xs">{c.dominio}</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-ink-muted">{c.vendedorNombre}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-ink-muted">{c.sucursal}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-ink-muted">
+                      {c.fechaEntrega ? fechaCorta(c.fechaEntrega) : "—"}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <Badge tono={c.estado === "PENDIENTE" ? "amarillo" : "verde"}>
+                        {c.estado === "PENDIENTE" ? "Pendiente" : "Respondió"}
+                      </Badge>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      {c.esManual ? (
+                        <Badge tono="gris">A mano</Badge>
+                      ) : (
+                        <span className="text-xs text-ink-muted">Excel de fábrica</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       {/* Alta manual de un pendiente */}
       <Card padding="p-0">

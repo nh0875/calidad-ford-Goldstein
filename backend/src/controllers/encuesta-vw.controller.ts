@@ -161,6 +161,9 @@ export async function listarEncuestaVW(req: Request, res: Response) {
           respondioEn: true,
           detectadaEn: true,
           observacionesFabrica: true,
+          // Para distinguir en pantalla los que cargó Calidad a mano de los que
+          // vinieron en el Excel de fábrica.
+          esManual: true,
         },
       },
     },
@@ -170,6 +173,11 @@ export async function listarEncuestaVW(req: Request, res: Response) {
     (n, v) => n + v.pendientes.filter((p) => p.estado === EstadoEncuestaFabrica.PENDIENTE).length,
     0
   );
+
+  // Totales de TODO lo cargado, no solo de lo pendiente: hasta ahora no había
+  // forma de saber cuántos clientes tiene el sistema ni de ver los que ya
+  // contestaron, así que el seguimiento se cortaba al responder.
+  const todos = vendedores.flatMap((v) => v.pendientes);
 
   res.json({
     data: vendedores,
@@ -181,6 +189,12 @@ export async function listarEncuestaVW(req: Request, res: Response) {
       sinCorreo: vendedores.filter(
         (v) => !v.email && v.pendientes.some((p) => p.estado === EstadoEncuestaFabrica.PENDIENTE)
       ).length,
+      // Estos tres solo tienen sentido cuando se piden los respondidos: si no, el
+      // total es igual a los pendientes.
+      totalClientes: todos.length,
+      totalRespondidos: todos.filter((p) => p.estado === EstadoEncuestaFabrica.RESPONDIO).length,
+      totalManuales: todos.filter((p) => p.esManual).length,
+      totalVendedores: vendedores.length,
     },
   });
 }
