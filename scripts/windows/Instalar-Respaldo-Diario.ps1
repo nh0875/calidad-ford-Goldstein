@@ -16,7 +16,12 @@ param(
   [string]$Hora = "13:30",       # hora diaria del respaldo (PC prendida y con sesión iniciada)
   [int]$Retencion = 14,          # copias diarias a conservar
   [string]$DestinoRed,           # carpeta de red UNC adicional (opcional)
-  [string]$Proyecto              # carpeta del sistema (si no, se detecta sola)
+  [string]$Proyecto,             # carpeta del sistema (si no, se detecta sola)
+  # A nombre de que cuenta queda la tarea. Vacio = la que corre este script.
+  # Se usa cuando instala un administrador pero la PC la usa otra persona, que
+  # es lo normal en la empresa (por politica del dominio el usuario diario no
+  # es administrador).
+  [string]$Usuario
 )
 $ErrorActionPreference = "Stop"
 
@@ -43,35 +48,62 @@ $cfg | ConvertTo-Json | Set-Content -Path $cfgPath -Encoding UTF8
 Write-Host "Config guardada en: $cfgPath"
 
 # 2) Registrar la tarea programada diaria.
-#    LogonType Interactive = corre solo cuando la cuenta está con sesión iniciada,
-#    así OneDrive está corriendo y sube el archivo a la nube. RunLevel Highest =
-#    con permisos para hablar con Docker.
-$taskName  = "Respaldo Calidad M365"
-$accion    = New-ScheduledTaskAction -Execute "powershell.exe" `
-             -Argument ('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $respaldoPs1)
-$trigger   = New-ScheduledTaskTrigger -Daily -At $Hora
-$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
-$settings  = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+#
+#    NO se usan los cmdlets New-ScheduledTask* / Register-ScheduledTask: hablan
+#    con el Programador a traves de WMI, y en la PC de Volkswagen esa capa esta
+#    rota ("No se puede conectar al servidor CIM") aunque el servicio Programador
+#    de tareas ande perfecto. Las otras dos tareas del sistema ya se habian
+#    migrado a schtasks con parametros sueltos (ver el helper de instalar-todo.ps1
+#    y su comentario, que documenta todo lo que se probo en esa maquina); esta era
+#    la ultima que quedaba con WMI, y por eso ahi el respaldo NO SE PODIA INSTALAR.
+#
+#    Y NO se pide nivel elevado. Antes iba con RunLevel Highest, justificado en un
+#    comentario con "permisos para hablar con Docker" — que es exactamente al
+#    reves de como funciona: Docker Desktop expone el pipe de su motor a la sesion
+#    NORMAL del usuario y un proceso ELEVADO no llega (esta escrito en
+#    configurar-pc.ps1, e instalar-todo.ps1 directamente aborta si detecta que lo
+#    corrieron elevado). Con Highest, la tarea fallaba TODOS los dias con "No
+#    encontre el contenedor de Postgres corriendo" mientras que a mano, con
+#    Respaldo-AHORA.bat, andaba perfecto: el clasico "pero si lo probe y funciona".
+#    schtasks crea en nivel normal cuando no se le pasa /RL, asi que alcanza con
+#    no pedirlo.
+#
+#    /RU + /IT solo si se instala A NOMBRE DE OTRA CUENTA. /IT (interactive only)
+#    evita tener que saber su contrasena y hace que la tarea corra unicamente con
+#    esa sesion iniciada, que es justo lo que se necesita: sin sesion no hay
+#    OneDrive sincronizando ni acceso a Docker.
+$taskName = "Respaldo Calidad M365"
+$tr = "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command & '$respaldoPs1'"
+$propio = (-not $Usuario) -or ($Usuario -eq "$env:USERDOMAIN\$env:USERNAME")
 
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+# schtasks escribe por la salida de ERRORES cosas que no siempre son errores, y
+# con $ErrorActionPreference = "Stop" PowerShell 5.1 las convierte en excepcion y
+# mata el script en el medio. Se baja a Continue solo para estas llamadas.
+$eapPrevio = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$ok = $false; $detalle = ""; $aviso = ""
 try {
-  Register-ScheduledTask -TaskName $taskName -Action $accion -Trigger $trigger -Principal $principal `
-    -Settings $settings -Description "Copia diaria de la base del Sistema de Calidad a SharePoint (M365)." | Out-Null
-  Write-Host "Tarea diaria registrada." -ForegroundColor Green
-} catch {
-  # En algunas PCs de empresa no se pueden crear tareas programadas de ninguna
-  # forma (WMI roto, politicas del dominio, el usuario no es administrador).
-  # No es fatal: la configuracion YA quedo guardada arriba, y el bucle del
-  # vigilante corre el respaldo todos los dias a las 12:00 si encuentra ese
-  # archivo. O sea que con el bucle instalado esto ya funciona.
-  Write-Host ""
-  Write-Host "No se pudo registrar la tarea diaria: $($_.Exception.Message)" -ForegroundColor Yellow
-  Write-Host "No pasa nada: la configuracion quedo guardada y el respaldo lo va a" -ForegroundColor Yellow
-  Write-Host "hacer el vigilante todos los dias a las 12:00." -ForegroundColor Yellow
-  Write-Host "Verifica que el bucle este instalado:  Instalar-Arranque-Sin-Tareas.bat" -ForegroundColor Gray
-  Write-Host ""
+  $param = @("/create", "/TN", $taskName, "/TR", $tr, "/SC", "DAILY", "/ST", $Hora)
+  if (-not $propio) { $param += @("/RU", $Usuario, "/IT") }
+  $param += "/F"
+  $salida = & schtasks @param 2>&1
+  $ok = ($LASTEXITCODE -eq 0)
+
+  # Reintento sin /RU: sirve cuando el que instala ES el usuario de todos los dias.
+  if (-not $ok -and -not $propio) {
+    $salida2 = & schtasks @("/create", "/TN", $taskName, "/TR", $tr, "/SC", "DAILY", "/ST", $Hora, "/F") 2>&1
+    $ok = ($LASTEXITCODE -eq 0)
+    if ($ok) { $aviso = "OJO: la tarea quedo a nombre de $env:USERNAME, no de $Usuario." }
+    else { $salida = (($salida | Out-String) + ($salida2 | Out-String)) }
+  }
+  if (-not $ok) { $detalle = ($salida | Out-String).Trim() }
+} finally {
+  $ErrorActionPreference = $eapPrevio
 }
-Write-Host "Tarea '$taskName' registrada: todos los días a las $Hora."
+
+if (-not $ok) { throw "No se pudo registrar la tarea '$taskName'.`n$detalle" }
+if ($aviso) { Write-Host $aviso -ForegroundColor Yellow }
+Write-Host "Tarea '$taskName' registrada: todos los dias a las $Hora, en nivel NORMAL (no elevada)."
 
 # 3) Prueba inmediata: hace un respaldo ahora para confirmar que todo el circuito anda.
 Write-Host "`nProbando un respaldo ahora mismo..."

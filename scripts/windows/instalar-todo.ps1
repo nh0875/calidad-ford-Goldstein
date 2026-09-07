@@ -447,6 +447,28 @@ Write-Host "  2) Webhook en Meta (los datos de ESTA PC):" -ForegroundColor White
 Write-Host "       URL:          https://$dominioPC/api/webhooks/whatsapp" -ForegroundColor Gray
 Write-Host "       Verify token: $tokenPC" -ForegroundColor Gray
 Write-Host ""
+
+# 3) EL RESPALDO A LA NUBE.
+#
+# Este instalador NO lo registra, y no puede: necesita la ruta de la carpeta que
+# OneDrive sincroniza con SharePoint, y esa carpeta hay que sincronizarla a mano
+# antes (README, paso 7). Pero hasta ahora tampoco lo NOMBRABA en esta lista, y
+# asi fue como se salteo en la PC de Ford: el unico recordatorio vivia en el
+# README. Resultado: la tarea nunca se instalo, el ultimo respaldo quedo del
+# 14-ago-2026, y ninguna pantalla avisaba nada — el ultimo-respaldo.json seguia
+# diciendo "ok" porque era la foto de aquel dia.
+$hayRespaldo = $false
+schtasks /query /TN "Respaldo Calidad M365" 2>&1 | Out-Null
+$hayRespaldo = ($LASTEXITCODE -eq 0)
+if ($hayRespaldo) {
+  Write-Host "  3) Respaldo diario a la nube: YA está instalado en esta PC." -ForegroundColor White
+} else {
+  Write-Host "  3) RESPALDO DIARIO A LA NUBE: TODAVÍA NO ESTÁ." -ForegroundColor Yellow
+  Write-Host "     Sin esto, el día que falle el disco se pierde TODO." -ForegroundColor Yellow
+  Write-Host "     Sincronizá la carpeta de OneDrive/SharePoint (README, paso 7) y corré:" -ForegroundColor Yellow
+  Write-Host "       powershell -ExecutionPolicy Bypass -File `"$PSScriptRoot\Instalar-Respaldo-Diario.ps1`" -CarpetaNube `"<la ruta que quedó>`"" -ForegroundColor Gray
+}
+Write-Host ""
 Write-Host "  Para probar que anda solo: reiniciá, iniciá sesión y esperá 2-3 min." -ForegroundColor White
 Write-Host "=========================================================" -ForegroundColor Cyan
 Read-Host "`nEnter para cerrar"

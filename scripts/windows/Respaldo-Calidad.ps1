@@ -130,7 +130,16 @@ try {
   foreach ($d in $destinos) {
     $etiqueta = $d[0]; $ruta = $d[1]
     try {
-      if (-not (Test-Path $ruta)) { New-Item -ItemType Directory -Force $ruta | Out-Null }
+      # LA CARPETA DE DESTINO TIENE QUE EXISTIR. Antes, si no existia se la
+      # creaba con -Force, y eso convirtio una falla en un exito falso: cuando
+      # la biblioteca de OneDrive se desvincula o la renombran, el script
+      # fabricaba una carpeta LOCAL comun con ese nombre, copiaba adentro, y
+      # logueaba "Copia offsite OK" todas las noches. Meses de respaldos que
+      # nunca salieron de la PC, con el log en verde. Ahora es un error de ese
+      # destino: se avisa y NO cuenta como hecho.
+      if (-not (Test-Path $ruta)) {
+        throw "la carpeta de destino no existe. Si es la de OneDrive, fijate que la biblioteca siga sincronizada y volve a instalar el respaldo con la ruta nueva."
+      }
       foreach ($a in $archivosHechos) {
         Copy-Item $a.ruta (Join-Path $ruta $a.nombre) -Force
       }
@@ -171,13 +180,25 @@ try {
     Sort-Object LastWriteTime -Descending | Select-Object -Skip $Retencion |
     Remove-Item -Force -ErrorAction SilentlyContinue
 
-  # 6) Estado OK (lo puede leer un monitoreo o una alerta por mail).
+  # 6) Estado (lo puede leer un monitoreo o una alerta por mail).
+  #
+  # "ok" ES SI EL RESPALDO SALIO DE ESTA PC, no si el pg_dump anduvo. Antes era
+  # $true fijo: con la copia offsite fallada, o directamente sin ningun destino
+  # configurado, este archivo decia ok=true igual. Y el README manda a verificar
+  # justo por ese campo. Un dump que queda en el mismo disco que la base no es
+  # un respaldo: si ese disco se rompe, se rompen los dos.
+  $salioDeLaPc = ($destinosOk.Count -gt 0)
+  $motivo = $null
+  if (-not $salioDeLaPc) {
+    if ($destinos.Count -eq 0) { $motivo = "No hay ningun destino offsite configurado: la copia quedo en esta misma PC. Configuralo con Instalar-Respaldo-Diario.ps1." }
+    else { $motivo = "Fallaron TODOS los destinos offsite: la copia quedo en esta misma PC. Ver respaldo.log." }
+  }
   $estado = [ordered]@{
-    fecha = (Get-Date -Format "s"); ok = $true; archivo = $nombre; bytes = $bytes
+    fecha = (Get-Date -Format "s"); ok = $salioDeLaPc; archivo = $nombre; bytes = $bytes
     # Qué bases se respaldaron y cuánto pesó cada una. Sirve para darse cuenta de
     # que falta una: si un día aparece solo calidad_ford, algo pasó con la otra.
     bases = @($archivosHechos | ForEach-Object { [PSCustomObject]@{ base = $_.base; archivo = $_.nombre; bytes = $_.bytes } })
-    destinosOffsite = $destinosOk; contenedor = $Contenedor; error = $null
+    destinosOffsite = $destinosOk; contenedor = $Contenedor; error = $motivo
   }
   $estado | ConvertTo-Json | Set-Content -Path $statusFile -Encoding UTF8
   if ($destinosOk.Count -gt 0) {
