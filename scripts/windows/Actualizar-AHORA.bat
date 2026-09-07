@@ -22,6 +22,8 @@ REM ------------------------------------------------------------------
 set "PS1=%~dp0actualizar-sistema.ps1"
 if not exist "%PS1%" set "PS1=%~dp0scripts\windows\actualizar-sistema.ps1"
 if not exist "%PS1%" set "PS1=C:\Calidad\Vanina\scripts\windows\actualizar-sistema.ps1"
+REM La PC de Volkswagen tiene el sistema en otra carpeta.
+if not exist "%PS1%" set "PS1=C:\Calidad\Volkswagen\scripts\windows\actualizar-sistema.ps1"
 
 if not exist "%PS1%" (
   echo   No encuentro el sistema desde aca.
