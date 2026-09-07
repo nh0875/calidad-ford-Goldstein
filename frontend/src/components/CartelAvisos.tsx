@@ -12,7 +12,7 @@ import { apiGet, apiPostJson } from "../lib/api";
 
 interface Aviso {
   id: string;
-  tipo: "RQR_ABIERTO" | "ESCALADO" | "AMARILLO_SIN_RQR" | "REVISION_MANUAL";
+  tipo: "RQR_ABIERTO" | "ESCALADO" | "AMARILLO_SIN_RQR" | "REVISION_MANUAL" | "POSIBLE_DUPLICADO";
   titulo: string;
   detalle: string;
   creadoEn: string;
@@ -33,6 +33,7 @@ const ETIQUETA_TIPO: Record<Aviso["tipo"], string> = {
   ESCALADO: "El cliente empeoró",
   AMARILLO_SIN_RQR: "Amarillo para mirar",
   REVISION_MANUAL: "Para revisar a mano",
+  POSIBLE_DUPLICADO: "Posible duplicado",
 };
 
 // Cada cuánto se vuelve a preguntar. 60 s alcanza: un RQR no es un chat.
@@ -163,11 +164,18 @@ export default function CartelAvisos() {
                   )}
                   {!a.rqrId && a.casoId && a.tipo !== "REVISION_MANUAL" && (
                     <Link
-                      to="/casos"
+                      // En un posible duplicado lo que hace falta es COMPARAR las dos
+                      // cargas, así que se busca por el número de orden en vez de
+                      // dejar a la persona buscándolo a mano en el listado entero.
+                      to={
+                        a.tipo === "POSIBLE_DUPLICADO" && a.caso?.numeroOrden
+                          ? `/casos?busqueda=${encodeURIComponent(a.caso.numeroOrden)}`
+                          : "/casos"
+                      }
                       onClick={() => setAbierto(false)}
                       className="rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-ink transition-colors hover:bg-gray-50"
                     >
-                      Ver casos
+                      {a.tipo === "POSIBLE_DUPLICADO" ? "Ver el caso" : "Ver casos"}
                     </Link>
                   )}
                   <button

@@ -1,6 +1,16 @@
-import { AreaTrabajo, EstadoContacto, OrigenAgendamiento, Prisma, Semaforo, TipoAlias, TipoUpload } from "@prisma/client";
+import {
+  AreaTrabajo,
+  EstadoContacto,
+  OrigenAgendamiento,
+  Prisma,
+  Semaforo,
+  TipoAlias,
+  TipoAviso,
+  TipoUpload,
+} from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { olvidarSucursalesConocidas } from "./area.service";
+import { crearAviso } from "./aviso.service";
 import {
   CampoCaso,
   HojaParseada,
@@ -300,6 +310,56 @@ async function importarHoja(
   });
   const ordenesGlobales = new Set(ordenesActivas.map((c) => c.numeroOrden));
 
+  // ---- Detección de posibles duplicados (mismo auto, otra orden) ----
+  //
+  // El número de orden es único, así que dos cargas del MISMO auto con órdenes
+  // distintas entran las dos como casos legítimos y el cliente termina
+  // recibiendo dos encuestas por lo mismo. A veces son dos visitas de verdad y a
+  // veces es un error de carga: no se puede decidir solo, así que se avisa.
+  //
+  // Se indexa por chasis y por patente, que son los identificadores duros del
+  // vehículo. Es una consulta más al importar, igual que la de órdenes.
+  const conIdentificador = await prisma.caso.findMany({
+    where: {
+      eliminadoEn: null,
+      OR: [{ chasisVIN: { not: null } }, { patente: { not: "" } }],
+    },
+    select: { id: true, numeroOrden: true, chasisVIN: true, patente: true, nombrePropietario: true },
+  });
+
+  interface CasoConocido {
+    numeroOrden: string;
+    nombrePropietario: string;
+  }
+  const porChasis = new Map<string, CasoConocido>();
+  const porPatente = new Map<string, CasoConocido>();
+  for (const c of conIdentificador) {
+    const datos = { numeroOrden: c.numeroOrden, nombrePropietario: c.nombrePropietario };
+    const vin = claveNormalizada(c.chasisVIN ?? "");
+    if (vin) porChasis.set(vin, datos);
+    const pat = claveNormalizada(c.patente);
+    if (pat) porPatente.set(pat, datos);
+  }
+
+  /**
+   * ¿Este auto ya está cargado con OTRO número de orden? Devuelve con qué choca,
+   * o null. Se exige que las DOS tengan orden real: "S/N" contra una orden no es
+   * el caso que se pidió detectar, y además ya lo cubre el dedupe patente+fecha.
+   */
+  const chocaConOtraOrden = (
+    vin: string,
+    patente: string,
+    ordenNueva: string
+  ): { con: CasoConocido; por: string } | null => {
+    if (!ordenNueva) return null;
+    const vinKey = claveNormalizada(vin);
+    const patKey = claveNormalizada(patente);
+    const previo = (vinKey && porChasis.get(vinKey)) || (patKey && porPatente.get(patKey)) || null;
+    if (!previo || !previo.numeroOrden || previo.numeroOrden === "S/N") return null;
+    if (previo.numeroOrden === ordenNueva) return null;
+    return { con: previo, por: vinKey && porChasis.has(vinKey) ? "chasis" : "patente" };
+  };
+
   // Claves para las filas SIN orden (Excel viejo sin columna ORDEN): patente+fecha
   // (un mismo vehículo puede tener dos órdenes distintas el mismo día, por eso
   // solo aplica sin orden); nombre+fecha es el último recurso. Se acota a la
@@ -351,6 +411,8 @@ async function importarHoja(
     data: Prisma.CasoCreateArgs["data"];
     tieneOrden: boolean;
     numeroOrden: string;
+    /** Si este auto ya estaba cargado con otra orden, con qué choca. */
+    sospecha: { con: { numeroOrden: string; nombrePropietario: string }; por: string } | null;
   }> = [];
 
   const guardarLote = async () => {
@@ -359,8 +421,28 @@ async function importarHoja(
     await Promise.all(
       lote.map(async (p) => {
         try {
-          await prisma.caso.create({ data: p.data });
+          const creado = await prisma.caso.create({ data: p.data });
           base.insertados++;
+
+          // Aviso de posible duplicado. Va DESPUÉS de crear porque necesita el id
+          // del caso nuevo para que el cartel sea clickeable. crearAviso nunca
+          // lanza: si falla, no puede voltear la importación.
+          if (p.sospecha) {
+            await crearAviso({
+              tipo: TipoAviso.POSIBLE_DUPLICADO,
+              area: params.area ?? AreaTrabajo.POSVENTA,
+              sucursal: sucursalNorm.nombre || params.sucursal,
+              casoId: creado.id,
+              titulo: `Posible duplicado: ${p.data.nombrePropietario || "cliente sin nombre"}`,
+              detalle:
+                `Entró la orden ${p.numeroOrden || "S/N"} para un vehículo que ya estaba cargado ` +
+                `con la orden ${p.sospecha.con.numeroOrden} (coincide el ${p.sospecha.por}, ` +
+                `cliente "${p.sospecha.con.nombrePropietario}"). ` +
+                `Pueden ser dos visitas distintas o un error de carga: si es lo segundo, conviene ` +
+                `borrar uno de los dos ANTES de que salga el contacto, para no escribirle dos veces ` +
+                `al cliente por lo mismo.`,
+            });
+          }
         } catch (err) {
           // Otra carga concurrente insertó esta orden primero: el índice único la
           // rechaza (P2002). Se trata como duplicado, NO se aborta la importación.
@@ -496,9 +578,25 @@ async function importarHoja(
 
       if (estaSuprimido(telefonosNorm, ctx.suprimidos)) base.suprimidos++;
 
+      // ¿Este auto ya está cargado con OTRA orden? Se resuelve acá, en el pase
+      // secuencial, y el aviso se emite después de crear el caso.
+      const chasisTexto = textoDe(fila, "chasisVIN");
+      const sospecha = chocaConOtraOrden(chasisTexto, patente, numeroOrden);
+
+      // El auto se registra YA, no después de guardarlo: así también se detectan
+      // dos filas DEL MISMO ARCHIVO que choquen entre sí.
+      if (numeroOrden) {
+        const datosNuevo = { numeroOrden, nombrePropietario: nombre };
+        const vinNuevo = claveNormalizada(chasisTexto);
+        if (vinNuevo) porChasis.set(vinNuevo, datosNuevo);
+        const patNuevo = claveNormalizada(patente);
+        if (patNuevo) porPatente.set(patNuevo, datosNuevo);
+      }
+
       pendientes.push({
         tieneOrden,
         numeroOrden,
+        sospecha,
         data: {
           uploadId: upload.id,
           numeroOrden: numeroOrden || "S/N",

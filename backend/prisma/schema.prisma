@@ -643,6 +643,9 @@ enum TipoAviso {
   ESCALADO // el cliente ya había sido clasificado y una respuesta posterior empeoró el semáforo
   AMARILLO_SIN_RQR // semáforo amarillo que no llegó a abrir RQR, pero conviene mirar
   REVISION_MANUAL // el cliente respondió algo que la IA no pudo clasificar: mirarlo antes de las 24 h
+  // Dos casos del MISMO auto/cliente con números de orden distintos: puede ser
+  // un error de carga o dos visitas reales. Lo decide una persona.
+  POSIBLE_DUPLICADO
 }
 
 model Aviso {
@@ -650,6 +653,9 @@ model Aviso {
   tipo    TipoAviso
   // Área del caso: un usuario restringido solo ve los avisos de la suya.
   area    AreaTrabajo @default(POSVENTA)
+  // Provincia del caso: un usuario acotado a una provincia solo ve los suyos.
+  // null = sin provincia conocida; ese aviso lo ve todo el mundo.
+  sucursal String?
   casoId  String?
   caso    Caso?       @relation(fields: [casoId], references: [id], onDelete: Cascade)
   rqrId   String?
@@ -664,6 +670,7 @@ model Aviso {
   vistoPor   Usuario?  @relation("AvisoVistoPor", fields: [vistoPorId], references: [id])
 
   @@index([area, vistoEn])
+  @@index([sucursal])
   @@index([casoId])
   @@index([rqrId])
 }

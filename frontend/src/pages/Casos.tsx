@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { FileDown, MessageSquarePlus, Pencil, RotateCcw, Search, Send, SearchX, Trash2, UserPlus } from "lucide-react";
 import { apiDelete, apiDescargarArchivo, apiGet, apiPostJson } from "../lib/api";
 import { getModoDemo, getUsuario, veTodasLasAreas } from "../lib/auth";
@@ -99,7 +100,16 @@ function fechaCorta(iso: string): string {
 // ---------- Componente ----------
 
 export default function Casos() {
-  const [filtros, setFiltros] = useState<Filtros>(FILTROS_INICIALES);
+  // El cartel de avisos linkea acá con ?busqueda=<nro de orden> (p. ej. desde un
+  // "posible duplicado", donde lo que hace falta es comparar las dos cargas).
+  // Sin esto la pantalla ignoraba el parámetro y el botón no hacía nada.
+  const [searchParams] = useSearchParams();
+  const busquedaInicial = (searchParams.get("busqueda") ?? "").trim();
+
+  const [filtros, setFiltros] = useState<Filtros>({
+    ...FILTROS_INICIALES,
+    busqueda: busquedaInicial,
+  });
   const [page, setPage] = useState(1);
   const [respuesta, setRespuesta] = useState<CasosResponse | null>(null);
   const [cargando, setCargando] = useState(false);
@@ -135,7 +145,7 @@ export default function Casos() {
   // Buscador por N° de orden con debounce: el input responde al instante y el
   // filtro que dispara la carga se actualiza 350ms después de dejar de tipear
   // (así no se llama a la API en cada tecla).
-  const [busquedaInput, setBusquedaInput] = useState("");
+  const [busquedaInput, setBusquedaInput] = useState(busquedaInicial);
   useEffect(() => {
     const v = busquedaInput.trim();
     if (v === filtros.busqueda) return;

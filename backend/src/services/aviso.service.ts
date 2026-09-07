@@ -1,6 +1,7 @@
 import { AreaTrabajo, EstadoRQR, Prisma, TipoAviso } from "@prisma/client";
 import { prisma } from "../config/prisma";
-import { areaPermitida, UsuarioArea } from "./area.service";
+import { claveNormalizada } from "./normalizacion.service";
+import { areaPermitida, provinciaPermitida, UsuarioArea } from "./area.service";
 
 // ---------- Avisos en pantalla ----------
 //
@@ -15,6 +16,8 @@ import { areaPermitida, UsuarioArea } from "./area.service";
 interface DatosAviso {
   tipo: TipoAviso;
   area: AreaTrabajo;
+  /** Provincia del caso. null = lo ve todo el mundo (no hay contra qué comparar). */
+  sucursal?: string | null;
   casoId?: string | null;
   rqrId?: string | null;
   titulo: string;
@@ -49,6 +52,7 @@ export async function crearAviso(datos: DatosAviso): Promise<void> {
       data: {
         tipo: datos.tipo,
         area: datos.area,
+        sucursal: datos.sucursal ?? null,
         casoId: datos.casoId ?? null,
         rqrId: datos.rqrId ?? null,
         titulo: datos.titulo.slice(0, 200),
@@ -83,13 +87,32 @@ export async function apagarAvisosCaso(casoId: string, tipo: TipoAviso): Promise
  */
 export function whereAvisosVigentes(usuario: UsuarioArea): Prisma.AvisoWhereInput {
   const restringido = areaPermitida(usuario);
+  const provincia = provinciaPermitida(usuario);
+  // Provincia: un aviso SIN provincia (los viejos, y los que no cuelgan de un
+  // caso) lo sigue viendo todo el mundo; no hay contra qué compararlo y taparlo
+  // dejaría avisos que nadie vería nunca. Se compara insensible a mayúsculas
+  // porque la sucursal se guarda tal como vino en el Excel.
+  //
+  // OJO: esto va DENTRO del AND y no suelto en el objeto. Un WhereInput no puede
+  // tener dos claves `OR`: la segunda pisa a la primera en silencio, y el filtro
+  // de provincia quedaría anulado sin que nada falle. Cada condición "una cosa
+  // u otra" tiene que ser su propia entrada del AND.
+  const condiciones: Prisma.AvisoWhereInput[] = [
+    // Si el RQR ya está cerrado, el aviso no tiene sentido: se deja de mostrar
+    // sin necesidad de que nadie lo marque.
+    { OR: [{ rqrId: null }, { rqr: { estado: { not: EstadoRQR.CERRADO }, eliminadoEn: null } }] },
+    // Un caso borrado se lleva sus avisos.
+    { OR: [{ casoId: null }, { caso: { eliminadoEn: null } }] },
+  ];
+  if (provincia) {
+    condiciones.push({
+      OR: [{ sucursal: null }, { sucursal: { equals: provincia, mode: "insensitive" } }],
+    });
+  }
+
   return {
     vistoEn: null,
     ...(restringido ? { area: restringido } : {}),
-    // Si el RQR ya está cerrado, el aviso no tiene sentido: se deja de mostrar
-    // sin necesidad de que nadie lo marque.
-    OR: [{ rqrId: null }, { rqr: { estado: { not: EstadoRQR.CERRADO }, eliminadoEn: null } }],
-    // Un caso borrado se lleva sus avisos.
-    AND: [{ OR: [{ casoId: null }, { caso: { eliminadoEn: null } }] }],
+    AND: condiciones,
   };
 }
