@@ -166,6 +166,22 @@ export async function guardarMapeoVendedores(
 const MAIL_VALIDO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
+ * "M.G. MZA." -> "MENDOZA". La columna Suc. Cpa. dice dónde se hizo la venta, y
+ * ESA es la sucursal del cliente: un vendedor de Mendoza puede vender en San Juan
+ * y el cliente pertenece a San Juan, no a la sucursal del vendedor.
+ *
+ * Si aparece una sucursal que no se reconoce se devuelve el texto tal cual, sin
+ * inventar: es preferible una sucursal con un nombre raro a una equivocada.
+ */
+export function normalizarSucursalVenta(texto: string | null | undefined): string | null {
+  const t = claveNormalizada(texto ?? "");
+  if (!t) return null;
+  if (t.includes("mza") || t.includes("mendoza")) return "MENDOZA";
+  if (t.includes("s.j") || t.includes("sj") || t.includes("san juan")) return "SAN JUAN";
+  return (texto ?? "").trim() || null;
+}
+
+/**
  * Traduce el libro interno a la MISMA estructura que produce el lector de
  * fábrica, para que el guardado sea uno solo.
  */
@@ -250,6 +266,9 @@ export function convertirInternoAArchivo(
         area: null,
         fechaEntrega: parsearFechaVW(c.fechaEntrega),
         observacionesFabrica: [],
+        // La venta manda sobre el vendedor: si un mendocino vendió en San Juan,
+        // el cliente es de San Juan.
+        sucursalVenta: normalizarSucursalVenta(c.sucursalTexto),
       });
     }
   }

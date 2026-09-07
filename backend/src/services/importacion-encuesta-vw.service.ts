@@ -34,6 +34,11 @@ export interface ResumenImportacionVW {
   marcadosRespondio: number;
   filasRechazadas: Array<{ hoja: string; numeroFilaExcel: number; motivo: string }>;
   filasObservadasPorFabrica: number;
+  /**
+   * Vendedores que aparecieron con el prefijo de la OTRA sucursal y se
+   * reconocieron como la misma persona (se les heredó nombre y correo).
+   */
+  vendedoresDeOtraSucursal: Array<{ codigo: string; nombre: string | null; vieneDe: string }>;
   avisos: string[];
 }
 
@@ -132,27 +137,64 @@ async function guardar(
   for (const f of archivo.filas) {
     const previo = porCodigo.get(f.codigoVendedor);
     porCodigo.set(f.codigoVendedor, {
-      sucursal: archivo.hojas.find((h) => h.nombre === f.hoja)?.nombreSucursal ?? f.codigoSucursal,
+      // Sucursal del CLIENTE = donde se hizo la venta, no de dónde es el vendedor.
+      // En el archivo de fábrica eso lo dice la hoja; en el interno, la columna
+      // Suc. Cpa. El código del vendedor queda como último recurso.
+      sucursal:
+        archivo.hojas.find((h) => h.nombre === f.hoja)?.nombreSucursal ??
+        f.sucursalVenta ??
+        f.codigoSucursal,
       nombre: f.nombreVendedor ?? previo?.nombre ?? null,
     });
   }
 
+  // El 002 de cada sucursal es el MOSTRADOR (vende todos los planes de ahorro),
+  // no una persona: el 1035002 y el 1036002 son dos mostradores distintos y no
+  // hay que confundirlos. Cualquier otro número sí identifica a la persona.
+  const NUMEROS_DE_MOSTRADOR = new Set([2]);
+
   let vendedoresNuevos = 0;
   let vendedoresActualizados = 0;
+  const vendedoresDeOtraSucursal: ResumenImportacionVW["vendedoresDeOtraSucursal"] = [];
   const idPorCodigo = new Map<string, string>();
 
   for (const [codigo, datos] of porCodigo) {
     const existente = await prisma.vendedorVW.findUnique({ where: { codigo } });
     if (!existente) {
+      // Un vendedor puede vender en la OTRA sucursal: entonces viene con el
+      // prefijo de esa sucursal y el mismo número (el 078 de Mendoza vendiendo en
+      // San Juan llega como 1036078). Es la misma persona.
+      //
+      // Sin esto el sistema daba de alta un vendedor nuevo, vacío: sin nombre y
+      // SIN CORREO. Consecuencia concreta: a los clientes que esa persona vendió
+      // en la otra sucursal no les avisaba nadie, porque el aviso sale por mail y
+      // ese código no tenía ninguno. Ahora hereda nombre y correo del que ya está.
+      const numero = Number(codigo.slice(4));
+      const codigoSucursal = codigo.slice(0, 4);
+      const gemelo = NUMEROS_DE_MOSTRADOR.has(numero)
+        ? null
+        : await prisma.vendedorVW.findFirst({
+            where: { numero, codigoSucursal: { not: codigoSucursal } },
+            orderBy: { creadoEn: "asc" },
+          });
+
       const creado = await prisma.vendedorVW.create({
         data: {
           codigo,
-          codigoSucursal: codigo.slice(0, 4),
-          numero: Number(codigo.slice(4)),
+          codigoSucursal,
+          numero,
           sucursal: datos.sucursal,
-          nombre: datos.nombre,
+          nombre: datos.nombre ?? gemelo?.nombre ?? null,
+          email: gemelo?.email ?? null,
         },
       });
+      if (gemelo) {
+        vendedoresDeOtraSucursal.push({
+          codigo,
+          nombre: creado.nombre,
+          vieneDe: gemelo.codigo,
+        });
+      }
       idPorCodigo.set(codigo, creado.id);
       vendedoresNuevos++;
       continue;
@@ -267,6 +309,7 @@ async function guardar(
     })),
     pendientesNuevos,
     pendientesQueSiguen,
+    vendedoresDeOtraSucursal,
     marcadosRespondio,
     filasRechazadas: archivo.rechazadas,
     filasObservadasPorFabrica: archivo.filas.filter((f) => f.observacionesFabrica.length > 0).length,

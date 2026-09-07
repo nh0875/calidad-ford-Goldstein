@@ -23,8 +23,13 @@ router.get("/", asyncHandler(listarEncuestaVW));
 // Carga del Excel de fábrica. Es en dos pasos a propósito: la confirmación
 // cierra pendientes (los que ya no vienen se dan por respondidos), así que
 // primero se muestra el impacto y recién después se toca la base.
-router.post("/preview", requireAdmin, recibirXlsx("archivo"), asyncHandler(previewEncuestaVW));
-router.post("/confirm", requireAdmin, asyncHandler(confirmEncuestaVW));
+// CARGAR datos ya no es exclusivo de administradores: Calidad es quien trabaja
+// esta pantalla todos los dias y tener que buscar a un admin para subir un Excel
+// no tenia sentido. El rol FIDELIZACION no llega hasta aca: lo corta antes
+// acotarPorRol, que es una lista blanca de sus dos pantallas.
+// BORRAR (vendedores y clientes) SI sigue siendo solo de administradores.
+router.post("/preview", recibirXlsx("archivo"), asyncHandler(previewEncuestaVW));
+router.post("/confirm", asyncHandler(confirmEncuestaVW));
 
 // ¿Hay casilla de correo configurada? La pantalla lo consulta para avisar ANTES
 // de que aprieten "Avisar a los vendedores". Vive acá y no en /refuerzos porque
@@ -37,14 +42,14 @@ router.get("/estado-mail", asyncHandler(estadoMailRefuerzo));
 router.post("/notificar", requireAdmin, asyncHandler(notificarEncuestaVW));
 
 // ABM de vendedores: acá se les carga el correo, que es lo que habilita el aviso.
-router.post("/vendedores", requireAdmin, asyncHandler(crearVendedorVW));
-router.patch("/vendedores/:id", requireAdmin, asyncHandler(editarVendedorVW));
+router.post("/vendedores", asyncHandler(crearVendedorVW));
+router.patch("/vendedores/:id", asyncHandler(editarVendedorVW));
 // Borra el vendedor si no tiene encuestas asociadas; si las tiene, explica
 // por que no se puede y ofrece desactivarlo.
 router.delete("/vendedores/:id", requireAdmin, asyncHandler(eliminarVendedorVW));
 
 // Alta a mano de un pendiente que no vino en el Excel de fabrica.
-router.post("/manual", requireAdmin, asyncHandler(crearEncuestaManualVW));
+router.post("/manual", asyncHandler(crearEncuestaManualVW));
 
 // Saca un cliente de la lista. Si vino del Excel de fabrica y sigue figurando
 // ahi, la proxima carga lo vuelve a traer; los cargados a mano no vuelven.

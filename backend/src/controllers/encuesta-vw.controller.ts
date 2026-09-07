@@ -185,6 +185,17 @@ export async function confirmEncuestaVW(req: Request, res: Response) {
     `${resumen.marcadosRespondio} dado(s) por respondido(s)`,
   ];
   if (resumen.vendedoresNuevos) partes.push(`${resumen.vendedoresNuevos} vendedor(es) nuevo(s)`);
+  // Se avisa explícitamente: es una decisión del sistema (dos códigos = una
+  // persona) y conviene que quede a la vista para poder desmentirla si se
+  // equivocó, en vez de que pase en silencio.
+  if (resumen.vendedoresDeOtraSucursal.length) {
+    partes.push(
+      `${resumen.vendedoresDeOtraSucursal.length} vendedor(es) reconocido(s) vendiendo en la otra sucursal ` +
+        `(${resumen.vendedoresDeOtraSucursal
+          .map((v) => `${v.nombre ?? v.codigo}: ${v.vieneDe} → ${v.codigo}`)
+          .join(", ")}), se les usó el correo que ya tenían`
+    );
+  }
   if (resumen.vendedoresSinMail.length) partes.push(`${resumen.vendedoresSinMail.length} sin correo cargado`);
 
   res.status(201).json({ message: `Carga terminada: ${partes.join(", ")}.`, resumen });

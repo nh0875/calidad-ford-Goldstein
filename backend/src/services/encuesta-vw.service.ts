@@ -448,6 +448,14 @@ export interface FilaEncuestaVWListaParaImportar {
   area: "VENTAS" | "PLAN_DE_AHORRO" | null;
   fechaEntrega: Date | null;
   observacionesFabrica: string[];
+  /**
+   * Sucursal donde se hizo LA VENTA, cuando el archivo la trae explícita.
+   *
+   * No es lo mismo que la del vendedor: un vendedor de Mendoza puede vender en
+   * San Juan, y en ese caso el cliente pertenece a San Juan. En el archivo de
+   * fábrica esto sale de la hoja; en el interno, de la columna "Suc. Cpa.".
+   */
+  sucursalVenta?: string | null;
 }
 
 export interface ArchivoEncuestaVW {
