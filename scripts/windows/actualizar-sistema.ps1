@@ -65,6 +65,30 @@ if (-not (Test-Path $EnvFile)) {
     exit 1
 }
 
+# --- Docker responde? -------------------------------------------------------
+# Si Docker esta arrancando o colgado (paso varias veces en este proyecto: WSL
+# sin tope de memoria), el build falla mas adelante con un error que no dice
+# nada, o se queda esperando para siempre. Mejor cortarlo aca y decir que hacer.
+$sonda = Start-Job { docker version --format "{{.Server.Version}}" 2>$null }
+if (-not (Wait-Job $sonda -Timeout 60)) {
+    Stop-Job $sonda -ErrorAction SilentlyContinue
+    Remove-Job $sonda -Force -ErrorAction SilentlyContinue
+    Write-Host ""
+    Write-Host "  Docker no responde (espere un minuto y no contesto)." -ForegroundColor Red
+    Write-Host "  No esta colgada la actualizacion: esta colgado Docker." -ForegroundColor Yellow
+    Write-Host "  Cerra Docker Desktop desde el icono de la barra, volve a abrirlo," -ForegroundColor Yellow
+    Write-Host "  espera a que el icono deje de moverse y proba de nuevo." -ForegroundColor Yellow
+    exit 1
+}
+$versionDocker = ((Receive-Job $sonda) -join "").Trim()
+Remove-Job $sonda -Force -ErrorAction SilentlyContinue
+if ($versionDocker -eq "") {
+    Write-Host ""
+    Write-Host "  Docker esta instalado pero el motor no esta andando." -ForegroundColor Red
+    Write-Host "  Abri Docker Desktop, espera a que diga 'Engine running' y proba de nuevo." -ForegroundColor Yellow
+    exit 1
+}
+
 # --- Puerto y marca de ESTA PC, para poder verificar al final --------------
 $Puerto = "80"
 foreach ($linea in (Get-Content $EnvFile -ErrorAction SilentlyContinue)) {
@@ -77,9 +101,26 @@ foreach ($linea in (Get-Content $EnvFile -ErrorAction SilentlyContinue)) {
 
 # --- 1. Qué versión está corriendo AHORA ------------------------------------
 function Version-Corriendo {
+    # NO se usa Invoke-WebRequest: en una PC de empresa toma el proxy del sistema
+    # y se va por ahi HASTA PARA http://localhost, que el proxy no sabe resolver.
+    # El sistema contesta perfecto y esto devolvia "no responde".
+    #
+    # Consecuencia concreta, y es la que hacia que la actualizacion pareciera
+    # fallar cuando en realidad habia salido bien: al final el script espera a que
+    # el sistema reporte la version nueva; con el proxy de por medio nunca la veia,
+    # esperaba CINCO MINUTOS y terminaba en rojo diciendo que no se habia aplicado.
+    # En una PC sin proxy andaba. De ahi el "a veces si y a veces no".
+    #
+    # El mismo arreglo ya estaba en el vigilante, en Preparar-Webhook y en
+    # Levantar-Sistema; este script se habia quedado afuera.
     try {
-        $r = Invoke-WebRequest -Uri "http://localhost:$Puerto/api/health" -TimeoutSec 10 -UseBasicParsing
-        $j = $r.Content | ConvertFrom-Json
+        $req = [System.Net.HttpWebRequest]::Create("http://localhost:$Puerto/api/health")
+        $req.Timeout = 10000
+        $req.Proxy = $null
+        $resp = $req.GetResponse()
+        $lector = New-Object System.IO.StreamReader($resp.GetResponseStream())
+        $texto = $lector.ReadToEnd(); $lector.Close(); $resp.Close()
+        $j = $texto | ConvertFrom-Json
         return @{ version = "$($j.version)"; marca = "$($j.marca)" }
     } catch {
         return @{ version = "(el sistema no responde)"; marca = "?" }
@@ -232,12 +273,20 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "  Esperando a que el sistema arranque (aplica las migraciones)..." -ForegroundColor Cyan
 
+# Se espera mas: en una PC de agencia, con la base grande y migraciones nuevas,
+# cinco minutos se quedaban cortos y el script daba por fallado algo que estaba
+# arrancando bien. Se avisa cada tanto para que no parezca colgado.
 $despues = @{ version = "(el sistema no responde)"; marca = "?" }
-$limite = (Get-Date).AddMinutes(5)
+$limite = (Get-Date).AddMinutes(10)
+$vuelta = 0
 while ((Get-Date) -lt $limite) {
     Start-Sleep -Seconds 10
+    $vuelta++
     $despues = Version-Corriendo
     if ($despues.version -eq $commit) { break }
+    if ($vuelta % 6 -eq 0) {
+        Write-Host "    todavia arrancando... ($([int]($vuelta / 6)) min)" -ForegroundColor Gray
+    }
 }
 
 Write-Host ""

@@ -147,9 +147,24 @@ foreach ($linea in (Get-Content $EnvFile -ErrorAction SilentlyContinue)) {
 }
 
 function Salud {
+    # Sin proxy: en una PC de empresa Invoke-WebRequest toma el proxy del sistema
+    # y se va por ahi HASTA PARA http://localhost, que el proxy no sabe resolver.
+    # El sistema contesta perfecto y esto devolvia "no responde".
+    #
+    # OJO CON ESTA FUNCION EN PARTICULAR: es la que decide si la version nueva
+    # "volvio". Si dice que no, el script REVIERTE las imagenes de Docker y hace
+    # git reset --hard al commit anterior. Con el proxy de por medio eso pasaba
+    # TODOS LOS DIAS: la PC se actualizaba a las 13:00 y se revertia sola a los
+    # pocos minutos, sin que nadie se enterara y sin dejar el sistema roto, que
+    # es lo que lo hacia tan dificil de ver.
     try {
-        $r = Invoke-WebRequest -Uri "http://localhost:$Puerto/api/health" -TimeoutSec 10 -UseBasicParsing
-        $j = $r.Content | ConvertFrom-Json
+        $req = [System.Net.HttpWebRequest]::Create("http://localhost:$Puerto/api/health")
+        $req.Timeout = 10000
+        $req.Proxy = $null
+        $resp = $req.GetResponse()
+        $lector = New-Object System.IO.StreamReader($resp.GetResponseStream())
+        $texto = $lector.ReadToEnd(); $lector.Close(); $resp.Close()
+        $j = $texto | ConvertFrom-Json
         return @{ ok = ($j.status -eq "ok"); version = "$($j.version)"; marca = "$($j.marca)" }
     } catch {
         return @{ ok = $false; version = "(no responde)"; marca = "?" }

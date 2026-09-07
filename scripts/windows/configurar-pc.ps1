@@ -256,7 +256,12 @@ Titulo "8. Verificación en vivo"
 # ngrok respondiendo local
 $ngrokVivo = $false
 try {
-  $r = Invoke-WebRequest "http://localhost:4040/api/tunnels" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+  # Sin proxy (ver la nota en actualizar-sistema.ps1): a localhost se va directo.
+  $req = [System.Net.HttpWebRequest]::Create("http://localhost:4040/api/tunnels")
+  $req.Timeout = 5000; $req.Proxy = $null
+  $resp = $req.GetResponse()
+  $lec = New-Object System.IO.StreamReader($resp.GetResponseStream())
+  $r = @{ Content = $lec.ReadToEnd() }; $lec.Close(); $resp.Close()
   $ngrokVivo = ($r.Content -match "ngrok-free")
 } catch {}
 Marcar $ngrokVivo "ngrok está corriendo (túnel activo)." "ngrok no está corriendo todavía (el vigilante lo levanta en la próxima corrida)." | Out-Null
@@ -264,7 +269,11 @@ Marcar $ngrokVivo "ngrok está corriendo (túnel activo)." "ngrok no está corri
 # La app responde localmente
 $appViva = $false
 try {
-  $r = Invoke-WebRequest "http://localhost/api/health" -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
+  $req = [System.Net.HttpWebRequest]::Create("http://localhost/api/health")
+  $req.Timeout = 8000; $req.Proxy = $null
+  $resp = $req.GetResponse()
+  $lec = New-Object System.IO.StreamReader($resp.GetResponseStream())
+  $r = @{ Content = $lec.ReadToEnd() }; $lec.Close(); $resp.Close()
   $appViva = ($r.StatusCode -eq 200)
 } catch {}
 Marcar $appViva "La app responde en http://localhost/api/health" "La app no responde todavía (esperá 1-2 min a que Docker termine de arrancar)." | Out-Null
