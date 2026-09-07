@@ -67,6 +67,11 @@ interface VistaPrevia {
   rechazadas: Array<{ hoja: string; numeroFilaExcel: number; motivo: string }>;
   observadasPorFabrica: Array<{ hoja: string; fila: number; cliente: string; observaciones: string[] }>;
   avisos: string[];
+  /** "INTERNO" cuando el archivo es el export de la concesionaria. */
+  formato?: "FABRICA" | "INTERNO";
+  /** Solo en el interno: vendedores que vinieron por nombre y hay que asignar. */
+  vendedoresSinAsignar?: Array<{ nombre: string; filas: number }>;
+  vendedoresDisponibles?: Array<{ codigo: string; nombre: string | null; sucursal: string }>;
 }
 
 interface EstadoMail {
@@ -126,6 +131,8 @@ export default function EncuestasFabrica() {
 
   // ---- Carga del Excel -----------------------------------------------------
   const [previa, setPrevia] = useState<VistaPrevia | null>(null);
+  // Formato interno: nombre del vendedor tal como viene -> código elegido.
+  const [mapeoVendedores, setMapeoVendedores] = useState<Record<string, string>>({});
   const [subiendo, setSubiendo] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
 
@@ -150,7 +157,12 @@ export default function EncuestasFabrica() {
     setConfirmando(true);
     setError(null);
     try {
-      const r = await apiPostJson<{ message: string }>("/api/encuesta-vw/confirm", { fileToken: previa.fileToken });
+      const r = await apiPostJson<{ message: string }>("/api/encuesta-vw/confirm", {
+        fileToken: previa.fileToken,
+        // Solo viaja en el formato interno: lo que la persona acaba de asignar.
+        // El backend lo guarda como alias, así la próxima carga ya los reconoce.
+        ...(Object.keys(mapeoVendedores).length > 0 ? { mapeoVendedores } : {}),
+      });
       setMensaje(r.message);
       setPrevia(null);
       await cargar();
@@ -487,8 +499,57 @@ export default function EncuestasFabrica() {
             </div>
           ))}
 
+          {/* Formato interno: el archivo trae el vendedor por NOMBRE. Lo que no se
+              pudo resolver solo se asigna acá, una vez, y queda guardado. */}
+          {previa.formato === "INTERNO" && (previa.vendedoresSinAsignar?.length ?? 0) > 0 && (
+            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4">
+              <h4 className="text-sm font-semibold text-amber-900">
+                Falta decir quiénes son estos vendedores
+              </h4>
+              <p className="mt-1 text-sm text-amber-900">
+                Este archivo trae el nombre del vendedor, no su código, y el sistema necesita el
+                código para saber a qué sucursal pertenece cada cliente y a quién avisarle. Asignalos
+                una vez: la próxima carga ya los va a reconocer solos.
+              </p>
+              <div className="mt-3 space-y-2">
+                {previa.vendedoresSinAsignar?.map((v) => (
+                  <div key={v.nombre} className="flex flex-wrap items-center gap-3">
+                    <span className="min-w-[16rem] text-sm font-medium text-ink">
+                      {v.nombre}{" "}
+                      <span className="font-normal text-ink-muted">({v.filas} cliente(s))</span>
+                    </span>
+                    <Select
+                      className="!w-80"
+                      value={mapeoVendedores[v.nombre] ?? ""}
+                      onChange={(e) =>
+                        setMapeoVendedores((prev) => ({ ...prev, [v.nombre]: e.target.value }))
+                      }
+                    >
+                      <option value="">Elegí a qué vendedor corresponde…</option>
+                      {previa.vendedoresDisponibles?.map((d) => (
+                        <option key={d.codigo} value={d.codigo}>
+                          {d.nombre ? `${d.nombre} (${d.codigo})` : d.codigo} — {d.sucursal}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="mt-4 flex gap-2">
-            <button onClick={confirmar} disabled={confirmando} className={claseBoton("primario")}>
+            <button
+              onClick={confirmar}
+              disabled={
+                confirmando ||
+                // No se deja confirmar con vendedores sin asignar: sus filas se
+                // rechazarían en silencio y esos clientes no los llamaría nadie.
+                (previa.formato === "INTERNO" &&
+                  (previa.vendedoresSinAsignar ?? []).some((v) => !mapeoVendedores[v.nombre]))
+              }
+              className={claseBoton("primario")}
+            >
               {confirmando ? "Cargando…" : "Confirmar la carga"}
             </button>
             <button onClick={() => setPrevia(null)} disabled={confirmando} className={claseBoton("secundario")}>

@@ -1,6 +1,13 @@
 import { EstadoEncuestaFabrica, TipoUpload, UploadStatus } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { abrirWorkbook } from "./excel.service";
+import {
+  convertirInternoAArchivo,
+  esArchivoInternoVW,
+  guardarMapeoVendedores,
+  nombresDeVendedorDelLibro,
+  resolverVendedores,
+} from "./encuesta-interna-vw.service";
 import { ACCIONES } from "./audit.service";
 import { ArchivoEncuestaVW, parsearArchivoEncuestaVW } from "./encuesta-vw.service";
 
@@ -34,6 +41,13 @@ export interface OpcionesImportacionVW {
   buffer: Buffer;
   filename: string;
   uploadedBy: string;
+  /**
+   * Solo para el formato INTERNO: nombre de vendedor tal como viene en el Excel
+   * -> código de 7 dígitos, asignado por la persona en la vista previa. Se guarda
+   * como alias para que la próxima carga lo reconozca sola.
+   */
+  mapeoVendedores?: Record<string, string>;
+  usuarioId?: string | null;
   auditar?: (d: { accion: string; entidad: string; entidadId?: string; detalles?: unknown }) => void;
 }
 
@@ -41,18 +55,45 @@ export async function importarEncuestaFabricaVW(
   opciones: OpcionesImportacionVW
 ): Promise<ResumenImportacionVW | { error: string }> {
   const workbook = abrirWorkbook(opciones.buffer);
+
+  // Dos formatos alimentan la misma lista: el de FABRICA (una hoja por sucursal,
+  // vendedor por código) y el INTERNO de la concesionaria (una sola hoja,
+  // vendedor por nombre). El interno se traduce a la misma estructura y de ahí en
+  // adelante el guardado es uno solo.
+  if (esArchivoInternoVW(workbook)) {
+    const { mapa } = await resolverVendedores(
+      nombresDeVendedorDelLibro(workbook),
+      opciones.mapeoVendedores ?? {}
+    );
+    const archivoInterno = convertirInternoAArchivo(workbook, mapa);
+    if ("error" in archivoInterno) return { error: archivoInterno.error };
+    if (archivoInterno.filas.length === 0) {
+      const motivos = [...new Set(archivoInterno.rechazadas.map((r) => r.motivo))].slice(0, 3);
+      return {
+        error:
+          "No se pudo importar ninguna fila. " +
+          (motivos.length ? motivos.join(" ") : archivoInterno.avisos.join(" ")),
+      };
+    }
+    if (opciones.mapeoVendedores && Object.keys(opciones.mapeoVendedores).length > 0) {
+      await guardarMapeoVendedores(opciones.mapeoVendedores, opciones.usuarioId ?? null);
+    }
+    return guardar(archivoInterno, opciones, "INTERNO");
+  }
+
   const archivo = parsearArchivoEncuestaVW(workbook);
   if ("error" in archivo) return { error: archivo.error };
   if (archivo.filas.length === 0) {
     return { error: "El archivo no tiene ninguna fila que se pueda importar. " + archivo.avisos.join(" ") };
   }
 
-  return guardar(archivo, opciones);
+  return guardar(archivo, opciones, "FABRICA");
 }
 
 async function guardar(
   archivo: ArchivoEncuestaVW,
-  opciones: OpcionesImportacionVW
+  opciones: OpcionesImportacionVW,
+  origenFormato: "FABRICA" | "INTERNO"
 ): Promise<ResumenImportacionVW> {
   // Las sucursales que se van a cerrar salen de las HOJAS del archivo, no de las
   // filas. Con las filas, UNA sola fila mal cargada —un vendedor de otra
@@ -152,7 +193,7 @@ async function guardar(
       pendientesQueSiguen++;
     } else {
       await prisma.encuestaFabricaVW.create({
-        data: { ...datos, chasis: f.chasis, origenUploadId: upload.id },
+        data: { ...datos, chasis: f.chasis, origenUploadId: upload.id, origenFormato },
       });
       pendientesNuevos++;
     }
@@ -183,6 +224,11 @@ async function guardar(
       // barrida las daría por respondidas en la primera importación: el cliente
       // saldría de la lista de su vendedor sin que nadie lo haya llamado.
       esManual: false,
+      // Y una carga SOLO puede cerrar a los clientes de su propio archivo. Los dos
+      // formatos alimentan la misma lista, así que sin esto una carga del Excel
+      // interno daría por respondidos, en silencio, a todos los que vinieron de
+      // fábrica: no están en el archivo interno, y nunca lo van a estar.
+      origenFormato,
     },
     data: { estado: EstadoEncuestaFabrica.RESPONDIO, respondioEn: new Date() },
   });

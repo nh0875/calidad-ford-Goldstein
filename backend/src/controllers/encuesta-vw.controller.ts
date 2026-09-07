@@ -6,6 +6,12 @@ import { marca } from "../config/marca";
 import { abrirWorkbook, borrarArchivoTemporal, guardarArchivoTemporal, leerArchivoTemporal } from "../services/excel.service";
 import { parsearArchivoEncuestaVW } from "../services/encuesta-vw.service";
 import { importarEncuestaFabricaVW } from "../services/importacion-encuesta-vw.service";
+import {
+  convertirInternoAArchivo,
+  esArchivoInternoVW,
+  nombresDeVendedorDelLibro,
+  resolverVendedores,
+} from "../services/encuesta-interna-vw.service";
 import { avisarVendedoresVW } from "../services/encuesta-vw-mail.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 
@@ -26,6 +32,39 @@ export async function previewEncuestaVW(req: Request, res: Response) {
     workbook = abrirWorkbook(req.file.buffer);
   } catch {
     return res.status(400).json({ message: "El archivo no se pudo leer como Excel. Verificá que sea un .xlsx válido." });
+  }
+
+  // ---- Formato INTERNO de la concesionaria ----
+  //
+  // Trae el vendedor por NOMBRE, no por código. Lo que la pantalla necesita saber
+  // antes de confirmar es a quién no pudo resolver solo, para que la persona lo
+  // asigne una vez (y quede guardado para las próximas cargas).
+  if (esArchivoInternoVW(workbook)) {
+    const nombres = nombresDeVendedorDelLibro(workbook);
+    const { mapa, sinResolver } = await resolverVendedores(nombres);
+    const convertido = convertirInternoAArchivo(workbook, mapa);
+    if ("error" in convertido) return res.status(400).json({ message: convertido.error });
+
+    // Para el desplegable de asignación: todos los vendedores cargados.
+    const vendedores = await prisma.vendedorVW.findMany({
+      orderBy: [{ sucursal: "asc" }, { codigo: "asc" }],
+      select: { codigo: true, nombre: true, sucursal: true },
+    });
+
+    const token = guardarArchivoTemporal(req.file.buffer, req.file.originalname);
+    return res.json({
+      fileToken: token,
+      formato: "INTERNO",
+      totalClientes: convertido.filas.length,
+      hojas: [],
+      // Lo que hay que resolver antes de poder importar.
+      vendedoresSinAsignar: sinResolver,
+      vendedoresDisponibles: vendedores,
+      rechazadas: convertido.rechazadas.slice(0, 50),
+      // El archivo interno NO cierra a nadie: ver la nota en la importación.
+      seDarianPorRespondidos: 0,
+      avisos: convertido.avisos,
+    });
   }
 
   const archivo = parsearArchivoEncuestaVW(workbook);
@@ -93,6 +132,8 @@ export async function previewEncuestaVW(req: Request, res: Response) {
 
 const confirmSchema = z.object({
   fileToken: z.string().uuid("El identificador del archivo no es válido. Volvé a subir el Excel."),
+  /** Solo para el formato interno: nombre del vendedor -> su código de 7 dígitos. */
+  mapeoVendedores: z.record(z.string()).optional(),
 });
 
 export async function confirmEncuestaVW(req: Request, res: Response) {
@@ -112,6 +153,8 @@ export async function confirmEncuestaVW(req: Request, res: Response) {
     buffer: archivo.buffer,
     filename: archivo.filename,
     uploadedBy: req.usuario?.nombre ?? "Calidad",
+    mapeoVendedores: parsed.data.mapeoVendedores,
+    usuarioId: req.usuario?.id ?? null,
     auditar: (d) => auditar(req, d),
   });
   borrarArchivoTemporal(parsed.data.fileToken);

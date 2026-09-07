@@ -191,17 +191,20 @@ export interface HojaEncuestaVWParseada {
   avisos: string[];
 }
 
-function ubicarColumnas(encabezados: unknown[]): {
-  indices: Partial<Record<CampoEncuestaVW, number>>;
+function ubicarColumnasDe<C extends string>(
+  encabezados: unknown[],
+  definiciones: ReadonlyArray<{ campo: C; patrones: ReadonlyArray<string> }>
+): {
+  indices: Partial<Record<C, number>>;
   indicesControl: Array<{ indice: number; titulo: string }>;
 } {
-  const indices: Partial<Record<CampoEncuestaVW, number>> = {};
+  const indices: Partial<Record<C, number>> = {};
   const usadas = new Set<number>();
 
   // Se recorre columna por columna en el orden esperado y se toma la PRIMERA
   // que coincida y esté libre. Importa el orden: "Dominio" y "Fecha Dominio"
   // comparten palabra, y "Chasis" aparece también en un título de control.
-  for (const { campo, patrones } of COLUMNAS_DATOS) {
+  for (const { campo, patrones } of definiciones) {
     for (let i = 0; i < encabezados.length; i++) {
       if (usadas.has(i)) continue;
       const titulo = normalizarTexto(encabezados[i]);
@@ -234,6 +237,115 @@ function ubicarColumnas(encabezados: unknown[]): {
   }
 
   return { indices, indicesControl };
+}
+
+function ubicarColumnas(encabezados: unknown[]) {
+  return ubicarColumnasDe<CampoEncuestaVW>(encabezados, COLUMNAS_DATOS);
+}
+
+// ---------------------------------------------------------------------------
+// Segundo formato: el export INTERNO de la concesionaria
+// ---------------------------------------------------------------------------
+//
+// Una sola hoja ("Encuesta_ventas"), el cliente completo en una columna y el
+// vendedor por NOMBRE (cortado a 22 caracteres) en vez de por código. Trae además
+// teléfono y notas de satisfacción, que por ahora se ignoran.
+
+const COLUMNAS_INTERNO = [
+  { campo: "chasis", patrones: ["chasis", "vin"] },
+  { campo: "cliente", patrones: ["cliente"] },
+  { campo: "email", patrones: ["email", "e-mail", "correo"] },
+  // "vendedor" exacto se lleva la columna Vendedor ANTES de que "Sat. Vendedor"
+  // (la nota de satisfacción) entre a jugar, porque el emparejado es exacto
+  // primero y marca la columna como usada.
+  { campo: "vendedorNombre", patrones: ["vendedor"] },
+  { campo: "sucursalTexto", patrones: ["suc. cpa.", "suc. cpa", "sucursal"] },
+  { campo: "dominio", patrones: ["dominio"] },
+  { campo: "fechaEntrega", patrones: ["fec. remito", "remito", "fec. patenta"] },
+] as const;
+
+export type CampoInternoVW = (typeof COLUMNAS_INTERNO)[number]["campo"];
+
+/** Sin esto tres no se puede armar un pendiente. */
+const OBLIGATORIAS_INTERNO: CampoInternoVW[] = ["chasis", "cliente", "vendedorNombre"];
+
+/**
+ * ¿Esta hoja es del formato interno? La marca es tener una columna "Cliente" con
+ * el nombre completo: el archivo de fábrica lo trae partido en Nombre y Apellido
+ * y no tiene ninguna columna que se llame así.
+ */
+export function esHojaFormatoInterno(encabezados: unknown[]): boolean {
+  const titulos = encabezados.map((e) => normalizarTexto(e));
+  const tieneCliente = titulos.some((t) => t === "cliente");
+  const tieneApellido = titulos.some((t) => t === "apellido");
+  return tieneCliente && !tieneApellido;
+}
+
+export interface FilaInternaVW {
+  numeroFilaExcel: number;
+  campos: Partial<Record<CampoInternoVW, string>>;
+}
+
+export interface HojaInternaVWParseada {
+  nombre: string;
+  filas: FilaInternaVW[];
+  /** Nombres de vendedor distintos que aparecen, tal como vienen en el archivo. */
+  vendedoresDelArchivo: string[];
+}
+
+export function parsearHojaInternaVW(
+  workbook: XLSX.WorkBook,
+  nombreHoja: string
+): HojaInternaVWParseada | { error: string } {
+  const hoja = workbook.Sheets[nombreHoja];
+  if (!hoja) return { error: `La hoja "${nombreHoja}" no existe.` };
+
+  const filasCrudas: unknown[][] = leerFilasCrudas(hoja);
+  if (filasCrudas.length === 0) return { error: `La hoja "${nombreHoja}" está vacía.` };
+
+  const encabezados = filasCrudas[0] ?? [];
+  const { indices } = ubicarColumnasDe<CampoInternoVW>(encabezados, COLUMNAS_INTERNO);
+
+  const faltantes = OBLIGATORIAS_INTERNO.filter((c) => indices[c] === undefined);
+  if (faltantes.length > 0) {
+    return {
+      error:
+        `La hoja "${nombreHoja}" no tiene las columnas ${faltantes.join(", ")}. ` +
+        "Se esperaba el Excel interno de encuestas (Cliente, Chasis y Vendedor).",
+    };
+  }
+
+  const filas: FilaInternaVW[] = [];
+  const vendedores = new Set<string>();
+
+  for (let i = 1; i < filasCrudas.length; i++) {
+    const cruda = filasCrudas[i] ?? [];
+    const campos: Partial<Record<CampoInternoVW, string>> = {};
+    let tieneDatos = false;
+    for (const { campo } of COLUMNAS_INTERNO) {
+      const idx = indices[campo];
+      if (idx === undefined) continue;
+      const crudo = cruda[idx];
+      // Las fechas vienen como celda de fecha de Excel. Se normalizan a AAAAMMDD,
+      // que es lo que entiende parsearFechaVW; con String() quedaba
+      // "Thu Sep 03 2026 ..." y la entrega se perdia en silencio.
+      const valor =
+        crudo instanceof Date && !isNaN(crudo.getTime())
+          ? `${crudo.getFullYear()}${String(crudo.getMonth() + 1).padStart(2, "0")}${String(
+              crudo.getDate()
+            ).padStart(2, "0")}`
+          : String(crudo ?? "").trim();
+      if (valor) {
+        campos[campo] = valor;
+        tieneDatos = true;
+      }
+    }
+    if (!tieneDatos) continue;
+    if (campos.vendedorNombre) vendedores.add(campos.vendedorNombre);
+    filas.push({ numeroFilaExcel: i + 1, campos });
+  }
+
+  return { nombre: nombreHoja, filas, vendedoresDelArchivo: [...vendedores].sort() };
 }
 
 export function parsearHojaEncuestaVW(

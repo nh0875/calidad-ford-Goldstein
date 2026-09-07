@@ -87,6 +87,11 @@ enum EstadoContacto {
   NO_RESPONDIO
   INTERNO
   ERROR
+  // No contestó ninguno de los dos WhatsApp: lo tiene que llamar Calidad.
+  LLAMADA_PENDIENTE
+  // Contestó, pero por teléfono. Se mide aparte para saber cuántos se rescatan
+  // llamando y cuántos contestan solos.
+  RESPONDIO_LLAMADA
 }
 
 enum MessageDirection {
@@ -136,6 +141,9 @@ enum MotivoSupresion {
 enum TipoAlias {
   ASESOR
   SUCURSAL
+  // Nombre de vendedor de Volkswagen -> su código de 7 dígitos. Lo necesita el
+  // Excel interno de encuestas, que trae el nombre y no el código.
+  VENDEDOR_VW
 }
 
 // Área del negocio a la que pertenece un caso/RQR (datos separados).
@@ -267,6 +275,14 @@ model Caso {
   sucursalRaw            String?
   estadoContacto         EstadoContacto     @default(PENDIENTE)
   ultimoErrorEnvio       String? // motivo del último fallo de envío de WhatsApp
+  // Cuándo salió el SEGUNDO contacto (Volkswagen). Sirve para no mandarlo dos
+  // veces y para contar las 24 h hasta pasar el caso a llamada pendiente. No
+  // alcanza con mirar el último saliente: podría ser cualquier otro mensaje.
+  segundoContactoEn      DateTime?
+  // Por qué no se pudo cerrar por teléfono (no atendió, número equivocado, no
+  // quiso contestar). Sin esto, un caso cerrado no se distingue del que nunca
+  // se intentó llamar.
+  llamadaMotivo          String?
   tieneRqrAbierto        Boolean            @default(false) // true mientras exista un RQR ABIERTO/EN_TRATAMIENTO del caso
   // Cuándo se le mandaron las 5 preguntas de la encuesta de Posventa. Sirve para
   // saber que el próximo mensaje del cliente las está contestando, y para no
@@ -397,6 +413,8 @@ model SentimentAnalysis {
   requiereRQR            Boolean          @default(false)
   requiereRevisionManual Boolean          @default(false)
   esHistoricoImportado   Boolean          @default(false)
+  // El análisis salió de una LLAMADA que cargó una persona, no de la IA.
+  esLlamada              Boolean          @default(false)
   // Un caso tiene UN análisis que cuenta (esSeguimiento=false). Los mensajes
   // que el cliente manda después quedan como seguimiento y NO suman a las
   // estadísticas ni a los rankings: si no, un cliente conversador contaba como
@@ -763,11 +781,19 @@ model EncuestaFabricaVW {
   // archivo, sin esto desaparecería sola en la siguiente carga.
   esManual        Boolean     @default(false)
 
+  // De qué archivo salió: "FABRICA" (el que baja de la plataforma de VW) o
+  // "INTERNO" (el export de la concesionaria). Los dos alimentan la misma lista,
+  // pero la barrida que da por respondidos SOLO puede cerrar a los de su propio
+  // origen: si no, una carga del interno cerraría en silencio a todos los de
+  // fábrica.
+  origenFormato   String      @default("FABRICA")
+
   detectadaEn DateTime  @default(now())
   respondioEn DateTime?
 
   @@index([estado, vendedorId])
   @@index([sucursal, estado])
+  @@index([origenFormato])
   @@index([vistaEnUploadId])
 }
 
