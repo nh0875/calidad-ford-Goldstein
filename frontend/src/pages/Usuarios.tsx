@@ -182,11 +182,11 @@ export default function Usuarios() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4">
+    <div className="space-y-4">
       {error && <Alert tono="error">{error}</Alert>}
       {mensaje && <Alert tono="exito">{mensaje}</Alert>}
 
-      <Card padding="p-5">
+      <Card padding="p-5" className="max-w-5xl">
         <h3 className="mb-3 flex items-center gap-2 font-display text-sm font-bold uppercase tracking-wide text-navy">
           <UserPlus className="h-4 w-4 text-accent" aria-hidden="true" />
           Crear cuenta nueva
@@ -261,31 +261,35 @@ export default function Usuarios() {
       <Card padding="p-0" className="overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead>
-            <tr className="border-b bg-gray-50 text-left text-xs uppercase text-ink-muted">
-              <th className="px-3 py-2">Nombre</th>
-              <th className="px-3 py-2">Email</th>
-              <th className="px-3 py-2">Rol</th>
-              <th className="px-3 py-2">Área</th>
-              <th className="px-3 py-2">Provincia</th>
-              <th className="px-3 py-2">Estado</th>
-              <th className="px-3 py-2">Refuerzos</th>
-              <th className="px-3 py-2">Acciones</th>
+            <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted">
+              <th className="whitespace-nowrap px-4 py-3">Nombre</th>
+              <th className="px-4 py-3">Email</th>
+              <th className="whitespace-nowrap px-4 py-3">Rol</th>
+              <th className="whitespace-nowrap px-4 py-3">Área</th>
+              <th className="whitespace-nowrap px-4 py-3">Provincia</th>
+              <th className="whitespace-nowrap px-4 py-3">Estado</th>
+              <th className="whitespace-nowrap px-4 py-3">Refuerzos</th>
+              <th className="px-4 py-3">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {(usuarios ?? []).map((u) => (
               <Fragment key={u.id}>
                 <tr className="border-b border-gray-100 transition-colors hover:bg-gray-50">
-                  <td className="px-3 py-2 text-ink">{u.nombre}</td>
-                  <td className="px-3 py-2 text-ink-muted">{u.email}</td>
-                  <td className="px-3 py-2 text-ink-muted">{ROL_LABEL[u.rol]}</td>
-                  <td className="px-3 py-2">
+                  <td className="whitespace-nowrap px-4 py-3 text-ink">{u.nombre}</td>
+                  <td className="px-4 py-3 text-ink-muted">{u.email}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-ink-muted">{ROL_LABEL[u.rol]}</td>
+                  <td className="px-4 py-3">
                     {u.rol === "ADMIN" ? (
                       <span className="text-xs text-ink-muted" title="El administrador ve todas las áreas">
                         todas
                       </span>
                     ) : (
-                      <Select value={u.area} onChange={(e) => cambiarArea(u, e.target.value as AreaUsuario)}>
+                      <Select
+                        className="min-w-[8.5rem]"
+                        value={u.area}
+                        onChange={(e) => cambiarArea(u, e.target.value as AreaUsuario)}
+                      >
                         {AREAS_USUARIO.map((a) => (
                           <option key={a} value={a}>
                             {etiquetaArea(a)}
@@ -294,13 +298,14 @@ export default function Usuarios() {
                       </Select>
                     )}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3">
                     {u.rol === "ADMIN" ? (
                       <span className="text-xs text-ink-muted" title="El administrador ve todas las provincias">
                         todas
                       </span>
                     ) : (
                       <Select
+                        className="min-w-[10rem]"
                         value={u.sucursal ?? TODAS_PROVINCIAS}
                         onChange={(e) => cambiarSucursal(u, e.target.value)}
                       >
@@ -317,10 +322,10 @@ export default function Usuarios() {
                       </Select>
                     )}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3">
                     <Badge tono={u.activo ? "verde" : "gris"}>{u.activo ? "Activo" : "Desactivado"}</Badge>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3">
                     {u.rol === "CALIDAD" ? (
                       <button
                         onClick={() => toggleRefuerzos(u)}
@@ -335,7 +340,7 @@ export default function Usuarios() {
                       <span className="text-xs text-ink-muted">—</span>
                     )}
                   </td>
-                  <td className="space-x-3 px-3 py-2">
+                  <td className="space-x-3 whitespace-nowrap px-3 py-3">
                     <button
                       onClick={() => {
                         setResetAbierto(resetAbierto === u.id ? null : u.id);
