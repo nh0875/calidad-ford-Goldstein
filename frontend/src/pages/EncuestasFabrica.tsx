@@ -59,14 +59,16 @@ interface Resumen {
 interface VistaPrevia {
   fileToken: string;
   filename: string;
-  hojas: Array<{ nombre: string; sucursal: string; codigoSucursal: string | null; clientes: number; filasVacias: number }>;
+  // Todos opcionales a propósito: el formato interno no los llena, y la pantalla
+  // NO se puede caer porque falte uno (ya pasó: pantallazo blanco al cargar).
+  hojas?: Array<{ nombre: string; sucursal: string; codigoSucursal: string | null; clientes: number; filasVacias: number }>;
   totalClientes: number;
   seDarianPorRespondidos: number;
-  vendedores: Array<{ codigo: string; nombre: string | null; sucursal: string; clientes: number }>;
-  vendedoresSinNombre: Array<{ codigo: string; sucursal: string; filas: number }>;
-  rechazadas: Array<{ hoja: string; numeroFilaExcel: number; motivo: string }>;
-  observadasPorFabrica: Array<{ hoja: string; fila: number; cliente: string; observaciones: string[] }>;
-  avisos: string[];
+  vendedores?: Array<{ codigo: string; nombre: string | null; sucursal: string; clientes: number }>;
+  vendedoresSinNombre?: Array<{ codigo: string; sucursal: string; filas: number }>;
+  rechazadas?: Array<{ hoja: string; numeroFilaExcel: number; motivo: string }>;
+  observadasPorFabrica?: Array<{ hoja: string; fila: number; cliente: string; observaciones: string[] }>;
+  avisos?: string[];
   /** "INTERNO" cuando el archivo es el export de la concesionaria. */
   formato?: "FABRICA" | "INTERNO";
   /** Solo en el interno: vendedores que vinieron por nombre y hay que asignar. */
@@ -453,7 +455,7 @@ export default function EncuestasFabrica() {
               <div className="text-xs text-ink-muted">clientes en el archivo</div>
             </div>
             <div className="rounded-md border border-gray-200 p-3">
-              <div className="text-2xl font-bold text-navy">{previa.vendedores.length}</div>
+              <div className="text-2xl font-bold text-navy">{(previa.vendedores ?? []).length}</div>
               <div className="text-xs text-ink-muted">vendedores distintos</div>
             </div>
             <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
@@ -465,7 +467,7 @@ export default function EncuestasFabrica() {
           </div>
 
           <div className="mt-3 text-sm text-ink-muted">
-            {previa.hojas.map((h) => (
+            {(previa.hojas ?? []).map((h) => (
               <div key={h.nombre}>
                 <strong>{h.sucursal}</strong> ({h.codigoSucursal ?? "sin código"}): {h.clientes} cliente(s)
                 {h.filasVacias > 0 && `, ${h.filasVacias} fila(s) en blanco salteadas`}
@@ -473,27 +475,27 @@ export default function EncuestasFabrica() {
             ))}
           </div>
 
-          {previa.vendedoresSinNombre.length > 0 && (
+          {(previa.vendedoresSinNombre ?? []).length > 0 && (
             <div className="mt-3"><Alert tono="advertencia">
-              Hay {previa.vendedoresSinNombre.length} código(s) de vendedor que no figuran en la hoja de nombres:{" "}
-              {previa.vendedoresSinNombre.map((v) => `${v.codigo} (${v.filas})`).join(", ")}. Se cargan igual y les
+              Hay {(previa.vendedoresSinNombre ?? []).length} código(s) de vendedor que no figuran en la hoja de nombres:{" "}
+              {(previa.vendedoresSinNombre ?? []).map((v) => `${v.codigo} (${v.filas})`).join(", ")}. Se cargan igual y les
               podés poner nombre y correo desde la lista de abajo.
             </Alert></div>
           )}
-          {previa.rechazadas.length > 0 && (
+          {(previa.rechazadas ?? []).length > 0 && (
             <div className="mt-3"><Alert tono="error">
-              {previa.rechazadas.length} fila(s) no se van a importar:{" "}
-              {previa.rechazadas.slice(0, 5).map((r) => `${r.hoja} fila ${r.numeroFilaExcel} (${r.motivo})`).join("; ")}
-              {previa.rechazadas.length > 5 && ` y ${previa.rechazadas.length - 5} más`}.
+              {(previa.rechazadas ?? []).length} fila(s) no se van a importar:{" "}
+              {(previa.rechazadas ?? []).slice(0, 5).map((r) => `${r.hoja} fila ${r.numeroFilaExcel} (${r.motivo})`).join("; ")}
+              {(previa.rechazadas ?? []).length > 5 && ` y ${(previa.rechazadas ?? []).length - 5} más`}.
             </Alert></div>
           )}
-          {previa.observadasPorFabrica.length > 0 && (
+          {(previa.observadasPorFabrica ?? []).length > 0 && (
             <div className="mt-3"><Alert tono="advertencia">
-              Fábrica observó {previa.observadasPorFabrica.length} fila(s) (mail inválido, chasis repetido u otro). Se
+              Fábrica observó {(previa.observadasPorFabrica ?? []).length} fila(s) (mail inválido, chasis repetido u otro). Se
               importan igual, pero conviene revisarlas.
             </Alert></div>
           )}
-          {previa.avisos.map((a, i) => (
+          {(previa.avisos ?? []).map((a, i) => (
             <div key={i} className="mt-3">
               <Alert tono="advertencia">{a}</Alert>
             </div>

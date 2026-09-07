@@ -51,12 +51,30 @@ export async function previewEncuestaVW(req: Request, res: Response) {
       select: { codigo: true, nombre: true, sucursal: true },
     });
 
+    // Cuántos clientes le tocarían a cada vendedor una vez resuelto el mapeo.
+    const porVendedor = new Map<string, number>();
+    for (const f of convertido.filas) {
+      porVendedor.set(f.codigoVendedor, (porVendedor.get(f.codigoVendedor) ?? 0) + 1);
+    }
+
     const token = guardarArchivoTemporal(req.file.buffer, req.file.originalname);
+    // OJO: la respuesta tiene que traer TODOS los campos que la pantalla lee,
+    // aunque para este formato vayan vacíos. La primera versión omitió tres
+    // (vendedores, vendedoresSinNombre y observadasPorFabrica) y la pantalla, que
+    // hace .length sobre ellos sin preguntar, se cayó entera: pantallazo blanco y
+    // un "Cannot read properties of undefined" en la consola.
     return res.json({
       fileToken: token,
+      filename: req.file.originalname,
       formato: "INTERNO",
       totalClientes: convertido.filas.length,
       hojas: [],
+      vendedores: [...porVendedor.entries()].map(([codigo, clientes]) => {
+        const v = vendedores.find((x) => x.codigo === codigo);
+        return { codigo, nombre: v?.nombre ?? null, sucursal: v?.sucursal ?? "", clientes };
+      }),
+      vendedoresSinNombre: [],
+      observadasPorFabrica: [],
       // Lo que hay que resolver antes de poder importar.
       vendedoresSinAsignar: sinResolver,
       vendedoresDisponibles: vendedores,
