@@ -1,4 +1,5 @@
 import { AreaTrabajo, AreaUsuario, RolUsuario } from "@prisma/client";
+import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { claveNormalizada } from "./normalizacion.service";
 
@@ -76,6 +77,11 @@ export function parsearAreaQuery(valor: unknown): AreaTrabajo | null {
 // filtro es exacto y la paginación sigue resolviéndose en SQL.
 
 export function provinciaPermitida(usuario: UsuarioArea): string | null {
+  // La marca manda: en Ford los tableros y listados NO se filtran por provincia,
+  // y eso es una decisión, no un olvido (ver visibilidadPorProvincia en marca.ts).
+  // Devolver null acá deja todo exactamente como estaba antes para Ford: sin
+  // restricción de provincia en ninguno de los lugares que la consultan.
+  if (!marca.visibilidadPorProvincia) return null;
   const s = (usuario.sucursal ?? "").trim();
   return s === "" ? null : s;
 }

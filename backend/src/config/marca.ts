@@ -76,6 +76,22 @@ export interface PerfilMarca {
      */
     formatoExcel: "FORD" | "VW";
   };
+  /**
+   * La separación por PROVINCIA se aplica en TODO el sistema (listados, tableros,
+   * reportes, campañas) además de por área.
+   *
+   * En Volkswagen sí: se pidió expresamente que alguien de Mendoza no vea nada de
+   * San Juan. En Ford NO, y no es un descuido: es una decisión del dueño de agosto
+   * 2026 —"provincia solo en Seguimiento"— para que los tableros den panorama
+   * completo. Ford sigue filtrando por provincia únicamente donde lo hacía:
+   * Seguimiento, Refuerzos y Fidelización, que tienen su propio filtro.
+   */
+  visibilidadPorProvincia: boolean;
+  /**
+   * Avisar cuando entra un caso del mismo auto (mismo chasis o patente) con OTRO
+   * número de orden. Es un pedido de Volkswagen; en Ford el cartel no aparece.
+   */
+  avisoPosibleDuplicado: boolean;
   /** Color institucional para los títulos de los documentos que se exportan. */
   colorDocumento: string;
   /** Nombre del archivo del logo dentro de backend/assets (ver su README). */
@@ -93,6 +109,8 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     rqrClienteAnonimo: false,
     posventaPorItems: false,
     refuerzo: { habilitado: true, notificarPorMail: false, formatoExcel: "FORD" },
+    visibilidadPorProvincia: false,
+    avisoPosibleDuplicado: false,
     colorDocumento: "003478", // azul Ford
     logoArchivo: "logo-ford.png",
   },
@@ -109,6 +127,8 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     rqrClienteAnonimo: true,
     posventaPorItems: true,
     refuerzo: { habilitado: true, notificarPorMail: true, formatoExcel: "VW" },
+    visibilidadPorProvincia: true,
+    avisoPosibleDuplicado: true,
     colorDocumento: "001E50", // azul Volkswagen
     logoArchivo: "logo-volkswagen.png",
   },

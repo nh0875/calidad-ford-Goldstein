@@ -8,6 +8,7 @@ import {
   TipoAviso,
   TipoUpload,
 } from "@prisma/client";
+import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { olvidarSucursalesConocidas } from "./area.service";
 import { crearAviso } from "./aviso.service";
@@ -351,6 +352,8 @@ async function importarHoja(
     patente: string,
     ordenNueva: string
   ): { con: CasoConocido; por: string } | null => {
+    // Solo la marca que lo pidió. En Ford el cartel no aparece.
+    if (!marca.avisoPosibleDuplicado) return null;
     if (!ordenNueva) return null;
     const vinKey = claveNormalizada(vin);
     const patKey = claveNormalizada(patente);
