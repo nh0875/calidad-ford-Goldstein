@@ -526,6 +526,10 @@ model Usuario {
   // La admin suele quedar en false (supervisa, no gestiona casos).
   participaEnRefuerzos Boolean     @default(true)
   createdAt            DateTime    @default(now())
+  // Borrado lógico. Un Usuario cuelga de once relaciones (auditoría, RQR que
+  // creó, mensajes que envió): borrarlo de verdad se llevaría la trazabilidad.
+  // Al eliminarlo se le libera el email, para poder reusarlo en una cuenta nueva.
+  eliminadoEn          DateTime?
 
   auditLogs                AuditLog[]
   casosEliminados          Caso[]                @relation("CasoEliminadoPor")
@@ -749,9 +753,15 @@ model EncuestaFabricaVW {
 
   // De qué carga salió y en cuál se la vio por última vez. La segunda es la que
   // decide: si una carga nueva no la trae, es que el cliente ya contestó.
-  origenUploadId  String
-  origenUpload    ExcelUpload @relation(fields: [origenUploadId], references: [id])
+  // Opcional: las cargadas a mano no salen de ningún Excel.
+  origenUploadId  String?
+  origenUpload    ExcelUpload? @relation(fields: [origenUploadId], references: [id])
   vistaEnUploadId String?
+
+  // Cargada a mano por Calidad. Se EXCLUYE de la barrida que da por respondido
+  // todo lo que no venga en el Excel nuevo: como nunca va a venir en ese
+  // archivo, sin esto desaparecería sola en la siguiente carga.
+  esManual        Boolean     @default(false)
 
   detectadaEn DateTime  @default(now())
   respondioEn DateTime?

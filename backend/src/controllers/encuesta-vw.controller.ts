@@ -302,3 +302,118 @@ export async function notificarEncuestaVW(req: Request, res: Response) {
     : `Se avisó a ${enviados} vendedor(es).`;
   res.json({ message, resultados });
 }
+
+// ---------- DELETE /api/encuesta-vw/vendedores/:id ----------
+//
+// Borrado DE VERDAD, pero solo si se puede: cada encuesta pendiente apunta a su
+// vendedor y esa referencia es obligatoria, así que un vendedor con clientes
+// asociados no se puede borrar sin dejarlos huérfanos. En ese caso no se borra a
+// medias ni se borra en cascada (serían clientes que nadie va a llamar): se
+// explica y se ofrece desactivarlo, que es lo que el sistema ya sabe hacer.
+
+export async function eliminarVendedorVW(req: Request, res: Response) {
+  const vendedor = await prisma.vendedorVW.findUnique({
+    where: { id: req.params.id },
+    include: { _count: { select: { pendientes: true } } },
+  });
+  if (!vendedor) return res.status(404).json({ message: "No se encontró ese vendedor." });
+
+  const asociados = vendedor._count.pendientes;
+  if (asociados > 0) {
+    return res.status(409).json({
+      message:
+        `No se puede borrar a ${vendedor.nombre || vendedor.codigo}: tiene ${asociados} encuesta(s) ` +
+        `asociada(s) y quedarían sin vendedor. Si ya no trabaja acá, desactivalo: deja de recibir ` +
+        `avisos y no aparece para asignar, pero sus clientes históricos siguen teniendo a quién ` +
+        `estar asociados.`,
+      puedeDesactivar: true,
+    });
+  }
+
+  await prisma.vendedorVW.delete({ where: { id: vendedor.id } });
+  auditar(req, {
+    accion: ACCIONES.VENDEDOR_VW_ELIMINADO,
+    entidad: "VendedorVW",
+    entidadId: vendedor.id,
+    detalles: { codigo: vendedor.codigo, nombre: vendedor.nombre, email: vendedor.email },
+  });
+  res.json({ message: `Vendedor ${vendedor.nombre || vendedor.codigo} eliminado.` });
+}
+
+// ---------- POST /api/encuesta-vw/manual ----------
+//
+// Alta a mano de una encuesta pendiente, para el cliente que no vino en el Excel
+// de fábrica pero igual hay que llamar.
+//
+// Queda marcada con esManual para que la carga del próximo Excel no la dé por
+// respondida: esa barrida cierra todo lo que no venga en el archivo, y un caso
+// cargado a mano nunca va a venir.
+
+const encuestaManualSchema = z.object({
+  chasis: z.string().trim().min(5, "El chasis es obligatorio.").max(40),
+  dominio: z.string().trim().max(20).optional(),
+  nombreCliente: z.string().trim().min(1, "El nombre del cliente es obligatorio.").max(160),
+  email: z
+    .string()
+    .trim()
+    .max(160)
+    .refine((v) => v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "El correo no parece válido.")
+    .optional(),
+  codigoVendedor: z.string().trim().regex(/^\d{7}$/, "El código del vendedor son 7 dígitos."),
+  fechaEntrega: z.string().trim().optional(),
+  canalVentas: z.string().trim().max(40).optional(),
+});
+
+export async function crearEncuestaManualVW(req: Request, res: Response) {
+  const parsed = encuestaManualSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ message: parsed.error.errors.map((e) => e.message).join(" ") });
+  }
+  const d = parsed.data;
+
+  const vendedor = await prisma.vendedorVW.findUnique({ where: { codigo: d.codigoVendedor } });
+  if (!vendedor) {
+    return res.status(404).json({
+      message: `No existe el vendedor ${d.codigoVendedor}. Cargalo primero en la lista de vendedores.`,
+    });
+  }
+
+  // El chasis identifica la unidad y es único: si ya está, no se duplica.
+  const chasis = d.chasis.toUpperCase();
+  const yaEsta = await prisma.encuestaFabricaVW.findUnique({ where: { chasis } });
+  if (yaEsta) {
+    return res.status(409).json({
+      message:
+        yaEsta.estado === EstadoEncuestaFabrica.PENDIENTE
+          ? `Ese chasis ya está en la lista de pendientes (${yaEsta.nombreCliente}).`
+          : `Ese chasis ya figura como respondido (${yaEsta.nombreCliente}).`,
+    });
+  }
+
+  const fecha = d.fechaEntrega ? new Date(d.fechaEntrega) : null;
+  const creada = await prisma.encuestaFabricaVW.create({
+    data: {
+      chasis,
+      dominio: d.dominio || null,
+      nombreCliente: d.nombreCliente,
+      email: d.email || "",
+      fechaEntrega: fecha && !Number.isNaN(fecha.getTime()) ? fecha : null,
+      canalVentas: d.canalVentas || null,
+      vendedorId: vendedor.id,
+      sucursal: vendedor.sucursal,
+      esManual: true,
+      estado: EstadoEncuestaFabrica.PENDIENTE,
+    },
+  });
+
+  auditar(req, {
+    accion: ACCIONES.ENCUESTA_VW_MANUAL_CREADA,
+    entidad: "EncuestaFabricaVW",
+    entidadId: creada.id,
+    detalles: { chasis, cliente: d.nombreCliente, vendedor: vendedor.codigo },
+  });
+  res.status(201).json({
+    message: `${d.nombreCliente} agregado a los pendientes de ${vendedor.nombre || vendedor.codigo}.`,
+    data: creada,
+  });
+}

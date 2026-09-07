@@ -8,14 +8,14 @@
 // Por eso esta pantalla se organiza por vendedor y no por cliente: la unidad de
 // trabajo es "a quién le mando el mail y con qué lista adentro".
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, Mail, MailCheck, Pencil, UploadCloud, UserPlus } from "lucide-react";
-import { apiGet, apiPatchJson, apiPostForm, apiPostJson } from "../lib/api";
+import { AlertTriangle, ChevronDown, ChevronRight, Mail, MailCheck, Pencil, Plus, Trash2, UploadCloud, UserPlus } from "lucide-react";
+import { apiDelete, apiGet, apiPatchJson, apiPostForm, apiPostJson } from "../lib/api";
 import { getMarca } from "../lib/marca";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
-import { Campo, Input } from "../components/ui/Field";
+import { Campo, Input, Select } from "../components/ui/Field";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 
@@ -200,6 +200,59 @@ export default function EncuestasFabrica() {
       await cargar();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos guardar el vendedor.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function eliminarVendedor(v: Vendedor) {
+    const ok = window.confirm(
+      `¿Eliminar a ${v.nombre || v.codigo}?
+
+` +
+        `Solo se puede si no tiene encuestas asociadas. Si las tiene, el sistema te lo ` +
+        `va a decir y vas a poder desactivarlo en vez de borrarlo.`
+    );
+    if (!ok) return;
+    setGuardando(true);
+    setError(null);
+    setMensaje(null);
+    try {
+      const r = await apiDelete<{ message: string }>(`/api/encuesta-vw/vendedores/${v.id}`);
+      setMensaje(r.message);
+      await cargar();
+    } catch (err) {
+      // El 409 de "tiene encuestas asociadas" trae la explicación y qué hacer:
+      // se muestra tal cual, no se traduce a un "no se pudo" genérico.
+      setError(err instanceof Error ? err.message : "No pudimos eliminar el vendedor.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  // ---- Alta manual de una encuesta pendiente --------------------------------
+  const [altaManual, setAltaManual] = useState(false);
+  const [manual, setManual] = useState({
+    chasis: "",
+    dominio: "",
+    nombreCliente: "",
+    email: "",
+    codigoVendedor: "",
+    fechaEntrega: "",
+  });
+
+  async function crearEncuestaManual() {
+    setGuardando(true);
+    setError(null);
+    setMensaje(null);
+    try {
+      const r = await apiPostJson<{ message: string }>("/api/encuesta-vw/manual", manual);
+      setMensaje(r.message);
+      setAltaManual(false);
+      setManual({ chasis: "", dominio: "", nombreCliente: "", email: "", codigoVendedor: "", fechaEntrega: "" });
+      await cargar();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No pudimos agregar el caso.");
     } finally {
       setGuardando(false);
     }
@@ -392,6 +445,80 @@ export default function EncuestasFabrica() {
         </Card>
       )}
 
+      {/* Alta manual de un pendiente */}
+      <Card padding="p-0">
+        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+          <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">
+            Agregar un caso a mano
+          </h3>
+          <button onClick={() => setAltaManual((v) => !v)} className={claseBoton("secundario", "!py-1.5")}>
+            <Plus className="h-4 w-4" /> {altaManual ? "Cancelar" : "Agregar caso"}
+          </button>
+        </div>
+
+        {altaManual && (
+          <div className="grid gap-3 bg-gray-50 p-5 sm:grid-cols-3">
+            <Campo etiqueta="Chasis" hint="Identifica la unidad y no se repite">
+              <Input
+                value={manual.chasis}
+                onChange={(e) => setManual({ ...manual, chasis: e.target.value })}
+                placeholder="9BWBH6BF7T4116921"
+              />
+            </Campo>
+            <Campo etiqueta="Dominio">
+              <Input
+                value={manual.dominio}
+                onChange={(e) => setManual({ ...manual, dominio: e.target.value })}
+                placeholder="AI536KD"
+              />
+            </Campo>
+            <Campo etiqueta="Vendedor">
+              <Select
+                value={manual.codigoVendedor}
+                onChange={(e) => setManual({ ...manual, codigoVendedor: e.target.value })}
+              >
+                <option value="">Elegí un vendedor…</option>
+                {vendedores.map((v) => (
+                  <option key={v.id} value={v.codigo}>
+                    {v.nombre ? `${v.nombre} (${v.codigo})` : v.codigo} — {v.sucursal}
+                  </option>
+                ))}
+              </Select>
+            </Campo>
+            <Campo etiqueta="Nombre del cliente">
+              <Input
+                value={manual.nombreCliente}
+                onChange={(e) => setManual({ ...manual, nombreCliente: e.target.value })}
+              />
+            </Campo>
+            <Campo etiqueta="Correo del cliente">
+              <Input
+                type="email"
+                value={manual.email}
+                onChange={(e) => setManual({ ...manual, email: e.target.value })}
+              />
+            </Campo>
+            <Campo etiqueta="Fecha de entrega">
+              <Input
+                type="date"
+                value={manual.fechaEntrega}
+                onChange={(e) => setManual({ ...manual, fechaEntrega: e.target.value })}
+              />
+            </Campo>
+            <div className="sm:col-span-3">
+              <button onClick={crearEncuestaManual} disabled={guardando} className={claseBoton("primario")}>
+                {guardando ? "Guardando…" : "Agregar a los pendientes"}
+              </button>
+              <p className="mt-2 text-xs text-ink-muted">
+                Queda en la lista del vendedor igual que los que vienen del Excel de fábrica. La
+                diferencia: la próxima carga NO se lo lleva por delante — a los que vienen del
+                archivo, si dejan de aparecer, se los da por respondidos, y a este no.
+              </p>
+            </div>
+          </div>
+        )}
+      </Card>
+
       {/* Vendedores */}
       <Card padding="p-0">
         <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
@@ -500,6 +627,18 @@ export default function EncuestasFabrica() {
                         )}
                         <button onClick={() => abrirEdicion(v)} className={claseBoton("secundario", "!py-1 !px-2")} title="Editar nombre y correo">
                           <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => eliminarVendedor(v)}
+                          disabled={guardando}
+                          className={claseBoton("secundario", "!py-1 !px-2 !text-red-600")}
+                          title={
+                            pendientes.length > 0
+                              ? "Tiene encuestas asociadas: no se puede borrar, pero sí desactivar"
+                              : "Eliminar vendedor"
+                          }
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
                         </button>
                         {pendientes.length > 0 && v.email && (
                           <button

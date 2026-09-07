@@ -179,6 +179,10 @@ async function guardar(
       estado: EstadoEncuestaFabrica.PENDIENTE,
       vendedor: { codigoSucursal: { in: sucursales } },
       chasis: { notIn: chasisDelArchivo },
+      // Las cargadas a mano NUNCA vienen en el Excel de fábrica, así que esta
+      // barrida las daría por respondidas en la primera importación: el cliente
+      // saldría de la lista de su vendedor sin que nadie lo haya llamado.
+      esManual: false,
     },
     data: { estado: EstadoEncuestaFabrica.RESPONDIO, respondioEn: new Date() },
   });

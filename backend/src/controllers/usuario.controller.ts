@@ -33,6 +33,7 @@ async function normalizarSucursalUsuario(raw?: string | null): Promise<string | 
 
 export async function listUsuarios(_req: Request, res: Response) {
   const usuarios = await prisma.usuario.findMany({
+    where: { eliminadoEn: null },
     orderBy: { createdAt: "asc" },
     select: SELECT_USUARIO,
   });
@@ -233,4 +234,58 @@ export async function patchUsuario(req: Request, res: Response) {
     message: `${actualizado.nombre}: ${cambios.join(", ") || "sin cambios"}.`,
     data: actualizado,
   });
+}
+
+// ---------- DELETE /api/usuarios/:id ----------
+//
+// Borrado LÓGICO. Un Usuario cuelga de once relaciones —auditoría, los RQR que
+// creó, los casos que borró, los WhatsApp que mandó—, así que un DELETE de
+// verdad o falla por clave foránea o se lleva puesta la trazabilidad, que en un
+// sistema de Calidad es justamente lo que no se puede perder.
+//
+// Lo que sí pasa, y es lo que la persona espera al apretar "Eliminar": la cuenta
+// desaparece de la lista, no puede volver a entrar, y el email queda LIBRE para
+// usarlo en una cuenta nueva.
+export async function eliminarUsuario(req: Request, res: Response) {
+  const usuario = await prisma.usuario.findUnique({ where: { id: req.params.id } });
+  if (!usuario || usuario.eliminadoEn) {
+    return res.status(404).json({ message: "No se encontró ese usuario." });
+  }
+
+  if (usuario.id === req.usuario!.id) {
+    return res.status(409).json({ message: "No podés eliminar tu propia cuenta." });
+  }
+
+  // Que no quede el sistema sin nadie que pueda administrarlo.
+  if (usuario.rol === RolUsuario.ADMIN) {
+    const otrosAdmins = await prisma.usuario.count({
+      where: { rol: RolUsuario.ADMIN, activo: true, eliminadoEn: null, id: { not: usuario.id } },
+    });
+    if (otrosAdmins === 0) {
+      return res.status(409).json({
+        message: "Es el único administrador activo: si lo eliminás, nadie puede administrar el sistema.",
+      });
+    }
+  }
+
+  // El email se libera con un prefijo, porque la columna es única y el registro
+  // no se borra. Así se puede volver a dar de alta a la misma persona.
+  const marcaTiempo = Date.now();
+  await prisma.usuario.update({
+    where: { id: usuario.id },
+    data: {
+      eliminadoEn: new Date(),
+      activo: false,
+      participaEnRefuerzos: false,
+      email: `eliminado-${marcaTiempo}-${usuario.email}`,
+    },
+  });
+
+  auditar(req, {
+    accion: ACCIONES.USUARIO_ELIMINADO,
+    entidad: "Usuario",
+    entidadId: usuario.id,
+    detalles: { nombre: usuario.nombre, email: usuario.email, rol: usuario.rol },
+  });
+  res.json({ message: `Se eliminó la cuenta de ${usuario.nombre}. El email queda libre para reutilizar.` });
 }

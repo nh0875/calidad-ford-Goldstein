@@ -4,8 +4,10 @@ import { requireAdmin } from "../middlewares/auth";
 import { recibirXlsx } from "../middlewares/uploadXlsx";
 import {
   confirmEncuestaVW,
+  crearEncuestaManualVW,
   crearVendedorVW,
   editarVendedorVW,
+  eliminarVendedorVW,
   listarEncuestaVW,
   notificarEncuestaVW,
   previewEncuestaVW,
@@ -36,5 +38,11 @@ router.post("/notificar", requireAdmin, asyncHandler(notificarEncuestaVW));
 // ABM de vendedores: acá se les carga el correo, que es lo que habilita el aviso.
 router.post("/vendedores", requireAdmin, asyncHandler(crearVendedorVW));
 router.patch("/vendedores/:id", requireAdmin, asyncHandler(editarVendedorVW));
+// Borra el vendedor si no tiene encuestas asociadas; si las tiene, explica
+// por que no se puede y ofrece desactivarlo.
+router.delete("/vendedores/:id", requireAdmin, asyncHandler(eliminarVendedorVW));
+
+// Alta a mano de un pendiente que no vino en el Excel de fabrica.
+router.post("/manual", requireAdmin, asyncHandler(crearEncuestaManualVW));
 
 export default router;

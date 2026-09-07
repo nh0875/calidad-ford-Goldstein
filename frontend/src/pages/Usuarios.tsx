@@ -2,7 +2,7 @@
 // lo exige con requireAdmin, así que esta pantalla es la puerta, no la reja).
 import { Fragment, FormEvent, useCallback, useEffect, useState } from "react";
 import { UserPlus, Users as UsersIcon } from "lucide-react";
-import { apiGet, apiPatchJson, apiPostJson } from "../lib/api";
+import { apiDelete, apiGet, apiPatchJson, apiPostJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
@@ -134,6 +134,34 @@ export default function Usuarios() {
       await cargar();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos actualizar el usuario.");
+    }
+  }
+
+  async function eliminarUsuario(u: UsuarioFila) {
+    // Se pide confirmación escribiendo nada: alcanza con el confirm del navegador,
+    // pero el texto tiene que decir qué pasa DE VERDAD, porque "eliminar" suena a
+    // que se borra todo y no es así: la historia del usuario se conserva.
+    const ok = window.confirm(
+      `¿Eliminar la cuenta de ${u.nombre}?
+
+` +
+        `No va a poder entrar más y desaparece de esta lista. El email queda libre ` +
+        `para usarlo en una cuenta nueva.
+
+` +
+        `Lo que hizo (casos, RQR, mensajes enviados) se conserva, para no perder la ` +
+        `trazabilidad.`
+    );
+    if (!ok) return;
+
+    setError(null);
+    setMensaje(null);
+    try {
+      const { message } = await apiDelete<{ message: string }>(`/api/usuarios/${u.id}`);
+      setMensaje(message);
+      await cargar();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No pudimos eliminar el usuario.");
     }
   }
 
@@ -361,6 +389,18 @@ export default function Usuarios() {
                       className="text-xs font-medium text-ink-muted hover:underline disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {u.activo ? "Desactivar" : "Reactivar"}
+                    </button>
+                    <button
+                      onClick={() => eliminarUsuario(u)}
+                      disabled={u.id === usuarioActual?.id}
+                      title={
+                        u.id === usuarioActual?.id
+                          ? "No podés eliminar tu propia cuenta"
+                          : "La cuenta desaparece de la lista y el email queda libre"
+                      }
+                      className="text-xs font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Eliminar
                     </button>
                   </td>
                 </tr>
