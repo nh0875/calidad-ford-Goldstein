@@ -10,6 +10,7 @@
 // la tabla no lo muestra: prometer una columna vacía es peor que no ponerla.
 import { EstadoEncuestaFabrica } from "@prisma/client";
 import { prisma } from "../config/prisma";
+import { env } from "../config/env";
 import { marca } from "../config/marca";
 import { enviarMail, MailError } from "./mail.service";
 
@@ -150,6 +151,8 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
       await enviarMail({
         para: v.email,
         asunto: `Encuestas de ${marca.nombre} sin responder: ${clientes.length} cliente(s) tuyos`,
+        // Calidad va en copia de todos los avisos a vendedores.
+        copia: env.mail.copiaAvisos,
         texto,
         html,
       });

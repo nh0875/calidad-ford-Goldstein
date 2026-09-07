@@ -9,6 +9,7 @@
 // porque el vendedor no tiene dónde ir a buscarlos.
 import { EstadoTareaRefuerzo } from "@prisma/client";
 import { prisma } from "../config/prisma";
+import { env } from "../config/env";
 import { marca } from "../config/marca";
 import { enviarMail, MailError } from "./mail.service";
 
@@ -157,6 +158,8 @@ export async function notificarVendedores(): Promise<ResultadoNotificacion[]> {
       await enviarMail({
         para: grupo.email,
         asunto: `Refuerzo de encuesta ${marca.nombre}: ${grupo.clientes.length} cliente(s) para contactar`,
+        // Calidad va en copia de todos los avisos a vendedores.
+        copia: env.mail.copiaAvisos,
         texto,
         html,
       });

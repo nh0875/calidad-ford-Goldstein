@@ -35,6 +35,19 @@ export const env = {
     puerto: numero(process.env.MAIL_PUERTO, 465),
     usuario: process.env.MAIL_USUARIO ?? "",
     password: process.env.MAIL_PASSWORD ?? "",
+    /**
+     * A quién se pone EN COPIA en todos los avisos que se le mandan a los
+     * vendedores (los pendientes de la encuesta de fábrica y los refuerzos).
+     *
+     * Se puede poner más de una dirección separándolas con comas. Para sacar la
+     * copia, dejar MAIL_COPIA_AVISOS vacío en el .env.
+     *
+     * Viene con un valor por defecto a propósito: si quedara vacío, el pedido de
+     * Calidad ("que todos los avisos vayan en copia") no se cumpliría hasta que
+     * alguien se acordara de editar el .env en la PC, y no habría ninguna señal
+     * de que no se está cumpliendo.
+     */
+    copiaAvisos: process.env.MAIL_COPIA_AVISOS ?? "ldip@mariogoldsteinsa.com.ar",
   },
   meta: {
     token: process.env.META_WHATSAPP_TOKEN ?? "",

@@ -42,6 +42,8 @@ function obtenerTransporte(): Transporter | null {
 
 export interface MailAEnviar {
   para: string;
+  /** Direcciones en copia (CC), separadas por coma. Vacío = sin copia. */
+  copia?: string;
   asunto: string;
   /** Cuerpo en texto plano. Se usa como alternativa del HTML. */
   texto: string;
@@ -66,6 +68,9 @@ export async function enviarMail(mail: MailAEnviar): Promise<void> {
     await t.sendMail({
       from: `"Calidad ${marca.nombre}" <${env.mail.usuario}>`,
       to: mail.para,
+      // Solo se manda el CC si hay algo: un cc vacío hace que algunos servidores
+      // rechacen el mensaje entero.
+      ...(mail.copia && mail.copia.trim() ? { cc: mail.copia.trim() } : {}),
       subject: mail.asunto,
       text: mail.texto,
       html: mail.html,
