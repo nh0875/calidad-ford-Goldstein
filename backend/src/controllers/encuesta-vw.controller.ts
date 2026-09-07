@@ -431,3 +431,41 @@ export async function crearEncuestaManualVW(req: Request, res: Response) {
     data: creada,
   });
 }
+
+// ---------- DELETE /api/encuesta-vw/clientes/:id ----------
+//
+// Saca un cliente de la lista. Es borrado de verdad: la fila no la referencia
+// nadie, así que no deja nada huérfano.
+//
+// UN DETALLE QUE HAY QUE AVISARLE A QUIEN LO USA: si el cliente vino del Excel de
+// fábrica y todavía figura ahí, la próxima carga lo vuelve a traer. Eso es lo
+// correcto —la lista de fábrica manda— pero sorprende si uno no lo sabe. Los
+// cargados A MANO no vuelven: no salen de ningún archivo.
+export async function eliminarEncuestaVW(req: Request, res: Response) {
+  const encuesta = await prisma.encuestaFabricaVW.findUnique({
+    where: { id: req.params.id },
+    include: { vendedor: { select: { codigo: true, nombre: true } } },
+  });
+  if (!encuesta) return res.status(404).json({ message: "No se encontró ese cliente." });
+
+  await prisma.encuestaFabricaVW.delete({ where: { id: encuesta.id } });
+
+  auditar(req, {
+    accion: ACCIONES.ENCUESTA_VW_ELIMINADA,
+    entidad: "EncuestaFabricaVW",
+    entidadId: encuesta.id,
+    detalles: {
+      chasis: encuesta.chasis,
+      cliente: encuesta.nombreCliente,
+      estado: encuesta.estado,
+      esManual: encuesta.esManual,
+      vendedor: encuesta.vendedor?.codigo ?? null,
+    },
+  });
+
+  res.json({
+    message: encuesta.esManual
+      ? `${encuesta.nombreCliente} eliminado de la lista.`
+      : `${encuesta.nombreCliente} eliminado. Ojo: vino del Excel de fábrica, así que si todavía figura ahí, la próxima carga lo vuelve a traer.`,
+  });
+}

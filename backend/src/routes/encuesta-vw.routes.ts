@@ -7,6 +7,7 @@ import {
   crearEncuestaManualVW,
   crearVendedorVW,
   editarVendedorVW,
+  eliminarEncuestaVW,
   eliminarVendedorVW,
   listarEncuestaVW,
   notificarEncuestaVW,
@@ -44,5 +45,9 @@ router.delete("/vendedores/:id", requireAdmin, asyncHandler(eliminarVendedorVW))
 
 // Alta a mano de un pendiente que no vino en el Excel de fabrica.
 router.post("/manual", requireAdmin, asyncHandler(crearEncuestaManualVW));
+
+// Saca un cliente de la lista. Si vino del Excel de fabrica y sigue figurando
+// ahi, la proxima carga lo vuelve a traer; los cargados a mano no vuelven.
+router.delete("/clientes/:id", requireAdmin, asyncHandler(eliminarEncuestaVW));
 
 export default router;

@@ -276,6 +276,30 @@ export default function EncuestasFabrica() {
       });
   }, [vendedores, busquedaCliente, filtroEstado]);
 
+  async function eliminarCliente(c: { id: string; nombreCliente: string; esManual?: boolean }) {
+    const ok = window.confirm(
+      `¿Sacar a ${c.nombreCliente} de la lista?
+
+` +
+        (c.esManual
+          ? "Se cargó a mano, así que no va a volver."
+          : "OJO: vino del Excel de fábrica. Si todavía figura ahí, la próxima carga lo vuelve a traer.")
+    );
+    if (!ok) return;
+    setGuardando(true);
+    setError(null);
+    setMensaje(null);
+    try {
+      const r = await apiDelete<{ message: string }>(`/api/encuesta-vw/clientes/${c.id}`);
+      setMensaje(r.message);
+      await cargar();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No pudimos eliminar el cliente.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
   // ---- Alta manual de una encuesta pendiente --------------------------------
   const [altaManual, setAltaManual] = useState(false);
   const [manual, setManual] = useState({
@@ -537,6 +561,7 @@ export default function EncuestasFabrica() {
                   <th className="whitespace-nowrap px-4 py-3">Entrega</th>
                   <th className="whitespace-nowrap px-4 py-3">Estado</th>
                   <th className="whitespace-nowrap px-4 py-3">Origen</th>
+                  <th className="whitespace-nowrap px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
@@ -564,6 +589,16 @@ export default function EncuestasFabrica() {
                       ) : (
                         <span className="text-xs text-ink-muted">Excel de fábrica</span>
                       )}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right">
+                      <button
+                        onClick={() => eliminarCliente(c)}
+                        disabled={guardando}
+                        className="text-xs font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+                        title="Sacar este cliente de la lista"
+                      >
+                        Eliminar
+                      </button>
                     </td>
                   </tr>
                 ))}
