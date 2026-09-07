@@ -4,7 +4,7 @@ import { marca } from "../config/marca";
 import { DEFINICION_ITEMS } from "../config/posventa-vw";
 import { reporteDesempenoPosventa } from "../services/reporte-posventa.service";
 import { excelDesempenoPosventa, wordDesempenoPosventa } from "../services/exportacion-posventa.service";
-import { areaPermitida } from "../services/area.service";
+import { areaPermitida, provinciaPermitida } from "../services/area.service";
 
 // Filtros del reporte. El área NO es un filtro: este reporte es de Posventa por
 // definición, así que un usuario restringido a Ventas no tiene nada que ver acá
@@ -36,7 +36,8 @@ export async function getDesempenoPosventa(req: Request, res: Response) {
   if (!puedeVerPosventa(req)) {
     return res.status(403).json({ message: "Este reporte es del área de Posventa." });
   }
-  const data = await reporteDesempenoPosventa(parsed.data);
+  const sucursal = provinciaPermitida(req.usuario!) ?? parsed.data.sucursal;
+  const data = await reporteDesempenoPosventa({ ...parsed.data, sucursal });
   res.json({ data, items: DEFINICION_ITEMS });
 }
 
@@ -54,7 +55,8 @@ export async function exportarDesempenoExcel(req: Request, res: Response) {
   if (!puedeVerPosventa(req)) {
     return res.status(403).json({ message: "Este reporte es del área de Posventa." });
   }
-  const buffer = await excelDesempenoPosventa(parsed.data);
+  const sucursal = provinciaPermitida(req.usuario!) ?? parsed.data.sucursal;
+  const buffer = await excelDesempenoPosventa({ ...parsed.data, sucursal });
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo("xlsx")}"`);
   res.send(buffer);
@@ -68,7 +70,8 @@ export async function exportarDesempenoWord(req: Request, res: Response) {
   if (!puedeVerPosventa(req)) {
     return res.status(403).json({ message: "Este reporte es del área de Posventa." });
   }
-  const buffer = await wordDesempenoPosventa(parsed.data);
+  const sucursal = provinciaPermitida(req.usuario!) ?? parsed.data.sucursal;
+  const buffer = await wordDesempenoPosventa({ ...parsed.data, sucursal });
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
   res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo("docx")}"`);
   res.send(buffer);

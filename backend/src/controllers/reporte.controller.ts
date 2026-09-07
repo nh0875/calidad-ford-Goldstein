@@ -3,7 +3,7 @@ import { z } from "zod";
 import { reporteCausaRaiz, reporteSentimiento } from "../services/reporte.service";
 import { excelReporteCausaRaiz, excelReporteSentimiento } from "../services/exportacion.service";
 import { CATEGORIAS_CAUSA_RAIZ } from "../services/sentiment.service";
-import { areaEfectiva, parsearAreaQuery } from "../services/area.service";
+import { areaEfectiva, parsearAreaQuery, provinciaPermitida } from "../services/area.service";
 
 // Filtros compartidos por ambas pantallas de reportes (misma semántica que /api/casos)
 const filtrosBaseSchema = z.object({
@@ -43,7 +43,8 @@ export async function getReporteSentimiento(req: Request, res: Response) {
   const parsed = filtrosBaseSchema.safeParse(req.query);
   if (!parsed.success) return responderErrorFiltros(res, parsed.error);
   const area = areaEfectiva(req.usuario!, parsearAreaQuery(req.query.area));
-  res.json(await reporteSentimiento({ ...parsed.data, area }));
+  const sucursal = provinciaPermitida(req.usuario!) ?? parsed.data.sucursal;
+  res.json(await reporteSentimiento({ ...parsed.data, sucursal, area }));
 }
 
 export async function exportarReporteSentimiento(req: Request, res: Response) {
@@ -51,7 +52,8 @@ export async function exportarReporteSentimiento(req: Request, res: Response) {
   if (!parsed.success) return responderErrorFiltros(res, parsed.error);
 
   const area = areaEfectiva(req.usuario!, parsearAreaQuery(req.query.area));
-  const buffer = await excelReporteSentimiento({ ...parsed.data, area });
+  const sucursal = provinciaPermitida(req.usuario!) ?? parsed.data.sucursal;
+  const buffer = await excelReporteSentimiento({ ...parsed.data, sucursal, area });
   const fecha = new Date().toISOString().slice(0, 10);
   res
     .setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

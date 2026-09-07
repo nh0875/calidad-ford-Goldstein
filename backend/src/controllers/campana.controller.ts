@@ -7,7 +7,7 @@ import { contarDestinatarios, encolarCampana, progresoCola } from "../services/c
 import { ACCIONES, auditar } from "../services/audit.service";
 import { cupoDisponibleHoy, dentroDeVentana } from "../services/ventana-envio.service";
 import { estadoMeta } from "../services/configuracion.service";
-import { areaEfectiva, parsearAreaQuery, puedeAcceder } from "../services/area.service";
+import { areaEfectiva, parsearAreaQuery, provinciaPermitida, puedeAcceder, puedeVer } from "../services/area.service";
 import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
 
 const filtrosSchema = z.object({
@@ -67,7 +67,10 @@ export async function previewCampana(req: Request, res: Response) {
   // El área la fija la sesión (no el cliente): un usuario restringido solo
   // cuenta/alcanza casos de su área, aun con casoIds manuales.
   const area = areaEfectiva(req.usuario!, parsearAreaQuery(req.query.area));
-  const destinatarios = await contarDestinatarios({ ...parsed.data, area });
+  // CRITICO: esta pantalla MANDA WhatsApps. Sin esto, un usuario de una
+  // provincia podia escribirle a los clientes de la otra.
+  const sucursal = provinciaPermitida(req.usuario!) ?? parsed.data.sucursal;
+  const destinatarios = await contarDestinatarios({ ...parsed.data, sucursal, area });
   const esRecup = parsed.data.plantilla === "respuesta_no_recibida";
   res.json({
     destinatarios,
@@ -104,7 +107,8 @@ export async function enviarCampana(req: Request, res: Response) {
   }
 
   const area = areaEfectiva(req.usuario!, parsearAreaQuery(req.query.area));
-  const encolados = await encolarCampana({ ...parsed.data, area });
+  const sucursal = provinciaPermitida(req.usuario!) ?? parsed.data.sucursal;
+  const encolados = await encolarCampana({ ...parsed.data, sucursal, area });
   const esRecup = parsed.data.plantilla === "respuesta_no_recibida";
 
   // Aviso informativo sobre ventana/tope (el worker los hace cumplir al enviar)
@@ -182,12 +186,13 @@ export async function reintentarEnvio(req: Request, res: Response) {
       whatsappOptOut: true,
       telefonosNorm: true,
       ultimoErrorEnvio: true,
+      sucursal: true,
     },
   });
   if (!caso) return res.status(404).json({ message: "No encontramos ese caso." });
 
-  if (!puedeAcceder(req.usuario!, caso.area)) {
-    return res.status(403).json({ message: "Ese caso es de otra área: no lo podés gestionar." });
+  if (!puedeVer(req.usuario!, caso)) {
+    return res.status(403).json({ message: "Ese caso es de otra área o provincia: no lo podés gestionar." });
   }
 
   if (caso.estadoContacto !== EstadoContacto.ERROR) {

@@ -22,7 +22,7 @@ import {
 } from "../services/refuerzo.service";
 import { claveNormalizada } from "../services/normalizacion.service";
 import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
-import { parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
+import { parsearAreaQuery, puedeAcceder, puedeVer, whereArea, whereVisible } from "../services/area.service";
 
 // MODELO DE POOL: las tareas NO tienen dueño. asignadoA = "gestor" (quién la está
 // trabajando / la completó), null = en el pool sin tomar. Cada empleado ve TODAS
@@ -106,7 +106,7 @@ export async function listarTareas(req: Request, res: Response) {
   const q = parsed.data;
 
   const where: Prisma.TareaRefuerzoWhereInput = {
-    caso: { eliminadoEn: null, ...whereArea(req.usuario!, parsearAreaQuery(req.query.area)) },
+    caso: { eliminadoEn: null, ...(await whereVisible(req.usuario!, parsearAreaQuery(req.query.area))) },
     ...(q.sinTomar ? { asignadoAId: null } : q.asignadoAId ? { asignadoAId: q.asignadoAId } : {}),
     ...(q.estado ? { estado: q.estado } : {}),
     ...(q.tipo ? { tipo: q.tipo } : {}),
@@ -129,7 +129,7 @@ export async function listarTareas(req: Request, res: Response) {
 // completó cada gestor.
 
 export async function resumenEmpleados(req: Request, res: Response) {
-  const areaCaso = { eliminadoEn: null, ...whereArea(req.usuario!, parsearAreaQuery(req.query.area)) };
+  const areaCaso = { eliminadoEn: null, ...(await whereVisible(req.usuario!, parsearAreaQuery(req.query.area))) };
   const tareas = await prisma.tareaRefuerzo.findMany({
     where: { caso: areaCaso },
     select: {
@@ -294,7 +294,7 @@ export async function vincularTarea(req: Request, res: Response) {
 
   const caso = await prisma.caso.findUnique({ where: { id: casoId } });
   if (!caso || caso.eliminadoEn) return res.status(404).json({ message: "No se encontró ese caso." });
-  if (!puedeAcceder(req.usuario!, caso.area)) {
+  if (!puedeVer(req.usuario!, caso)) {
     return res.status(403).json({ message: "Ese caso es de otra área; no podés vincularlo." });
   }
 

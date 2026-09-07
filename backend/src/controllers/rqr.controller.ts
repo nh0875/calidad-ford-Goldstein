@@ -14,7 +14,15 @@ import {
 } from "../config/areas-vw";
 import { prisma } from "../config/prisma";
 import { crearRqrManual, recalcularTieneRqrAbierto } from "../services/rqr.service";
-import { areaPermitida, parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
+import {
+  areaPermitida,
+  parsearAreaQuery,
+  provinciaPermitida,
+  puedeAcceder,
+  puedeVer,
+  whereArea,
+  whereVisible,
+} from "../services/area.service";
 import { importarFormulariosRqr } from "../services/rqr-import.service";
 import { CATEGORIAS_CAUSA_RAIZ } from "../services/sentiment.service";
 import { wordRqr } from "../services/exportacion.service";
@@ -48,9 +56,19 @@ export async function listRqr(req: Request, res: Response) {
   }
   const q = parsed.data;
 
+  // Restricción por área + provincia. El RQR no tiene provincia propia: la hereda
+  // del Caso. Los RQR MANUALES no tienen caso, así que no tienen provincia contra
+  // la cual comparar; esos se siguen viendo (se filtran por área, como siempre).
+  // Ocultarlos sería peor: nadie los vería nunca.
+  const visible = await whereVisible(req.usuario!, parsearAreaQuery(req.query.area));
+  const filtroProvincia: Prisma.RQRWhereInput = visible.sucursal
+    ? { OR: [{ casoId: null }, { caso: { sucursal: visible.sucursal } }] }
+    : {};
+
   const where: Prisma.RQRWhereInput = {
     eliminadoEn: null, // los RQR borrados lógicamente no aparecen en el listado
-    ...whereArea(req.usuario!, parsearAreaQuery(req.query.area)), // restricción por área
+    ...(visible.area ? { area: visible.area } : {}), // restricción por área
+    ...filtroProvincia,
     ...(q.estado ? { estado: q.estado } : {}),
     ...(q.categoria ? { causaRaiz: q.categoria } : {}),
     ...(q.asesor ? { asesor: { contains: q.asesor, mode: "insensitive" } } : {}),
@@ -230,13 +248,16 @@ export async function createRqr(req: Request, res: Response) {
   // elige (un usuario restringido solo puede elegir la suya).
   let area: AreaTrabajo;
   if (datos.casoId) {
-    const caso = await prisma.caso.findUnique({ where: { id: datos.casoId }, select: { area: true } });
+    const caso = await prisma.caso.findUnique({
+      where: { id: datos.casoId },
+      select: { area: true, sucursal: true },
+    });
     if (!caso) {
       return res.status(400).json({
         message: "El caso que intentás vincular ya no existe. Buscalo de nuevo o cargá los datos a mano.",
       });
     }
-    if (!puedeAcceder(req.usuario!, caso.area)) {
+    if (!puedeVer(req.usuario!, caso)) {
       return res.status(403).json({ message: "Ese caso es de otra área; no podés crear un RQR sobre él." });
     }
     area = caso.area;
@@ -325,6 +346,20 @@ const INCLUDE_DETALLE = {
   creadoPor: { select: { nombre: true } },
 } satisfies Prisma.RQRInclude;
 
+/**
+ * ¿Puede ver/gestionar este RQR? Área siempre; provincia solo si el RQR cuelga
+ * de un Caso — los RQR MANUALES no tienen provincia contra la cual comparar, y
+ * ocultarlos dejaría RQR que nadie podría abrir nunca.
+ */
+function puedeVerRqr(
+  usuario: Parameters<typeof puedeAcceder>[0],
+  rqr: { area: AreaTrabajo; caso?: { sucursal: string | null } | null }
+): boolean {
+  if (!puedeAcceder(usuario, rqr.area)) return false;
+  if (!rqr.caso) return true;
+  return puedeVer(usuario, { area: rqr.area, sucursal: rqr.caso.sucursal });
+}
+
 export async function getRqr(req: Request, res: Response) {
   const rqr = await prisma.rQR.findUnique({
     where: { id: req.params.id },
@@ -333,7 +368,7 @@ export async function getRqr(req: Request, res: Response) {
   if (!rqr || rqr.eliminadoEn) {
     return res.status(404).json({ message: "No se encontró ese RQR." });
   }
-  if (!puedeAcceder(req.usuario!, rqr.area)) {
+  if (!puedeVerRqr(req.usuario!, rqr)) {
     return res.status(403).json({ message: "Este RQR es de otra área; no tenés acceso." });
   }
   res.json({ data: rqr });
@@ -351,7 +386,7 @@ export async function exportarRqrWord(req: Request, res: Response) {
   if (!rqr || rqr.eliminadoEn) {
     return res.status(404).json({ message: "No se encontró ese RQR." });
   }
-  if (!puedeAcceder(req.usuario!, rqr.area)) {
+  if (!puedeVerRqr(req.usuario!, rqr)) {
     return res.status(403).json({ message: "Este RQR es de otra área; no tenés acceso." });
   }
 
@@ -404,11 +439,14 @@ export async function patchRqr(req: Request, res: Response) {
     });
   }
 
-  const existente = await prisma.rQR.findUnique({ where: { id: req.params.id } });
+  const existente = await prisma.rQR.findUnique({
+    where: { id: req.params.id },
+    include: { caso: { select: { sucursal: true } } },
+  });
   if (!existente || existente.eliminadoEn) {
     return res.status(404).json({ message: "No se encontró ese RQR." });
   }
-  if (!puedeAcceder(req.usuario!, existente.area)) {
+  if (!puedeVerRqr(req.usuario!, existente)) {
     return res.status(403).json({ message: "Este RQR es de otra área; no podés modificarlo." });
   }
 

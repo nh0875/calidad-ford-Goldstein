@@ -3,7 +3,7 @@ import { z } from "zod";
 import { AreaTrabajo, EstadoContacto, OrigenAgendamiento, Prisma, TipoAlias, TipoUpload } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
-import { areaEfectiva, areaPermitida, parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
+import { areaEfectiva, areaPermitida, parsearAreaQuery, puedeAcceder, puedeVer, whereArea, whereVisible } from "../services/area.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { normalizarTelefonoAR } from "../services/telefono.service";
 import { excelCasos } from "../services/exportacion.service";
@@ -61,10 +61,13 @@ const casosQuerySchema = casosFiltrosSchema.extend({
 // Arma el WHERE del listado a partir de los filtros ya validados. Incluye la
 // restricción por área del usuario. Lo usan el listado y la exportación, para
 // que el Excel salga EXACTAMENTE con los casos que se están viendo en pantalla.
-function whereCasosDesdeFiltros(req: Request, q: z.infer<typeof casosFiltrosSchema>): Prisma.CasoWhereInput {
+async function whereCasosDesdeFiltros(
+  req: Request,
+  q: z.infer<typeof casosFiltrosSchema>
+): Promise<Prisma.CasoWhereInput> {
   return {
     eliminadoEn: null, // los casos borrados lógicamente no aparecen
-    ...whereArea(req.usuario!, parsearAreaQuery(req.query.area)),
+    ...(await whereVisible(req.usuario!, parsearAreaQuery(req.query.area))),
     ...(q.busqueda ? { numeroOrden: { contains: q.busqueda, mode: "insensitive" } } : {}),
     ...(q.sucursal ? { sucursal: { equals: q.sucursal, mode: "insensitive" } } : {}),
     ...(q.asesor ? { asesor: { contains: q.asesor, mode: "insensitive" } } : {}),
@@ -125,7 +128,7 @@ export async function buscarCasos(req: Request, res: Response) {
 // que era sensible a tildes/mayúsculas y a errores de tipeo).
 
 export async function opcionesCasos(req: Request, res: Response) {
-  const areaWhere = whereArea(req.usuario!, parsearAreaQuery(req.query.area));
+  const areaWhere = await whereVisible(req.usuario!, parsearAreaQuery(req.query.area));
   const [sucursales, asesores, periodos] = await Promise.all([
     prisma.caso.findMany({
       where: { eliminadoEn: null, ...areaWhere },
@@ -166,7 +169,7 @@ export async function listCasos(req: Request, res: Response) {
 
   const q = parsed.data;
 
-  const where: Prisma.CasoWhereInput = whereCasosDesdeFiltros(req, q);
+  const where: Prisma.CasoWhereInput = await whereCasosDesdeFiltros(req, q);
 
   const [total, casos, suprimidos] = await Promise.all([
     prisma.caso.count({ where }),
@@ -222,7 +225,7 @@ export async function exportarCasos(req: Request, res: Response) {
     });
   }
 
-  const where = whereCasosDesdeFiltros(req, parsed.data);
+  const where = await whereCasosDesdeFiltros(req, parsed.data);
   const buffer = await excelCasos(where);
   const fecha = new Date().toISOString().slice(0, 10);
   res
@@ -417,14 +420,14 @@ export async function editarCaso(req: Request, res: Response) {
 
   const existente = await prisma.caso.findFirst({
     where: { id, eliminadoEn: null },
-    select: { id: true, area: true, numeroOrden: true, nombrePropietario: true },
+    select: { id: true, area: true, sucursal: true, numeroOrden: true, nombrePropietario: true },
   });
   if (!existente) {
     return res.status(404).json({ message: "No encontramos ese caso (puede haber sido eliminado)." });
   }
 
   // Restricción por área: un usuario restringido no puede editar un caso ajeno.
-  if (!puedeAcceder(req.usuario!, existente.area)) {
+  if (!puedeVer(req.usuario!, existente)) {
     return res.status(403).json({ message: "Ese caso es de otra área: no lo podés editar." });
   }
 

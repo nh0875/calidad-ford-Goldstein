@@ -5,7 +5,7 @@ import { prisma } from "../config/prisma";
 import { CATEGORIAS_CAUSA_RAIZ, derivarDeEstrellas } from "../services/sentiment.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { apagarAvisosCaso } from "../services/aviso.service";
-import { parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
+import { parsearAreaQuery, puedeAcceder, puedeVer, whereArea, whereVisible } from "../services/area.service";
 import { ITEM_QUE_DEFINE_EL_CASO } from "../config/posventa-vw";
 import { usaEncuestaPorItems } from "../services/encuesta-posventa.service";
 
@@ -90,7 +90,7 @@ export async function listSentimentAnalysis(req: Request, res: Response) {
     });
   }
   const q = parsed.data;
-  const where = construirWhere(q, whereArea(req.usuario!, parsearAreaQuery(req.query.area)));
+  const where = construirWhere(q, await whereVisible(req.usuario!, parsearAreaQuery(req.query.area)));
 
   const [total, data] = await Promise.all([
     prisma.sentimentAnalysis.count({ where }),
@@ -121,7 +121,7 @@ export async function listSentimentAnalysis(req: Request, res: Response) {
 
 export async function listRevisionManual(req: Request, res: Response) {
   // Restricción por área: un usuario de VENTAS no ve la bandeja de POSVENTA.
-  const areaWhere = whereArea(req.usuario!, parsearAreaQuery(req.query.area));
+  const areaWhere = await whereVisible(req.usuario!, parsearAreaQuery(req.query.area));
   const data = await prisma.sentimentAnalysis.findMany({
     where: {
       esSeguimiento: false,
@@ -139,7 +139,7 @@ export async function listRevisionManual(req: Request, res: Response) {
 // Solo el número, para el badge del menú (barato: se consulta al navegar).
 
 export async function contarRevisionManual(req: Request, res: Response) {
-  const areaWhere = whereArea(req.usuario!, parsearAreaQuery(req.query.area));
+  const areaWhere = await whereVisible(req.usuario!, parsearAreaQuery(req.query.area));
   const pendientes = await prisma.sentimentAnalysis.count({
     where: {
       esSeguimiento: false,
@@ -178,13 +178,13 @@ export async function patchSentimentAnalysis(req: Request, res: Response) {
 
   const existente = await prisma.sentimentAnalysis.findUnique({
     where: { id: req.params.id },
-    include: { caso: { select: { area: true } } },
+    include: { caso: { select: { area: true, sucursal: true } } },
   });
   if (!existente) {
     return res.status(404).json({ message: "No se encontró ese análisis." });
   }
   // Un usuario restringido no puede corregir la clasificación de otra área.
-  if (existente.caso && !puedeAcceder(req.usuario!, existente.caso.area)) {
+  if (existente.caso && !puedeVer(req.usuario!, existente.caso)) {
     return res.status(403).json({ message: "Ese caso es de otra área: no lo podés gestionar." });
   }
 

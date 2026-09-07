@@ -1,5 +1,6 @@
 import { AreaTrabajo, EstadoContacto, OrigenAgendamiento, Prisma, Semaforo, TipoAlias, TipoUpload } from "@prisma/client";
 import { prisma } from "../config/prisma";
+import { olvidarSucursalesConocidas } from "./area.service";
 import {
   CampoCaso,
   HojaParseada,
@@ -535,6 +536,12 @@ async function importarHoja(
       where: { id: upload.id },
       data: { status: "COMPLETADO" },
     });
+
+    // Una carga puede traer una sucursal que el sistema no conocía. El filtro de
+    // provincia la resuelve contra las sucursales que existen en la base y las
+    // cachea, así que hay que olvidar el caché o los casos nuevos quedarían
+    // invisibles hasta un minuto para los usuarios acotados a esa provincia.
+    olvidarSucursalesConocidas();
 
     base.ok = true;
     const detalleOrdenes =

@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { dashboardResumen } from "../services/dashboard.service";
-import { areaEfectiva, parsearAreaQuery } from "../services/area.service";
+import { areaEfectiva, parsearAreaQuery, provinciaPermitida } from "../services/area.service";
 
 const querySchema = z.object({
   fechaDesde: z
@@ -31,5 +31,7 @@ export async function getDashboardResumen(req: Request, res: Response) {
   const fechaHasta = q.fechaHasta ?? hoy.toISOString().slice(0, 10);
 
   const area = areaEfectiva(req.usuario!, parsearAreaQuery(req.query.area));
-  res.json(await dashboardResumen({ fechaDesde, fechaHasta, sucursal: q.sucursal, area }));
+  // La provincia del usuario, si tiene una, le gana al filtro pedido.
+  const sucursal = provinciaPermitida(req.usuario!) ?? q.sucursal;
+  res.json(await dashboardResumen({ fechaDesde, fechaHasta, sucursal, area }));
 }
