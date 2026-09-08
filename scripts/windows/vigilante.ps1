@@ -40,6 +40,11 @@ $NgrokDomain = "dealer-occupant-brigade.ngrok-free.dev"
 # Tarea dedicada que mantiene ngrok vivo. Un ngrok lanzado como HIJO de esta tarea
 # lo mata Windows al terminar la tarea; su propia tarea lo mantiene de primera clase.
 $NgrokTask   = "Sistema de Calidad - ngrok"
+# En la PC de Volkswagen el tunel NO es un .exe de Windows: el antivirus lo borra
+# apenas aparece, asi que corre adentro de un contenedor (docker-compose.tunel.yml).
+# Este es el nombre de ese contenedor. En la PC de Ford no existe, y por eso alla
+# el vigilante sigue haciendo exactamente lo mismo de siempre.
+$ContenedorTunel = "calidad-tunel-ngrok"
 $Puerto      = 80
 $LogFile     = Join-Path $ProjectDir "scripts\windows\vigilante.log"
 $LogMaxMB    = 2        # al superarlo se rota a .1 (se conserva una generacion)
@@ -450,41 +455,61 @@ try {
     }
 
     # ---------- 4) ngrok ----------
-    $proc = Get-Process ngrok -ErrorAction SilentlyContinue
+    # Se le pregunta AL TUNEL, siempre, y no a la lista de procesos de Windows.
+    # Antes la consulta se hacia solo si existia un proceso "ngrok"; desde que en
+    # la PC de Volkswagen el tunel vive adentro de un contenedor, ahi no hay
+    # proceso que encontrar y el vigilante lo habria dado por caido cada 5
+    # minutos, para siempre. Lo que importa es si el tunel responde, no como esta
+    # implementado.
+    # En Ford esto no cambia nada: si el tunel esta bien, no se toca nada, igual
+    # que hasta hoy; y si esta caido, se repara por el mismo camino de siempre.
+    #
+    # Se reintenta antes de darlo por caido: la API local (4040) puede tardar en
+    # responder y no hay que matar un ngrok que YA esta bien (eso provocaba un
+    # ciclo de matar y relanzar despues de cada reinicio).
     $tunel = $false
-    if ($proc) {
-        # La API local de ngrok (4040) puede tardar en responder: se reintenta
-        # antes de dar por caído el túnel, para NO matar un ngrok que YA está bien
-        # (evita un ciclo de matar/relanzar tras un reinicio).
-        for ($k = 0; $k -lt 3 -and -not $tunel; $k++) { $tunel = Tunel-Ok; if (-not $tunel) { Start-Sleep -Seconds 3 } }
-    }
+    for ($k = 0; $k -lt 3 -and -not $tunel; $k++) { $tunel = Tunel-Ok; if (-not $tunel) { Start-Sleep -Seconds 3 } }
+    $proc = Get-Process ngrok -ErrorAction SilentlyContinue
 
-    if (-not $proc -or -not $tunel) {
-        # Se prefiere la TAREA dedicada de ngrok: un proceso lanzado como hijo de
-        # esta tarea programada lo mata Windows al terminar la tarea. La tarea propia
-        # lo mantiene como proceso de primera clase (y se auto-recupera sola).
-        # Con schtasks y no con Get-ScheduledTask: ese cmdlet habla por WMI, y en
-        # las PCs donde esa capa esta rota se come el timeout de CIM en CADA
-        # pasada (cada 5 minutos, para siempre) antes de devolver nada.
-        $null = & schtasks /query /TN $NgrokTask 2>&1
-        $tareaNgrok = ($LASTEXITCODE -eq 0)
-        if ($proc -and -not $tunel) {
-            Log-Accion "ngrok corria pero sin el tunel de ${NgrokDomain}: reiniciandolo."
-            Stop-Process -Name ngrok -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 3
-        } elseif (-not $proc) {
-            Log-Accion "ngrok no estaba corriendo: relanzandolo."
-        }
-        if ($tareaNgrok) {
-            $null = & schtasks /run /TN $NgrokTask 2>&1
+    if (-not $tunel) {
+        # Primero: ¿el tunel corre en un contenedor? Si el contenedor existe, se
+        # repara con Docker y no se toca nada de Windows. En la PC de Ford no
+        # existe, asi que esta rama ni se pisa.
+        $contTunel = ""
+        try {
+            $contTunel = (& docker ps -a --filter "name=$ContenedorTunel" --format "{{.Names}}" 2>$null | Select-Object -First 1)
+        } catch { }
+
+        if ($contTunel) {
+            Log-Accion "El tunel de ${NgrokDomain} no responde: reiniciando el contenedor $contTunel."
+            $null = & docker restart $contTunel 2>$null
         } else {
-            $exe = Resolver-Ngrok
-            if ($exe) {
-                Start-Process -FilePath $exe `
-                    -ArgumentList @("http", "--domain=$NgrokDomain", "$Puerto") `
-                    -WindowStyle Hidden -ErrorAction SilentlyContinue
+            # Se prefiere la TAREA dedicada de ngrok: un proceso lanzado como hijo de
+            # esta tarea programada lo mata Windows al terminar la tarea. La tarea propia
+            # lo mantiene como proceso de primera clase (y se auto-recupera sola).
+            # Con schtasks y no con Get-ScheduledTask: ese cmdlet habla por WMI, y en
+            # las PCs donde esa capa esta rota se come el timeout de CIM en CADA
+            # pasada (cada 5 minutos, para siempre) antes de devolver nada.
+            $null = & schtasks /query /TN $NgrokTask 2>&1
+            $tareaNgrok = ($LASTEXITCODE -eq 0)
+            if ($proc -and -not $tunel) {
+                Log-Accion "ngrok corria pero sin el tunel de ${NgrokDomain}: reiniciandolo."
+                Stop-Process -Name ngrok -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 3
+            } elseif (-not $proc) {
+                Log-Accion "ngrok no estaba corriendo: relanzandolo."
+            }
+            if ($tareaNgrok) {
+                $null = & schtasks /run /TN $NgrokTask 2>&1
             } else {
-                Log-Error "No encuentro ngrok (ni en la ruta configurada ni en el PATH)."
+                $exe = Resolver-Ngrok
+                if ($exe) {
+                    Start-Process -FilePath $exe `
+                        -ArgumentList @("http", "--domain=$NgrokDomain", "$Puerto") `
+                        -WindowStyle Hidden -ErrorAction SilentlyContinue
+                } else {
+                    Log-Error "No encuentro ngrok (ni en la ruta configurada ni en el PATH)."
+                }
             }
         }
         # Darle tiempo a establecer el túnel: tras un reinicio la red y ngrok tardan

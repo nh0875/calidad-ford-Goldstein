@@ -1,0 +1,78 @@
+# ---------------------------------------------------------------------------
+#  El túnel de ngrok, adentro de Docker
+# ---------------------------------------------------------------------------
+#  POR QUÉ EXISTE ESTO. En la PC de Volkswagen el antivirus BORRA el ngrok.exe.
+#  No es una sospecha: el registro de Defender lo muestra desmantelándolo seis
+#  veces en dos días, siempre como "Trojan:Win32/Kepavll!rfn", y en una de esas
+#  pasadas se llevó puesta también la tarea programada y sus claves del registro.
+#  Por eso el túnel "andaba y de golpe no": no se caía, lo borraban.
+#
+#  Y no se puede arreglar con una exclusión. Esa PC tiene COMODO, McAfee y
+#  Defender conviviendo, con la protección contra manipulación ENCENDIDA: la
+#  lista de exclusiones no se deja tocar ni siendo administrador. (En la PC de
+#  Ford hay solo Defender, sin exclusiones y sin una sola detección histórica: por
+#  eso ahí el mismo túnel lleva meses funcionando.)
+#
+#  LA SALIDA. Adentro de un contenedor, el binario de ngrok vive en el disco
+#  virtual de WSL2 y nunca toca el sistema de archivos de Windows, así que el
+#  antivirus no tiene qué borrar. De paso desaparece toda la parafernalia que
+#  necesitaba la versión nativa: no hace falta tarea programada, ni lanzador
+#  oculto .vbs (que en esta PC el antivirus también bloquea), ni permisos de
+#  administrador. Con "restart: unless-stopped" el túnel vuelve solo cuando
+#  prenden la máquina, junto con el resto del sistema.
+#
+#  ES UN STACK APARTE, A PROPÓSITO. Vive en su propio archivo y con su propio
+#  nombre de proyecto, así que no se cruza con docker-compose.prod.yml. Eso
+#  importa porque las dos marcas comparten el repositorio y se actualizan solas
+#  al mediodía: la PC de Ford se va a bajar este archivo igual, y mientras nadie
+#  lo levante a mano, para ella no existe. Ford sigue con su ngrok.exe nativo,
+#  que allá funciona.
+#
+#  USO (una sola vez, y después se olvida):
+#      docker compose -f docker-compose.tunel.yml --env-file .env.prod up -d
+#  o mejor, el instalador que además saca el token del ngrok.yml que sobrevivió:
+#      scripts\windows\Instalar-Tunel-Docker.bat
+# ---------------------------------------------------------------------------
+
+# Acá SÍ conviene fijar el nombre, al revés que en docker-compose.prod.yml. Allá
+# está prohibido porque cambiarlo dejaría huérfano el stack que ya está andando,
+# con su base de datos adentro. Este stack nace hoy y no tiene nada que perder;
+# tener un nombre estable es lo que permite que el vigilante lo encuentre siempre
+# igual, se llame como se llame la carpeta en cada PC.
+name: calidad-tunel
+
+services:
+  ngrok:
+    # Versión fija, no "latest". Un túnel que se actualiza solo de madrugada es
+    # un túnel que un día amanece roto sin que nadie haya tocado nada. La variante
+    # alpine pesa poco, que en una PC de 5,8 GB no es un detalle.
+    image: ngrok/ngrok:3.39.11-alpine
+    container_name: calidad-tunel-ngrok
+    restart: unless-stopped
+    mem_limit: 128m
+    environment:
+      # El token NO va en este archivo: sale de .env.prod, que está en .gitignore
+      # y nunca se sube. Si falta, compose aborta acá con este mensaje en vez de
+      # levantar un contenedor que se moriría a los dos segundos.
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?falta NGROK_AUTHTOKEN en .env.prod (lo agrega solo Instalar-Tunel-Docker.bat)}
+    command:
+      # "host.docker.internal" es el host visto desde adentro del contenedor. Se
+      # apunta ahí y no a "web:80" para no depender del nombre de la red del otro
+      # stack, que cambia según cómo se llame la carpeta en cada PC. Comprobado
+      # en Docker Desktop: resuelve solo, sin declarar extra_hosts.
+      - http
+      - host.docker.internal:${HTTP_PORT:-80}
+      # --url y no --domain: desde ngrok 3.39 --domain quedó obsoleto y avisa por
+      # consola en cada arranque.
+      - --url=https://${NGROK_DOMAIN:?falta NGROK_DOMAIN en .env.prod}
+      - --config=/etc/ngrok/ngrok.yml
+    volumes:
+      # Este archivo existe por una sola razón: que la API local del agente
+      # escuche en 0.0.0.0 y se pueda consultar desde Windows. Sin eso el
+      # vigilante no puede saber si el túnel está vivo. Ver el comentario adentro.
+      - ./scripts/windows/ngrok-contenedor.yml:/etc/ngrok/ngrok.yml:ro
+    ports:
+      # Solo a 127.0.0.1: es la consola de ngrok, muestra el tráfico que pasa por
+      # el túnel. Publicarla en 0.0.0.0 la dejaría visible para toda la red de la
+      # concesionaria.
+      - "127.0.0.1:4040:4040"

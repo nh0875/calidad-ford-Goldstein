@@ -1,0 +1,29 @@
+# ---------------------------------------------------------------------------
+#  Configuración del agente de ngrok cuando corre adentro del contenedor
+# ---------------------------------------------------------------------------
+#  Tiene una sola línea útil, y existe solamente por ella.
+#
+#  El agente de ngrok levanta una API local en el puerto 4040 que dice qué
+#  túneles tiene abiertos. El vigilante la consulta cada 5 minutos para saber si
+#  el túnel sigue vivo. El problema: por defecto el agente la ata a 127.0.0.1, y
+#  adentro de un contenedor eso significa "el localhost DEL CONTENEDOR" -- desde
+#  Windows no se llega, aunque se publique el puerto. El túnel andaría bien y el
+#  vigilante lo daría por muerto cada 5 minutos, para siempre.
+#
+#  Poniéndola en 0.0.0.0 escucha en todas las interfaces del contenedor y el
+#  puerto publicado sí llega. Que quede expuesta solo a 127.0.0.1 de Windows lo
+#  resuelve el compose, con "127.0.0.1:4040:4040".
+#
+#  OJO CON EL ESQUEMA: en ngrok v3 esto va adentro de "agent:". Suelto en la raíz
+#  el agente lo rechaza con "field web_addr not found in type config.v3yamlConfig"
+#  y el contenedor no arranca. Comprobado con "ngrok config check".
+#
+#  El authtoken NO está acá: viaja por la variable de entorno NGROK_AUTHTOKEN,
+#  que sale de .env.prod. Este archivo sí se sube al repositorio, así que no
+#  puede tener secretos adentro.
+# ---------------------------------------------------------------------------
+
+version: "3"
+
+agent:
+  web_addr: 0.0.0.0:4040
