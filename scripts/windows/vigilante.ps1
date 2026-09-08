@@ -152,6 +152,20 @@ function Salud-Ok {
 # Resuelve el ejecutable de ngrok: la ruta configurada o, si no existe, el PATH.
 function Resolver-Ngrok {
     if ($NgrokExe -and (Test-Path $NgrokExe)) { return $NgrokExe }
+
+    # DENTRO DE LA CARPETA DEL SISTEMA, antes que el PATH. En la PC de Volkswagen
+    # el antivirus se comio el ngrok que estaba instalado en el perfil del usuario
+    # -- es una herramienta de tunel hacia afuera, justo lo que un EDR corporativo
+    # borra -- y ya se habia comido el acceso directo de Inicio antes. La carpeta
+    # del sistema esta EXCLUIDA del antivirus, asi que ahi sobrevive.
+    foreach ($cerca in @(
+        (Join-Path $ProjectDir "ngrok.exe"),
+        (Join-Path $ProjectDir "ngrok\ngrok.exe"),
+        (Join-Path $PSScriptRoot "ngrok.exe")
+    )) {
+        if ($cerca -and (Test-Path $cerca)) { return $cerca }
+    }
+
     $c = Get-Command ngrok -ErrorAction SilentlyContinue
     if ($c) { return $c.Source }
     return $null
