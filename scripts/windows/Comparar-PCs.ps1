@@ -64,6 +64,9 @@ Intentar "version de Windows" { (Get-CimInstance Win32_OperatingSystem).Caption 
 Titulo "NGROK: DONDE ESTA Y COMO ES"
 Agregar "  carpeta del sistema : $ProyectoDir"
 Agregar ""
+# Sort-Object -Unique porque la carpeta del sistema YA ES una de las fijas: en la
+# PC de Volkswagen la lista mostraba "C:\Calidad\Volkswagen\ngrok.exe" dos veces y
+# el informe se leia como si fueran dos archivos distintos.
 $rutas = @(
     "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe",
     "$env:LOCALAPPDATA\Microsoft\WindowsApps\ngrok.exe",
@@ -73,7 +76,7 @@ $rutas = @(
     "C:\Calidad\Vanina\ngrok.exe",
     "C:\Calidad\Volkswagen\ngrok.exe",
     "C:\ngrok\ngrok.exe"
-)
+) | Sort-Object -Unique
 foreach ($r in $rutas) { Agregar "  $(if (Test-Path $r) { 'SI' } else { 'no' })  $r" }
 Intentar "en el PATH" { (Get-Command ngrok -ErrorAction Stop).Source }
 Agregar ""
@@ -94,8 +97,13 @@ Agregar "  -- busqueda en todos los perfiles de usuario --"
 # la cuenta de la persona y la del administrador, y el ngrok puede estar en
 # cualquiera de las dos.
 function Buscar-Ngrok([string]$raiz, [int]$hondo) {
-    if (-not (Test-Path $raiz)) { return @() }
+    # -ErrorAction en el Test-Path tambien, no solo en el Get-ChildItem: estas son
+    # PCs de dominio con quince perfiles de usuario, y la carpeta de otra persona
+    # no se puede ni mirar. Sin esto la pantalla se llenaba de "Acceso denegado" en
+    # rojo -- un error por cada perfil ajeno y por cada subcarpeta -- y el informe
+    # de verdad quedaba enterrado abajo de todo.
     try {
+        if (-not (Test-Path -LiteralPath $raiz -ErrorAction SilentlyContinue)) { return @() }
         return @(Get-ChildItem -LiteralPath $raiz -Filter ngrok.exe -Recurse -Depth $hondo -File -Force -ErrorAction SilentlyContinue)
     } catch { return @() }
 }
@@ -143,12 +151,12 @@ if ($exe) {
 Titulo "CONFIGURACION DE NGROK"
 # Solo se informa SI EXISTE, nunca el contenido: adentro esta el authtoken de la
 # cuenta y este archivo se manda por chat.
-foreach ($c in @(
+foreach ($c in (@(
     "$env:LOCALAPPDATA\ngrok\ngrok.yml",
     "$env:APPDATA\ngrok\ngrok.yml",
     (Join-Path $ProyectoDir "ngrok.yml"),
     "C:\Calidad\Vanina\ngrok.yml",
-    "C:\Calidad\Volkswagen\ngrok.yml")) {
+    "C:\Calidad\Volkswagen\ngrok.yml") | Sort-Object -Unique)) {
     Agregar "  $(if (Test-Path $c) { 'SI' } else { 'no' })  $c"
 }
 
@@ -204,7 +212,7 @@ foreach ($t in @("Sistema de Calidad - ngrok", "Sistema Calidad - Vigilante", "S
 Titulo "LANZADORES Y SCRIPTS"
 Intentar "politica de ejecucion del usuario" { Get-ExecutionPolicy -Scope CurrentUser }
 Intentar "version del sistema instalada" { & git -C $ProyectoDir log --oneline -1 2>$null }
-foreach ($d in @($PSScriptRoot, "C:\Calidad\Vanina\scripts\windows", "C:\Calidad\Volkswagen\scripts\windows")) {
+foreach ($d in (@($PSScriptRoot, "C:\Calidad\Vanina\scripts\windows", "C:\Calidad\Volkswagen\scripts\windows") | Sort-Object -Unique)) {
     if (-not (Test-Path $d)) { continue }
     Agregar "  -- $d --"
     # El .vbs es el lanzador que esconde la ventana de ngrok. En una de las dos
