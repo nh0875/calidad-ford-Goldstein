@@ -117,6 +117,36 @@ function Registrar-Tarea {
     }
     $salida = (($salida | Out-String) + ($salida2 | Out-String))
   }
+
+  # ULTIMO RECURSO PARA NGROK (CadaMinutos = 0, o sea ONLOGON).
+  #
+  # /SC ONLOGON es la UNICA variante que algunas politicas de dominio bloquean;
+  # todas las demas se crean bien. Sin la tarea, el vigilante lanza ngrok como
+  # proceso HIJO suyo, y Windows se lo lleva puesto cada vez que la tarea del
+  # vigilante se reinicia: el tunel queda muerto y quien abre el link ve el
+  # ERR_NGROK_3200 de ngrok. Paso en la PC de Volkswagen.
+  #
+  # /SC ONCE con fecha lejana SI se puede crear: no se dispara nunca sola, pero
+  # queda registrada y el vigilante la corre con "schtasks /run" cuando ve el
+  # tunel caido. Lo importante es que asi ngrok lo lanza el servicio de tareas de
+  # Windows y no el vigilante: nace como proceso de primera clase y no se muere
+  # con nadie.
+  if ($CadaMinutos -eq 0) {
+    # 01/01/2099, con ceros y a mano. Probado: schtasks NO acepta el formato corto
+    # de Windows (rechaza "1/1/2099" pidiendo "dd/mm/yyyy"), y ademas el orden
+    # dia/mes depende del idioma del sistema. El 1 de enero esquiva las dos cosas:
+    # "01/01" se escribe igual en dd/mm que en mm/dd.
+    $fechaLejana = "01/01/2099"
+    $p3 = @("/create", "/TN", $Nombre, "/TR", $tr, "/SC", "ONCE", "/SD", $fechaLejana, "/ST", "00:00")
+    if (-not $propio) { $p3 += @("/RU", $Usuario, "/IT") }
+    $p3 += "/F"
+    $salida3 = & schtasks @p3 2>&1
+    if ($LASTEXITCODE -eq 0) {
+      return @{ ok = $true; detalle = "no arranca sola (la politica bloquea ONLOGON): la dispara el vigilante" }
+    }
+    $salida = (($salida | Out-String) + ($salida3 | Out-String))
+  }
+
   return @{ ok = $false; detalle = ($salida | Out-String).Trim() }
 }
 
