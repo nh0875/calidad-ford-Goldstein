@@ -24,6 +24,13 @@
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
+# La carpeta del sistema NO se escribe a mano: se deduce de donde esta este
+# script (siempre vive en <proyecto>\scripts\windows). En cada PC la carpeta se
+# llama distinto -- "Vanina" en una, "Volkswagen" en la otra, y en alguna quedo
+# con otro nombre -- asi que darla por sabida hacia que medio informe saliera
+# vacio justo en la maquina que hay que diagnosticar.
+$ProyectoDir = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+
 $salida = New-Object System.Collections.Generic.List[string]
 function Agregar([string]$t) { $salida.Add($t); Write-Host $t }
 function Titulo([string]$t) {
@@ -55,9 +62,14 @@ Intentar "usuario con sesion" { (Get-CimInstance Win32_ComputerSystem).UserName 
 Intentar "version de Windows" { (Get-CimInstance Win32_OperatingSystem).Caption + " " + (Get-CimInstance Win32_OperatingSystem).Version }
 
 Titulo "NGROK: DONDE ESTA Y COMO ES"
+Agregar "  carpeta del sistema : $ProyectoDir"
+Agregar ""
 $rutas = @(
     "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe",
     "$env:LOCALAPPDATA\Microsoft\WindowsApps\ngrok.exe",
+    (Join-Path $ProyectoDir "ngrok.exe"),
+    (Join-Path $ProyectoDir "ngrok\ngrok.exe"),
+    (Join-Path $PSScriptRoot "ngrok.exe"),
     "C:\Calidad\Vanina\ngrok.exe",
     "C:\Calidad\Volkswagen\ngrok.exe",
     "C:\ngrok\ngrok.exe"
@@ -65,11 +77,50 @@ $rutas = @(
 foreach ($r in $rutas) { Agregar "  $(if (Test-Path $r) { 'SI' } else { 'no' })  $r" }
 Intentar "en el PATH" { (Get-Command ngrok -ErrorAction Stop).Source }
 Agregar ""
-Agregar "  -- busqueda completa en C:\Users (puede tardar) --"
-Intentar "encontrado" {
-    Get-ChildItem C:\Users -Filter ngrok.exe -Recurse -ErrorAction SilentlyContinue |
-        ForEach-Object { "$($_.FullName)  |  $($_.Length) bytes  |  creado $($_.CreationTime)" }
+Agregar "  -- busqueda en todos los perfiles de usuario --"
+# DOS TRAMPAS, las dos encontradas probando esto de verdad:
+#
+#   1. -Force NO ES OPCIONAL. AppData es carpeta OCULTA y Get-ChildItem -Recurse
+#      sin -Force ni siquiera entra a mirarla. Justo ahi instala winget el ngrok,
+#      asi que sin -Force la busqueda volvia VACIA con el archivo estando.
+#   2. Recorrer C:\Users entero EXPLOTA. Windows deja puntos de union viejos
+#      ("Application Data", "Configuracion local") que apuntan a su propia carpeta
+#      padre: el recorrido gira en redondo y termina reventando con "El sistema no
+#      puede encontrar el archivo especificado" -- y ahi se pierde TODO el
+#      resultado, no solo la rama mala.
+#
+# Por eso se buscan carpetas concretas y con profundidad acotada, perfil por
+# perfil. Interesa que sea cada perfil y no solo el actual: en estas PCs conviven
+# la cuenta de la persona y la del administrador, y el ngrok puede estar en
+# cualquiera de las dos.
+function Buscar-Ngrok([string]$raiz, [int]$hondo) {
+    if (-not (Test-Path $raiz)) { return @() }
+    try {
+        return @(Get-ChildItem -LiteralPath $raiz -Filter ngrok.exe -Recurse -Depth $hondo -File -Force -ErrorAction SilentlyContinue)
+    } catch { return @() }
 }
+
+$encontrados = New-Object System.Collections.Generic.List[string]
+$perfiles = @()
+try { $perfiles = @(Get-ChildItem C:\Users -Directory -Force -ErrorAction SilentlyContinue) } catch { }
+foreach ($p in $perfiles) {
+    foreach ($sub in @("AppData\Local\Microsoft\WinGet", "AppData\Local\ngrok", "AppData\Local", "Downloads", "Desktop", "Documents")) {
+        # Poca profundidad en AppData\Local (es gigante) y mas en WinGet, que es
+        # donde de verdad esta el que nos importa.
+        $hondo = if ($sub -eq "AppData\Local") { 3 } else { 5 }
+        foreach ($h in (Buscar-Ngrok (Join-Path $p.FullName $sub) $hondo)) {
+            $encontrados.Add("$($h.FullName)  |  $($h.Length) bytes  |  creado $($h.CreationTime)")
+        }
+    }
+}
+foreach ($otra in @("C:\Program Files\ngrok", "C:\Program Files (x86)\ngrok", "C:\ProgramData\chocolatey\bin", "C:\ngrok", $ProyectoDir)) {
+    foreach ($h in (Buscar-Ngrok $otra 3)) {
+        $encontrados.Add("$($h.FullName)  |  $($h.Length) bytes  |  creado $($h.CreationTime)")
+    }
+}
+$unicos = $encontrados | Sort-Object -Unique
+if ($unicos.Count -eq 0) { Agregar "  encontrado : NINGUNO en todo el disco" }
+else { foreach ($u in $unicos) { Agregar "  encontrado : $u" } }
 
 # La FIRMA DIGITAL y la MARCA DE INTERNET son las dos cosas que mas cambian como
 # lo trata un antivirus. Un archivo bajado con el navegador o con PowerShell
@@ -90,7 +141,14 @@ if ($exe) {
 }
 
 Titulo "CONFIGURACION DE NGROK"
-foreach ($c in @("$env:LOCALAPPDATA\ngrok\ngrok.yml", "C:\Calidad\Vanina\ngrok.yml", "C:\Calidad\Volkswagen\ngrok.yml", "$env:APPDATA\ngrok\ngrok.yml")) {
+# Solo se informa SI EXISTE, nunca el contenido: adentro esta el authtoken de la
+# cuenta y este archivo se manda por chat.
+foreach ($c in @(
+    "$env:LOCALAPPDATA\ngrok\ngrok.yml",
+    "$env:APPDATA\ngrok\ngrok.yml",
+    (Join-Path $ProyectoDir "ngrok.yml"),
+    "C:\Calidad\Vanina\ngrok.yml",
+    "C:\Calidad\Volkswagen\ngrok.yml")) {
     Agregar "  $(if (Test-Path $c) { 'SI' } else { 'no' })  $c"
 }
 
@@ -144,11 +202,15 @@ foreach ($t in @("Sistema de Calidad - ngrok", "Sistema Calidad - Vigilante", "S
 }
 
 Titulo "LANZADORES Y SCRIPTS"
-foreach ($d in @("C:\Calidad\Vanina\scripts\windows", "C:\Calidad\Volkswagen\scripts\windows")) {
+Intentar "politica de ejecucion del usuario" { Get-ExecutionPolicy -Scope CurrentUser }
+Intentar "version del sistema instalada" { & git -C $ProyectoDir log --oneline -1 2>$null }
+foreach ($d in @($PSScriptRoot, "C:\Calidad\Vanina\scripts\windows", "C:\Calidad\Volkswagen\scripts\windows")) {
     if (-not (Test-Path $d)) { continue }
     Agregar "  -- $d --"
+    # El .vbs es el lanzador que esconde la ventana de ngrok. En una de las dos
+    # PCs el antivirus lo bloquea por "virus o software potencialmente no
+    # deseado"; en la otra convive sin problema. Que exista o no es dato.
     Intentar "archivos .vbs" { Get-ChildItem $d -Filter *.vbs -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name)  ($($_.Length) bytes, $($_.LastWriteTime))" } }
-    Intentar "politica de ejecucion del usuario" { Get-ExecutionPolicy -Scope CurrentUser }
 }
 
 Titulo "DOCKER Y EL SISTEMA"
