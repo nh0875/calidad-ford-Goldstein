@@ -28,10 +28,13 @@
 #  lo levante a mano, para ella no existe. Ford sigue con su ngrok.exe nativo,
 #  que allá funciona.
 #
-#  USO (una sola vez, y después se olvida):
-#      docker compose -f docker-compose.tunel.yml --env-file .env.prod up -d
-#  o mejor, el instalador que además saca el token del ngrok.yml que sobrevivió:
+#  USO (una sola vez, y después se olvida): el instalador, que además saca el
+#  token del ngrok.yml que sobrevivió al antivirus y lo deja en .env.tunel:
 #      scripts\windows\Instalar-Tunel-Docker.bat
+#
+#  A mano, si hiciera falta —OJO con pasar los DOS archivos de entorno, porque el
+#  dominio está en uno y el token en el otro:
+#      docker compose -f docker-compose.tunel.yml --env-file .env.prod --env-file .env.tunel up -d
 # ---------------------------------------------------------------------------
 
 # Acá SÍ conviene fijar el nombre, al revés que en docker-compose.prod.yml. Allá
@@ -51,10 +54,15 @@ services:
     restart: unless-stopped
     mem_limit: 128m
     environment:
-      # El token NO va en este archivo: sale de .env.prod, que está en .gitignore
-      # y nunca se sube. Si falta, compose aborta acá con este mensaje en vez de
-      # levantar un contenedor que se moriría a los dos segundos.
-      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?falta NGROK_AUTHTOKEN en .env.prod (lo agrega solo Instalar-Tunel-Docker.bat)}
+      # El token NO va en este archivo: sale de .env.tunel, que está en .gitignore
+      # y nunca se sube. Va en un archivo propio y no en .env.prod para no
+      # escribirle encima al que tiene las credenciales de Meta y de la base —y
+      # porque el vigilante lo lee tan seguido que suele estar tomado por otro
+      # proceso justo cuando uno quiere modificarlo. Compose fusiona los dos
+      # archivos si se le pasan los dos --env-file.
+      # Si el token falta, compose aborta acá con este mensaje en vez de levantar
+      # un contenedor que se moriría a los dos segundos.
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?falta NGROK_AUTHTOKEN en .env.tunel (lo escribe solo Instalar-Tunel-Docker.bat)}
     command:
       # "host.docker.internal" es el host visto desde adentro del contenedor. Se
       # apunta ahí y no a "web:80" para no depender del nombre de la red del otro

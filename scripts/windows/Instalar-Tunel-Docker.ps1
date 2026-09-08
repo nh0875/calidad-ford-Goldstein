@@ -13,8 +13,8 @@
 #  QUÉ HACE, EN ORDEN:
 #    1. Se niega a seguir si detecta un ngrok NATIVO sirviendo este mismo dominio
 #       (o sea, si lo corrieron por error en la PC de Ford, donde el nativo anda).
-#    2. Saca el authtoken del ngrok.yml que sobrevivió al antivirus y lo guarda en
-#       .env.prod, que está en .gitignore y no se sube nunca.
+#    2. Saca el authtoken del ngrok.yml que sobrevivió al antivirus y lo guarda
+#       en .env.tunel, un archivo aparte que no se sube nunca (.env.prod NO se toca).
 #    3. Levanta el contenedor.
 #    4. Espera a que el túnel esté realmente arriba y lo verifica contra el
 #       dominio; si no, dice qué mirar.
@@ -36,6 +36,13 @@ $ProgressPreference = "SilentlyContinue"
 
 $ProyectoDir  = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $EnvFile      = Join-Path $ProyectoDir ".env.prod"
+# El token va en su PROPIO archivo, no en .env.prod. Dos razones, y la segunda la
+# aprendimos a los golpes: .env.prod tiene las credenciales de Meta y de la base
+# de datos, y no da que un instalador le escriba encima; y ademas el vigilante lo
+# lee muchas veces en cada pasada, asi que el archivo suele estar tomado por otro
+# proceso justo cuando uno quiere escribirlo ("El proceso no puede obtener acceso
+# al archivo"). Compose acepta varios --env-file y los fusiona: comprobado.
+$EnvTunel     = Join-Path $ProyectoDir ".env.tunel"
 $ComposeTunel = Join-Path $ProyectoDir "docker-compose.tunel.yml"
 $Contenedor   = "calidad-tunel-ngrok"
 $TareaVieja   = "Sistema de Calidad - ngrok"
@@ -52,9 +59,9 @@ Write-Host "  ------------------------------------" -ForegroundColor Cyan
 # ---------------------------------------------------------------------------
 #  Leer .env.prod
 # ---------------------------------------------------------------------------
-function Leer-EnvProd([string]$clave) {
-    if (-not (Test-Path $EnvFile)) { return "" }
-    foreach ($linea in (Get-Content $EnvFile -ErrorAction SilentlyContinue)) {
+function Leer-Env([string]$ruta, [string]$clave) {
+    if (-not (Test-Path $ruta)) { return "" }
+    foreach ($linea in (Get-Content $ruta -ErrorAction SilentlyContinue)) {
         $l = "$linea".Trim()
         if ($l -eq "" -or $l.StartsWith("#")) { continue }
         $i = $l.IndexOf("=")
@@ -62,6 +69,23 @@ function Leer-EnvProd([string]$clave) {
         if ($l.Substring(0, $i).Trim() -eq $clave) { return $l.Substring($i + 1).Trim() }
     }
     return ""
+}
+
+# El token puede estar en cualquiera de los dos: en .env.tunel si lo puso este
+# script, o en .env.prod si alguien lo agrego a mano alguna vez.
+function Leer-Token {
+    $t = Leer-Env $EnvTunel "NGROK_AUTHTOKEN"
+    if ($t) { return $t }
+    return (Leer-Env $EnvFile "NGROK_AUTHTOKEN")
+}
+
+# Los dos archivos de entorno, en el orden en que compose los tiene que fusionar.
+# Solo se pasa el segundo si existe: pasar un --env-file inexistente es un error
+# duro y dejaria el tunel sin levantar por un archivo que puede no hacer falta.
+function Args-Env {
+    $a = @("--env-file", $EnvFile)
+    if (Test-Path $EnvTunel) { $a += @("--env-file", $EnvTunel) }
+    return $a
 }
 
 # A localhost SIN proxy. En esta PC el proxy de la empresa se mete hasta en las
@@ -92,7 +116,7 @@ if (-not (Test-Path $ComposeTunel)) {
     Write-Host ""; Read-Host "Enter para cerrar"; exit 1
 }
 
-$dominio = Leer-EnvProd "NGROK_DOMAIN"
+$dominio = Leer-Env $EnvFile "NGROK_DOMAIN"
 if (-not $dominio) {
     Mal "No encuentro NGROK_DOMAIN en $EnvFile"
     Info "Sin el dominio no se sabe que tunel levantar. Cada marca tiene el suyo."
@@ -104,7 +128,7 @@ if (-not $dominio) {
 # ---------------------------------------------------------------------------
 if ($Quitar) {
     Paso "Bajando el tunel..."
-    & docker compose -f $ComposeTunel --env-file $EnvFile down | Out-Null
+    & docker compose -f $ComposeTunel @(Args-Env) down | Out-Null
     Bien "Contenedor bajado. Ya no arranca solo."
     Write-Host ""; Read-Host "Enter para cerrar"; exit 0
 }
@@ -132,9 +156,9 @@ if ($nativo -and (Tunel-Arriba $dominio)) {
 # ---------------------------------------------------------------------------
 Paso "1) Buscando el authtoken de ngrok..."
 
-$token = Leer-EnvProd "NGROK_AUTHTOKEN"
+$token = Leer-Token
 if ($token) {
-    Bien "Ya estaba en .env.prod."
+    Bien "Ya estaba guardado."
 } else {
     # El .exe lo borra el antivirus, pero el ngrok.yml SOBREVIVE: ahi esta el
     # token, y por eso no hay que ir a buscarlo al panel de ngrok.
@@ -177,15 +201,38 @@ if ($token) {
         Write-Host ""; Read-Host "Enter para cerrar"; exit 1
     }
 
-    # Se agrega al final, sin reescribir el resto: .env.prod tiene las
-    # credenciales de Meta y de la base, y no se toca mas de lo necesario.
-    try {
-        Add-Content -Path $EnvFile -Value "" -Encoding ASCII -ErrorAction Stop
-        Add-Content -Path $EnvFile -Value "# Token del agente de ngrok, para el tunel en contenedor (docker-compose.tunel.yml)" -Encoding ASCII -ErrorAction Stop
-        Add-Content -Path $EnvFile -Value "NGROK_AUTHTOKEN=$token" -Encoding ASCII -ErrorAction Stop
-        Bien "Guardado en .env.prod (que no se sube al repositorio)."
-    } catch {
-        Mal "No pude escribir en $EnvFile : $($_.Exception.Message)"
+    # Archivo NUEVO y aparte, escrito de una sola vez. No se toca .env.prod: ahi
+    # viven las credenciales de Meta y de la base, y ademas el vigilante lo lee a
+    # cada rato, asi que suele estar tomado justo cuando uno quiere escribirlo.
+    #
+    # Igual se reintenta: el antivirus de esta PC abre los archivos recien creados
+    # para escanearlos, y ese medio segundo alcanza para que el primer intento
+    # rebote.
+    $contenido = @(
+        "# Token del agente de ngrok para el tunel en contenedor.",
+        "# Lo escribio Instalar-Tunel-Docker.ps1, sacandolo del ngrok.yml de esta PC.",
+        "# Va aparte de .env.prod a proposito; los dos los fusiona docker compose.",
+        "NGROK_AUTHTOKEN=$token"
+    )
+    $guardado = $false
+    for ($i = 0; $i -lt 5 -and -not $guardado; $i++) {
+        try {
+            Set-Content -Path $EnvTunel -Value $contenido -Encoding ASCII -ErrorAction Stop
+            $guardado = $true
+        } catch {
+            $ultimoError = $_.Exception.Message
+            Start-Sleep -Seconds 2
+        }
+    }
+    if ($guardado) {
+        Bien "Guardado en .env.tunel (que no se sube al repositorio)."
+    } else {
+        Mal "No pude escribir en $EnvTunel : $ultimoError"
+        Info "Crealo a mano con UNA linea adentro:"
+        Info ""
+        Info "    NGROK_AUTHTOKEN=$token"
+        Info ""
+        Info "y volve a correr este script."
         Write-Host ""; Read-Host "Enter para cerrar"; exit 1
     }
 }
@@ -212,7 +259,7 @@ if ($LASTEXITCODE -eq 0) {
 Paso "3) Levantando el contenedor del tunel..."
 Info "dominio : https://$dominio"
 
-& docker compose -f $ComposeTunel --env-file $EnvFile up -d
+& docker compose -f $ComposeTunel @(Args-Env) up -d
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Mal "docker compose no pudo levantar el tunel."
