@@ -231,17 +231,32 @@ Intentar "el tunel local responde" {
 Intentar "ngrok corriendo" { Get-Process ngrok -ErrorAction Stop | ForEach-Object { "PID $($_.Id) desde $($_.StartTime)" } }
 
 Titulo "FIN"
-$destino = Join-Path ([Environment]::GetFolderPath("Desktop")) "comparacion-$env:COMPUTERNAME.txt"
-try {
-    $salida | Set-Content -Path $destino -Encoding UTF8
-    Write-Host ""
+
+# Se guarda en la CARPETA DEL SISTEMA y ademas, si se puede, en el Escritorio.
+# El orden importa: cuando esto corre elevado, Windows suele elevar con la cuenta
+# del ADMINISTRADOR, y entonces "el Escritorio" es el del administrador -- no el
+# de la persona, que abre su Escritorio y no encuentra nada. La carpeta del
+# sistema, en cambio, es la misma para todos y la persona ya sabe donde esta.
+$nombre = "comparacion-$env:COMPUTERNAME.txt"
+$guardados = @()
+foreach ($carpeta in @($ProyectoDir, [Environment]::GetFolderPath("Desktop"))) {
+    if (-not $carpeta) { continue }
+    try {
+        $ruta = Join-Path $carpeta $nombre
+        $salida | Set-Content -Path $ruta -Encoding UTF8 -ErrorAction Stop
+        $guardados += $ruta
+    } catch { }
+}
+
+Write-Host ""
+if ($guardados.Count -gt 0) {
     Write-Host "  Informe guardado en:" -ForegroundColor Green
-    Write-Host "     $destino" -ForegroundColor Green
+    foreach ($g in $guardados) { Write-Host "     $g" -ForegroundColor Green }
     Write-Host ""
     Write-Host "  Manda ESE archivo. No tiene contrasenas ni datos de clientes." -ForegroundColor Gray
-} catch {
-    Write-Host "  No pude guardar el archivo: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "  Copiá y pegá lo que salió arriba." -ForegroundColor Yellow
+} else {
+    Write-Host "  No pude guardar el archivo en ningun lado." -ForegroundColor Red
+    Write-Host "  Copia y pega lo que salio arriba." -ForegroundColor Yellow
 }
 Write-Host ""
 Read-Host "Enter para cerrar"

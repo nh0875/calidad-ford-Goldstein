@@ -84,3 +84,7 @@ scripts/windows/Respaldo-Config.json
 
 # Repo de pruebas suelto, no es parte del sistema
 gtest/
+
+# Informes del diagnostico Comparar-PCs: son de UNA maquina y de un momento,
+# no del proyecto. Se mandan por chat y se tiran.
+comparacion-*.txt
