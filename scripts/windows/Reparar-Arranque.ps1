@@ -222,7 +222,25 @@ Titulo "2. Tarea de ngrok (el tunel)"
 # Volkswagen y el script se salteo la tarea del tunel sin mas, que es justo lo que
 # habia que arreglar. Ahora: rutas conocidas, el PATH, where.exe, y si nada de eso
 # da, una busqueda en las carpetas donde la gente suele dejarlo.
+# EL PERFIL QUE HAY QUE MIRAR ES EL DE LA PERSONA, NO EL DE QUIEN CORRE ESTO.
+#
+# Este script se corre ELEVADO, o sea con la cuenta de administrador, mientras
+# que ngrok lo instalo la persona que usa la PC. $env:LOCALAPPDATA apunta al
+# perfil de QUIEN EJECUTA, asi que buscando ahi nunca se lo encuentra: en la PC de
+# Volkswagen el script dijo "no encuentro ngrok.exe" con ngrok instalado y
+# andando. El vigilante SI lo encuentra porque corre como esa persona.
+$perfilUsuario = if ($Usuario) { "C:\Users\$Usuario" } else { $env:USERPROFILE }
+$localAppUsuario = Join-Path $perfilUsuario "AppData\Local"
+
 $rutasNgrok = @(
+    # Primero el perfil de la PERSONA (winget instala por usuario).
+    "$localAppUsuario\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe",
+    "$localAppUsuario\Microsoft\WindowsApps\ngrok.exe",
+    "$localAppUsuario\ngrok\ngrok.exe",
+    "$perfilUsuario\ngrok\ngrok.exe",
+    "$perfilUsuario\Downloads\ngrok.exe",
+    "$perfilUsuario\Desktop\ngrok.exe",
+    # Y despues el de quien corre esto, por si acaso.
     "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe",
     "$env:ProgramFiles\ngrok\ngrok.exe",
     "${env:ProgramFiles(x86)}\ngrok\ngrok.exe",
@@ -248,7 +266,7 @@ if (-not $ngrokExe) {
 }
 if (-not $ngrokExe) {
     Info "No esta en las rutas conocidas: buscando en el disco (tarda un momento)..."
-    foreach ($raiz in @("$env:LOCALAPPDATA", "$env:USERPROFILE\Downloads", "$env:ProgramFiles", "C:\Calidad")) {
+    foreach ($raiz in @($localAppUsuario, "$perfilUsuario\Downloads", "$env:LOCALAPPDATA", "$env:ProgramFiles", "C:\Calidad")) {
         if (-not (Test-Path $raiz)) { continue }
         $hallado = Get-ChildItem -Path $raiz -Filter "ngrok.exe" -Recurse -ErrorAction SilentlyContinue |
                    Select-Object -First 1
