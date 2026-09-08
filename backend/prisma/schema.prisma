@@ -709,6 +709,10 @@ model Aviso {
 
 enum EstadoEncuestaFabrica {
   PENDIENTE // vino en el último archivo: todavía no contestó
+  // Ya se le mandó el mail a su vendedor. Existe para que a nadie le llegue el
+  // mismo cliente dos veces: el aviso sale SOLO de los PENDIENTE, así que apenas
+  // se avisa el cliente sale de esa bolsa y el próximo mail no lo repite.
+  AVISADO
   RESPONDIO // dejó de venir en el archivo, así que ya contestó
 }
 
@@ -789,7 +793,21 @@ model EncuestaFabricaVW {
   origenFormato   String      @default("FABRICA")
 
   detectadaEn DateTime  @default(now())
+  avisadoEn   DateTime? // cuándo salió el mail al vendedor con este cliente adentro
   respondioEn DateTime?
+
+  // Lo que carga Calidad a mano cuando el cliente contesta. La calificación va de
+  // 1 a 5, la misma escala que la encuesta de posventa por WhatsApp, para que un
+  // 4 signifique lo mismo en todo el sistema.
+  //
+  // Queda como Int? y no como un número obligatorio a propósito: se puede marcar
+  // RESPONDIDO sin nota. Pasa seguido —el cliente contestó pero nadie anotó
+  // cuánto puso, o fábrica todavía no publicó el puntaje— y obligar a inventar un
+  // número sería peor que no tenerlo: ensuciaría los promedios con datos falsos.
+  calificacion       Int?
+  // El comentario que el cliente le hizo a fábrica, o cualquier cosa a tener en
+  // cuenta sobre este caso.
+  observacionCalidad String?
 
   @@index([estado, vendedorId])
   @@index([sucursal, estado])

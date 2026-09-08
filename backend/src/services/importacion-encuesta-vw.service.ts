@@ -259,7 +259,11 @@ async function guardar(
 
   const { count: marcadosRespondio } = await prisma.encuestaFabricaVW.updateMany({
     where: {
-      estado: EstadoEncuestaFabrica.PENDIENTE,
+      // Los AVISADO entran igual que los PENDIENTE. Son los que más contestan,
+      // justamente porque el vendedor ya los llamó: si la barrida solo mirara
+      // PENDIENTE, un cliente avisado que después contesta se quedaría en AVISADO
+      // para siempre, contado como si nunca hubiera respondido.
+      estado: { in: [EstadoEncuestaFabrica.PENDIENTE, EstadoEncuestaFabrica.AVISADO] },
       vendedor: { codigoSucursal: { in: sucursales } },
       chasis: { notIn: chasisDelArchivo },
       // Las cargadas a mano NUNCA vienen en el Excel de fábrica, así que esta

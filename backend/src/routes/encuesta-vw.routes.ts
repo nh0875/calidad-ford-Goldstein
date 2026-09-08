@@ -12,6 +12,7 @@ import {
   listarEncuestaVW,
   notificarEncuestaVW,
   previewEncuestaVW,
+  editarEstadoEncuestaVW,
 } from "../controllers/encuesta-vw.controller";
 import { estadoMailRefuerzo } from "../controllers/refuerzo.controller";
 
@@ -50,6 +51,11 @@ router.delete("/vendedores/:id", requireAdmin, asyncHandler(eliminarVendedorVW))
 
 // Alta a mano de un pendiente que no vino en el Excel de fabrica.
 router.post("/manual", asyncHandler(crearEncuestaManualVW));
+
+// Cambio de estado a mano, con la calificacion y la observacion. SIN requireAdmin
+// a proposito: es trabajo de todos los dias de Calidad, igual que el alta manual.
+// Lo destructivo (borrar) si queda para administradores.
+router.patch("/clientes/:id", asyncHandler(editarEstadoEncuestaVW));
 
 // Saca un cliente de la lista. Si vino del Excel de fabrica y sigue figurando
 // ahi, la proxima carga lo vuelve a traer; los cargados a mano no vuelven.

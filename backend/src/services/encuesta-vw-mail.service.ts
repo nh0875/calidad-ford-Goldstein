@@ -115,8 +115,12 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
       nombre: true,
       email: true,
       pendientes: {
+        // SOLO los PENDIENTE. Los que ya se avisaron quedaron en AVISADO y no
+        // vuelven a entrar acá: es lo que impide que al vendedor le llegue el
+        // mismo cliente dos veces. Antes, cada aviso le mandaba de nuevo la lista
+        // completa y el vendedor no podía distinguir lo nuevo de lo ya visto.
         where: { estado: EstadoEncuestaFabrica.PENDIENTE },
-        select: { nombreCliente: true, email: true, dominio: true, canalVentas: true, fechaEntrega: true },
+        select: { id: true, nombreCliente: true, email: true, dominio: true, canalVentas: true, fechaEntrega: true },
         orderBy: { fechaEntrega: "asc" },
       },
     },
@@ -156,7 +160,19 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
         texto,
         html,
       });
-      await prisma.vendedorVW.update({ where: { id: v.id }, data: { ultimoAvisoEn: new Date() } });
+      // Recién ACÁ, con el correo ya salido, se marcan como avisados. Si se
+      // marcara antes y el envío fallara, esos clientes quedarían como avisados
+      // sin que nadie los haya visto nunca: desaparecerían del próximo mail y del
+      // radar, que es la peor falla posible en esta pantalla.
+      const ahora = new Date();
+      await prisma.vendedorVW.update({ where: { id: v.id }, data: { ultimoAvisoEn: ahora } });
+      await prisma.encuestaFabricaVW.updateMany({
+        // Por id y no por "todos los pendientes de este vendedor": entre que se
+        // armó la lista y salió el correo puede haber entrado un cliente nuevo, y
+        // ese no estaba en el mail. Marcarlo sería perderlo.
+        where: { id: { in: v.pendientes.map((p) => p.id) } },
+        data: { estado: EstadoEncuestaFabrica.AVISADO, avisadoEn: ahora },
+      });
       resultados.push({ ...base, enviado: true, error: null });
     } catch (err) {
       resultados.push({

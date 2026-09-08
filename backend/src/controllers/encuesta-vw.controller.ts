@@ -218,7 +218,13 @@ export async function listarEncuestaVW(req: Request, res: Response) {
       activo: true,
       ultimoAvisoEn: true,
       pendientes: {
-        where: incluirRespondidos ? {} : { estado: EstadoEncuestaFabrica.PENDIENTE },
+        // "Sin responder" son los PENDIENTE y también los AVISADO: al vendedor ya
+        // se le avisó, pero el cliente todavía no contestó y Calidad lo tiene que
+        // seguir viendo. Si acá quedara solo PENDIENTE, avisar haría desaparecer
+        // clientes de la pantalla.
+        where: incluirRespondidos
+          ? {}
+          : { estado: { in: [EstadoEncuestaFabrica.PENDIENTE, EstadoEncuestaFabrica.AVISADO] } },
         orderBy: { fechaEntrega: "asc" },
         select: {
           id: true,
@@ -230,7 +236,10 @@ export async function listarEncuestaVW(req: Request, res: Response) {
           area: true,
           fechaEntrega: true,
           estado: true,
+          avisadoEn: true,
           respondioEn: true,
+          calificacion: true,
+          observacionCalidad: true,
           detectadaEn: true,
           observacionesFabrica: true,
           // Para distinguir en pantalla los que cargó Calidad a mano de los que
@@ -264,6 +273,7 @@ export async function listarEncuestaVW(req: Request, res: Response) {
       // Estos tres solo tienen sentido cuando se piden los respondidos: si no, el
       // total es igual a los pendientes.
       totalClientes: todos.length,
+      totalAvisados: todos.filter((p) => p.estado === EstadoEncuestaFabrica.AVISADO).length,
       totalRespondidos: todos.filter((p) => p.estado === EstadoEncuestaFabrica.RESPONDIO).length,
       totalManuales: todos.filter((p) => p.esManual).length,
       totalVendedores: vendedores.length,
@@ -381,11 +391,19 @@ export async function notificarEncuestaVW(req: Request, res: Response) {
   });
 
   if (resultados.length === 0) {
-    return res.json({ message: "No hay ningún vendedor con clientes pendientes.", resultados });
+    return res.json({
+      message: "No hay ningún cliente sin avisar. A todos los pendientes ya se les avisó al vendedor.",
+      resultados,
+    });
   }
+  // Se dice cuántos CLIENTES cambiaron de estado, no solo cuántos correos
+  // salieron: es lo que la persona ve pasar en la pantalla, y si el número no
+  // cuadra con lo que esperaba conviene que se note en el momento.
+  const clientesAvisados = resultados.filter((r) => r.enviado).reduce((n, r) => n + r.pendientes, 0);
+  const detalle = `${clientesAvisados} cliente(s) quedaron como avisados.`;
   const message = fallidos.length
-    ? `Se avisó a ${enviados} vendedor(es). ${fallidos.length} no recibieron el correo.`
-    : `Se avisó a ${enviados} vendedor(es).`;
+    ? `Se avisó a ${enviados} vendedor(es); ${detalle} ${fallidos.length} no recibieron el correo.`
+    : `Se avisó a ${enviados} vendedor(es); ${detalle}`;
   res.json({ message, resultados });
 }
 
@@ -502,6 +520,90 @@ export async function crearEncuestaManualVW(req: Request, res: Response) {
     message: `${d.nombreCliente} agregado a los pendientes de ${vendedor.nombre || vendedor.codigo}.`,
     data: creada,
   });
+}
+
+// ---------- PATCH /api/encuesta-vw/clientes/:id ----------
+//
+// El cambio de estado a mano, con la calificación y la observación.
+//
+// POR QUÉ HACE FALTA. El estado se movía solo por dos caminos: la carga del Excel
+// (lo que deja de venir se da por respondido) y ahora el aviso al vendedor. Los
+// dos van en una sola dirección y ninguno sabe lo que pasa por teléfono. Cuando
+// el vendedor llama y el cliente le dice que ya contestó y puso 4, no había dónde
+// anotarlo: el cliente seguía figurando como pendiente hasta la carga siguiente.
+const estadoEncuestaSchema = z.object({
+  estado: z.nativeEnum(EstadoEncuestaFabrica).optional(),
+  // 1 a 5, la misma escala que la encuesta de posventa por WhatsApp. null borra
+  // la nota que hubiera: hace falta para corregir una cargada por error.
+  calificacion: z.number().int().min(1).max(5).nullable().optional(),
+  observacionCalidad: z.string().trim().max(2000).nullable().optional(),
+});
+
+export async function editarEstadoEncuestaVW(req: Request, res: Response) {
+  const parseo = estadoEncuestaSchema.safeParse(req.body);
+  if (!parseo.success) {
+    return res.status(400).json({ message: parseo.error.issues[0]?.message ?? "Datos inválidos." });
+  }
+  const cambios = parseo.data;
+
+  const encuesta = await prisma.encuestaFabricaVW.findUnique({
+    where: { id: req.params.id },
+    include: { vendedor: { select: { codigo: true, nombre: true } } },
+  });
+  if (!encuesta) return res.status(404).json({ message: "No se encontró ese cliente." });
+
+  const estadoNuevo = cambios.estado ?? encuesta.estado;
+
+  // La calificación solo tiene sentido en RESPONDIDO. Si se lo saca de ahí, se
+  // borra: dejar un 4 colgando en un cliente que volvió a estar pendiente haría
+  // que los promedios cuenten una respuesta que ya no existe.
+  const vuelveAtras =
+    estadoNuevo !== EstadoEncuestaFabrica.RESPONDIO && encuesta.estado === EstadoEncuestaFabrica.RESPONDIO;
+
+  const data: {
+    estado: EstadoEncuestaFabrica;
+    respondioEn?: Date | null;
+    avisadoEn?: Date | null;
+    calificacion?: number | null;
+    observacionCalidad?: string | null;
+  } = { estado: estadoNuevo };
+
+  if (cambios.calificacion !== undefined) data.calificacion = cambios.calificacion;
+  if (cambios.observacionCalidad !== undefined) {
+    data.observacionCalidad = cambios.observacionCalidad || null;
+  }
+  if (vuelveAtras) data.calificacion = null;
+
+  // Las fechas las pone el sistema, no la persona: son el registro de CUÁNDO
+  // pasó cada cosa y no un dato editable.
+  if (estadoNuevo === EstadoEncuestaFabrica.RESPONDIO && !encuesta.respondioEn) {
+    data.respondioEn = new Date();
+  }
+  if (estadoNuevo !== EstadoEncuestaFabrica.RESPONDIO) data.respondioEn = null;
+  // Volver a PENDIENTE es, textualmente, "quiero que le vuelva a llegar al
+  // vendedor": se limpia la marca de avisado para que entre de nuevo en el mail.
+  if (estadoNuevo === EstadoEncuestaFabrica.PENDIENTE) data.avisadoEn = null;
+  if (estadoNuevo === EstadoEncuestaFabrica.AVISADO && !encuesta.avisadoEn) {
+    data.avisadoEn = new Date();
+  }
+
+  const actualizada = await prisma.encuestaFabricaVW.update({ where: { id: encuesta.id }, data });
+
+  auditar(req, {
+    accion: ACCIONES.ENCUESTA_VW_ESTADO_CAMBIADO,
+    entidad: "EncuestaFabricaVW",
+    entidadId: encuesta.id,
+    detalles: {
+      chasis: encuesta.chasis,
+      cliente: encuesta.nombreCliente,
+      vendedor: encuesta.vendedor?.codigo ?? null,
+      estadoAnterior: encuesta.estado,
+      estadoNuevo: actualizada.estado,
+      calificacion: actualizada.calificacion,
+    },
+  });
+
+  res.json({ data: actualizada });
 }
 
 // ---------- DELETE /api/encuesta-vw/clientes/:id ----------

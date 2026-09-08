@@ -54,6 +54,10 @@ export const ACCIONES = {
   ENCUESTA_VW_MANUAL_CREADA: "ENCUESTA_VW_MANUAL_CREADA",
   ENCUESTA_VW_ELIMINADA: "ENCUESTA_VW_ELIMINADA",
   ENCUESTA_VW_NOTIFICADA: "ENCUESTA_VW_NOTIFICADA",
+  // Cambio de estado a mano (y la calificación que se carga con él). Se audita
+  // porque es el único lugar donde una persona puede declarar que un cliente
+  // contestó sin que haya un archivo de fábrica que lo respalde.
+  ENCUESTA_VW_ESTADO_CAMBIADO: "ENCUESTA_VW_ESTADO_CAMBIADO",
   TAREA_ASIGNADA: "TAREA_ASIGNADA",
   TAREA_REASIGNADA: "TAREA_REASIGNADA",
   TAREAS_REDISTRIBUIDAS: "TAREAS_REDISTRIBUIDAS",

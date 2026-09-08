@@ -7,17 +7,123 @@
 //
 // Por eso esta pantalla se organiza por vendedor y no por cliente: la unidad de
 // trabajo es "a quién le mando el mail y con qué lista adentro".
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, Mail, MailCheck, Pencil, Plus, Trash2, UploadCloud, UserPlus } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, ChevronDown, ChevronRight, Mail, MailCheck, Pencil, Plus, Star, Trash2, UploadCloud, UserPlus } from "lucide-react";
 import { apiDelete, apiGet, apiPatchJson, apiPostForm, apiPostJson } from "../lib/api";
 import { getMarca } from "../lib/marca";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
-import { Badge } from "../components/ui/Badge";
+import { Badge, Estrellas } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
-import { Campo, Input, Select } from "../components/ui/Field";
+import { Campo, Input, Select, Textarea } from "../components/ui/Field";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SkeletonBlock } from "../components/ui/Skeleton";
+
+// Los tres estados por los que pasa un cliente. El orden del array es el orden
+// del circuito, y de ahí sale también el orden de la lista en pantalla: primero
+// lo que falta hacer, último lo que ya está cerrado.
+//
+// El valor guardado es RESPONDIO (así se llama en la base desde el principio) y
+// en pantalla se lee "Respondió". Renombrarlo no aportaría nada y obligaría a
+// migrar datos que ya están.
+const ESTADOS = ["PENDIENTE", "AVISADO", "RESPONDIO"] as const;
+type EstadoCliente = (typeof ESTADOS)[number];
+
+const ETIQUETA_ESTADO: Record<EstadoCliente, string> = {
+  PENDIENTE: "Pendiente",
+  AVISADO: "Avisado",
+  RESPONDIO: "Respondió",
+};
+
+// El estado se cambia desde un desplegable, pero se sigue leyendo de un vistazo
+// por el color, como cuando era una etiqueta fija. En una lista de cientos de
+// filas el color es lo que deja barrer la pantalla sin leer palabra por palabra.
+const CLASE_ESTADO: Record<EstadoCliente, string> = {
+  PENDIENTE: "!bg-yellow-50 !text-yellow-900",
+  AVISADO: "!bg-accent-light !text-accent-dark",
+  RESPONDIO: "!bg-green-50 !text-green-900",
+};
+
+/**
+ * La calificación del cliente y lo que haya dicho.
+ *
+ * Se guarda con un botón y no a cada tecla: es texto libre y guardar en cada
+ * letra llenaría el registro de auditoría de ruido y pelearía con el cursor.
+ *
+ * La calificación NO es obligatoria para marcar Respondió. Pasa seguido que el
+ * cliente contestó pero nadie sabe qué puso —o fábrica todavía no publicó el
+ * puntaje— y forzar un número inventado ensuciaría los promedios.
+ */
+function EditorNota({
+  cliente,
+  guardando,
+  onGuardar,
+}: {
+  cliente: { id: string; calificacion?: number | null; observacionCalidad?: string | null };
+  guardando: boolean;
+  onGuardar: (
+    id: string,
+    cambios: { estado?: EstadoCliente; calificacion?: number | null; observacionCalidad?: string | null }
+  ) => Promise<void>;
+}) {
+  const [puntaje, setPuntaje] = useState<number | null>(cliente.calificacion ?? null);
+  const [texto, setTexto] = useState(cliente.observacionCalidad ?? "");
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-[auto,1fr,auto] sm:items-end">
+      <Campo etiqueta="Calificación" hint="La que puso el cliente en la encuesta de fábrica">
+        <div className="flex items-center gap-1 py-1">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => setPuntaje(n)}
+              className="rounded p-0.5 transition-transform hover:scale-110"
+              title={`${n} de 5`}
+              aria-label={`Poner ${n} de 5`}
+              aria-pressed={puntaje === n}
+            >
+              <Star
+                className={`h-5 w-5 ${
+                  puntaje !== null && n <= puntaje ? "fill-current text-amber-500" : "text-gray-300"
+                }`}
+              />
+            </button>
+          ))}
+          {/* Hace falta poder DEJARLA VACÍA: si alguien se equivoca de estrella,
+              sin esto no habría forma de volver a "sin calificar". */}
+          {puntaje !== null && (
+            <button
+              type="button"
+              onClick={() => setPuntaje(null)}
+              className="ml-2 text-xs text-ink-muted hover:underline"
+            >
+              Sin calificar
+            </button>
+          )}
+        </div>
+      </Campo>
+
+      <Campo etiqueta="Observación" hint="Lo que dijo el cliente, o algo a tener en cuenta">
+        <Textarea
+          rows={2}
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder="Dijo que la entrega se demoró pero que lo atendieron bien."
+        />
+      </Campo>
+
+      <button
+        type="button"
+        disabled={guardando}
+        onClick={() => onGuardar(cliente.id, { calificacion: puntaje, observacionCalidad: texto })}
+        className={claseBoton("primario", "!py-2")}
+      >
+        Guardar
+      </button>
+    </div>
+  );
+}
 
 interface Pendiente {
   id: string;
@@ -28,10 +134,14 @@ interface Pendiente {
   canalVentas: string | null;
   area: string | null;
   fechaEntrega: string | null;
-  estado: "PENDIENTE" | "RESPONDIO";
+  estado: EstadoCliente;
   observacionesFabrica: string[];
   esManual?: boolean;
+  avisadoEn?: string | null;
   respondioEn?: string | null;
+  // Lo que carga Calidad a mano cuando el cliente contesta.
+  calificacion?: number | null;
+  observacionCalidad?: string | null;
   detectadaEn?: string | null;
 }
 
@@ -51,6 +161,7 @@ interface Resumen {
   vendedoresConPendientes: number;
   sinCorreo: number;
   totalClientes: number;
+  totalAvisados: number;
   totalRespondidos: number;
   totalManuales: number;
   totalVendedores: number;
@@ -259,7 +370,10 @@ export default function EncuestasFabrica() {
   // que ya habian contestado directamente no se pedian: el seguimiento se cortaba
   // justo cuando el caso se cerraba. Esta lista los junta a todos, con buscador.
   const [busquedaCliente, setBusquedaCliente] = useState("");
-  const [filtroEstado, setFiltroEstado] = useState<"TODOS" | "PENDIENTE" | "RESPONDIO">("TODOS");
+  const [filtroEstado, setFiltroEstado] = useState<"TODOS" | EstadoCliente>("TODOS");
+  // Qué fila tiene abierto el editor de calificación. Uno a la vez: abrirlos
+  // todos llenaría la pantalla de cajas de texto sin que nadie las pida.
+  const [notaAbierta, setNotaAbierta] = useState<string | null>(null);
 
   const clientes = useMemo(() => {
     const filas = vendedores.flatMap((v) =>
@@ -283,12 +397,38 @@ export default function EncuestasFabrica() {
           f.vendedorNombre.toLowerCase().includes(q)
       )
       .sort((a, b) => {
-        // Primero los que faltan contactar; dentro de cada grupo, el mas viejo
-        // arriba, que es el que mas espero.
-        if (a.estado !== b.estado) return a.estado === "PENDIENTE" ? -1 : 1;
+        // Por avance del circuito: primero lo que falta hacer (pendientes),
+        // después lo que está esperando respuesta (avisados) y al final lo
+        // cerrado. Dentro de cada grupo, el mas viejo arriba, que es el que mas
+        // espero.
+        const orden = ESTADOS.indexOf(a.estado) - ESTADOS.indexOf(b.estado);
+        if (orden !== 0) return orden;
         return (a.fechaEntrega ?? "").localeCompare(b.fechaEntrega ?? "");
       });
   }, [vendedores, busquedaCliente, filtroEstado]);
+
+  // Cambio de estado a mano, y la nota que lo acompaña.
+  //
+  // Sin esto el estado solo se movía solo: la carga del Excel cerraba lo que ya
+  // no venía y el aviso pasaba los pendientes a avisados. Ninguno de los dos se
+  // entera de lo que pasa por teléfono, que es donde el vendedor se entera de
+  // verdad si el cliente contestó y qué puso.
+  async function cambiarCliente(
+    id: string,
+    cambios: { estado?: EstadoCliente; calificacion?: number | null; observacionCalidad?: string | null }
+  ) {
+    setGuardando(true);
+    setError(null);
+    setMensaje(null);
+    try {
+      await apiPatchJson(`/api/encuesta-vw/clientes/${id}`, cambios);
+      await cargar();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No pudimos cambiar el estado del cliente.");
+    } finally {
+      setGuardando(false);
+    }
+  }
 
   async function eliminarCliente(c: { id: string; nombreCliente: string; esManual?: boolean }) {
     const ok = window.confirm(
@@ -385,8 +525,12 @@ export default function EncuestasFabrica() {
               Encuestas de fábrica sin responder
             </h2>
             <p className="mt-1 text-sm text-ink-muted">
+              {/* "Pendientes" son los que todavía NO se avisaron: es exactamente
+                  lo que entraría en el próximo correo. Los avisados se cuentan
+                  aparte porque ya salieron y no van a volver a salir. */}
               {resumen
-                ? `${resumen.totalPendientes} pendiente(s) entre ${resumen.vendedoresConPendientes} vendedor(es). ` +
+                ? `${resumen.totalPendientes} sin avisar entre ${resumen.vendedoresConPendientes} vendedor(es), ` +
+                  `${resumen.totalAvisados} ya avisado(s) esperando respuesta. ` +
                   `En total hay ${resumen.totalClientes} cliente(s) cargado(s), de los cuales ` +
                   `${resumen.totalRespondidos} ya respondieron.`
                 : "Cargando…"}
@@ -595,11 +739,12 @@ export default function EncuestasFabrica() {
             />
             <Select
               value={filtroEstado}
-              onChange={(e) => setFiltroEstado(e.target.value as "TODOS" | "PENDIENTE" | "RESPONDIO")}
+              onChange={(e) => setFiltroEstado(e.target.value as "TODOS" | EstadoCliente)}
               className="!w-44"
             >
               <option value="TODOS">Todos</option>
               <option value="PENDIENTE">Solo pendientes</option>
+              <option value="AVISADO">Solo avisados</option>
               <option value="RESPONDIO">Solo respondidos</option>
             </Select>
           </div>
@@ -623,47 +768,93 @@ export default function EncuestasFabrica() {
                   <th className="whitespace-nowrap px-4 py-3">Sucursal</th>
                   <th className="whitespace-nowrap px-4 py-3">Entrega</th>
                   <th className="whitespace-nowrap px-4 py-3">Estado</th>
+                  <th className="whitespace-nowrap px-4 py-3">Calificación</th>
                   <th className="whitespace-nowrap px-4 py-3">Origen</th>
                   <th className="whitespace-nowrap px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
                 {clientes.map((c) => (
-                  <tr key={c.id} className="border-b border-gray-100 transition-colors hover:bg-gray-50">
-                    <td className="px-4 py-3 text-ink">{c.nombreCliente}</td>
-                    <td className="px-4 py-3 text-ink-muted">{c.email || "—"}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-ink-muted">
-                      <span className="font-mono text-xs">{c.chasis}</span>
-                      {c.dominio && <span className="ml-2 text-xs">{c.dominio}</span>}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-ink-muted">{c.vendedorNombre}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-ink-muted">{c.sucursal}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-ink-muted">
-                      {c.fechaEntrega ? fechaCorta(c.fechaEntrega) : "—"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3">
-                      <Badge tono={c.estado === "PENDIENTE" ? "amarillo" : "verde"}>
-                        {c.estado === "PENDIENTE" ? "Pendiente" : "Respondió"}
-                      </Badge>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3">
-                      {c.esManual ? (
-                        <Badge tono="gris">A mano</Badge>
-                      ) : (
-                        <span className="text-xs text-ink-muted">Excel de fábrica</span>
-                      )}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right">
-                      <button
-                        onClick={() => eliminarCliente(c)}
-                        disabled={guardando}
-                        className="text-xs font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
-                        title="Sacar este cliente de la lista"
-                      >
-                        Eliminar
-                      </button>
-                    </td>
-                  </tr>
+                  <Fragment key={c.id}>
+                    <tr className="border-b border-gray-100 transition-colors hover:bg-gray-50">
+                      <td className="px-4 py-3 text-ink">{c.nombreCliente}</td>
+                      <td className="px-4 py-3 text-ink-muted">{c.email || "—"}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-ink-muted">
+                        <span className="font-mono text-xs">{c.chasis}</span>
+                        {c.dominio && <span className="ml-2 text-xs">{c.dominio}</span>}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-ink-muted">{c.vendedorNombre}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-ink-muted">{c.sucursal}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-ink-muted">
+                        {c.fechaEntrega ? fechaCorta(c.fechaEntrega) : "—"}
+                      </td>
+                      {/* El estado se cambia acá mismo, sin abrir nada: es lo que
+                          más se toca, y esconderlo detrás de un botón sumaría un
+                          clic a cada corrección. */}
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <Select
+                          value={c.estado}
+                          disabled={guardando}
+                          onChange={(e) => cambiarCliente(c.id, { estado: e.target.value as EstadoCliente })}
+                          className={`!w-36 !py-1 !text-xs font-medium ${CLASE_ESTADO[c.estado]}`}
+                          title={
+                            c.avisadoEn
+                              ? `Se le avisó al vendedor el ${fechaCorta(c.avisadoEn)}`
+                              : "Todavía no se le avisó al vendedor"
+                          }
+                        >
+                          {ESTADOS.map((e) => (
+                            <option key={e} value={e}>
+                              {ETIQUETA_ESTADO[e]}
+                            </option>
+                          ))}
+                        </Select>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        {c.calificacion ? (
+                          <Estrellas puntaje={c.calificacion} />
+                        ) : (
+                          <span className="text-xs text-ink-muted">—</span>
+                        )}
+                        {c.observacionCalidad && (
+                          <span className="ml-1 text-xs text-ink-muted" title={c.observacionCalidad}>
+                            💬
+                          </span>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        {c.esManual ? (
+                          <Badge tono="gris">A mano</Badge>
+                        ) : (
+                          <span className="text-xs text-ink-muted">Excel de fábrica</span>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right">
+                        <button
+                          onClick={() => setNotaAbierta(notaAbierta === c.id ? null : c.id)}
+                          className="mr-3 text-xs font-medium text-accent hover:underline"
+                          title="Cargar la calificación o una observación"
+                        >
+                          {notaAbierta === c.id ? "Cerrar" : "Nota"}
+                        </button>
+                        <button
+                          onClick={() => eliminarCliente(c)}
+                          disabled={guardando}
+                          className="text-xs font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+                          title="Sacar este cliente de la lista"
+                        >
+                          Eliminar
+                        </button>
+                      </td>
+                    </tr>
+                    {notaAbierta === c.id && (
+                      <tr className="border-b border-gray-100 bg-gray-50">
+                        <td colSpan={10} className="px-4 py-4">
+                          <EditorNota cliente={c} guardando={guardando} onGuardar={cambiarCliente} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -791,7 +982,14 @@ export default function EncuestasFabrica() {
         ) : (
           <div className="divide-y divide-gray-100">
             {vendedores.map((v) => {
-              const pendientes = v.pendientes.filter((p) => p.estado === "PENDIENTE");
+              // Dos cosas distintas que antes eran una sola, y confundirlas
+              // haría desaparecer clientes de la pantalla apenas se avisa:
+              //   sinResponder = todo lo que sigue abierto (pendientes Y avisados).
+              //                  Es lo que Calidad tiene que seguir viendo.
+              //   sinAvisar    = solo los pendientes. Es lo que entraría en el
+              //                  próximo correo, así que manda sobre el botón.
+              const sinResponder = v.pendientes.filter((p) => p.estado !== "RESPONDIO");
+              const sinAvisar = v.pendientes.filter((p) => p.estado === "PENDIENTE");
               const abierto = abiertos.has(v.id);
               return (
                 <div key={v.id}>
@@ -805,9 +1003,9 @@ export default function EncuestasFabrica() {
                         })
                       }
                       className="flex items-center gap-2 text-left"
-                      disabled={pendientes.length === 0}
+                      disabled={sinResponder.length === 0}
                     >
-                      {pendientes.length > 0 ? (
+                      {sinResponder.length > 0 ? (
                         abierto ? (
                           <ChevronDown className="h-4 w-4 text-ink-muted" />
                         ) : (
@@ -820,8 +1018,17 @@ export default function EncuestasFabrica() {
                     </button>
                     <span className="font-mono text-xs text-ink-muted">{v.codigo}</span>
                     <Badge tono="gris">{v.sucursal}</Badge>
-                    <Badge tono={pendientes.length > 0 ? "amarillo" : "verde"}>
-                      {pendientes.length} pendiente{pendientes.length === 1 ? "" : "s"}
+                    {/* Se muestran los dos números porque responden preguntas
+                        distintas: cuántos le faltan avisar (lo que sale en el
+                        próximo correo) y cuántos están esperando respuesta. Un
+                        vendedor con 0 sin avisar y 8 avisados no tiene nada
+                        pendiente de hacer, pero tampoco está cerrado. */}
+                    <Badge tono={sinAvisar.length > 0 ? "amarillo" : sinResponder.length > 0 ? "azul" : "verde"}>
+                      {sinAvisar.length > 0
+                        ? `${sinAvisar.length} sin avisar`
+                        : sinResponder.length > 0
+                          ? `${sinResponder.length} esperando respuesta`
+                          : "Todo respondido"}
                     </Badge>
 
                     {editando === v.id ? (
@@ -859,14 +1066,14 @@ export default function EncuestasFabrica() {
                           disabled={guardando}
                           className={claseBoton("secundario", "!py-1 !px-2 !text-red-600")}
                           title={
-                            pendientes.length > 0
+                            sinResponder.length > 0
                               ? "Tiene encuestas asociadas: no se puede borrar, pero sí desactivar"
                               : "Eliminar vendedor"
                           }
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
-                        {pendientes.length > 0 && v.email && (
+                        {sinAvisar.length > 0 && v.email && (
                           <button
                             onClick={() => avisar([v.codigo])}
                             disabled={avisando || estadoMail?.configurado === false}
@@ -880,7 +1087,7 @@ export default function EncuestasFabrica() {
                     )}
                   </div>
 
-                  {abierto && pendientes.length > 0 && (
+                  {abierto && sinResponder.length > 0 && (
                     <div className="overflow-x-auto bg-gray-50 px-5 pb-4">
                       <table className="w-full text-sm">
                         <thead>
@@ -890,10 +1097,15 @@ export default function EncuestasFabrica() {
                             <th className="py-2 pr-4">Dominio</th>
                             <th className="py-2 pr-4">Canal</th>
                             <th className="py-2 pr-4">Entrega</th>
+                            {/* Sin esto, en esta vista no se distinguiría a
+                                quién ya se le avisó de a quién no, que es
+                                justamente lo que decide si el próximo correo lo
+                                incluye. */}
+                            <th className="py-2 pr-4">Estado</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {pendientes.map((p) => (
+                          {sinResponder.map((p) => (
                             <tr key={p.id} className="border-t border-gray-200">
                               <td className="py-2 pr-4">
                                 {p.nombreCliente}
@@ -907,6 +1119,11 @@ export default function EncuestasFabrica() {
                               <td className="py-2 pr-4 font-mono text-xs">{p.dominio || "—"}</td>
                               <td className="py-2 pr-4 text-ink-muted">{p.canalVentas || "—"}</td>
                               <td className="py-2 pr-4 text-ink-muted">{fechaCorta(p.fechaEntrega)}</td>
+                              <td className="py-2 pr-4">
+                                <Badge tono={p.estado === "PENDIENTE" ? "amarillo" : "azul"}>
+                                  {ETIQUETA_ESTADO[p.estado]}
+                                </Badge>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
