@@ -119,9 +119,26 @@ $comando = "`"$exe`" http --domain=$dominio $puerto"
 # sesión y no depende de que el vigilante lo note. Si la política la bloquea
 # (pasa en la PC de Volkswagen), se cae a ONCE con fecha lejana: no se dispara
 # nunca sola, pero queda registrada y el vigilante la corre cuando hace falta.
-function Intentar([string[]]$extra, [string]$comoSeLlama) {
-    $p = @("/create", "/TN", $NombreTarea, "/TR", $comando) + $extra + @("/F")
-    if ($Usuario) { $p += @("/RU", $Usuario, "/IT") }
+    # ngrok corre como SYSTEM, no como la persona. Tres motivos, los tres
+    # aprendidos a los golpes en la PC de Volkswagen:
+    #
+    #   1. En la sesion 0 NO PUEDE haber ventana. Corriendo como la persona,
+    #      ngrok abria una consola que, si alguien la cerraba, mataba el tunel.
+    #   2. No hace falta ningun lanzador oculto. El .vbs que usa Ford para
+    #      esconder la ventana lo BLOQUEA el antivirus de esta PC
+    #      ("800700E1: el archivo contiene un virus o software potencialmente no
+    #      deseado"), aunque solo ejecute el .exe y no PowerShell.
+    #   3. Arranca sin que nadie inicie sesion. ngrok solo necesita llegar a
+    #      localhost:80; no toca Docker ni nada de la sesion del usuario.
+    #
+    # /SC MINUTE /MO 5 se REPARA SOLO: si ngrok se cae, a los 5 minutos vuelve, y
+    # si esta vivo Windows ignora la instancia nueva (IgnoreNew es el valor por
+    # defecto de las tareas creadas con schtasks). Es la misma idea que Ford.
+function Intentar([string[]]$extra, [string]$comoSeLlama, [switch]$ComoUsuario) {
+    $p = @("/create", "/TN", $NombreTarea, "/TR", $comando) + $extra
+    if ($ComoUsuario -and $Usuario) { $p += @("/RU", $Usuario, "/IT") }
+    else { $p += @("/RU", "SYSTEM") }
+    $p += "/F"
     $salida = & schtasks @p 2>&1
     if ($LASTEXITCODE -eq 0) {
         Bien "Tarea creada ($comoSeLlama)."
@@ -131,7 +148,9 @@ function Intentar([string[]]$extra, [string]$comoSeLlama) {
     return $false
 }
 
-$listo = Intentar @("/SC", "ONLOGON") "al iniciar sesion"
+# Como SYSTEM y cada 5 minutos: sin ventana, sin depender de la sesion, y se
+# repara solo. Es lo mejor de las dos formas que probamos.
+$listo = Intentar @("/SC", "MINUTE", "/MO", "5") "cada 5 minutos, como SYSTEM"
 
 if (-not $listo) {
     # 01/01/2099, con ceros y a mano. Probado: schtasks NO acepta el formato corto
@@ -139,7 +158,12 @@ if (-not $listo) {
     # depende del idioma. El 1 de enero esquiva las dos cosas: "01/01" se escribe
     # igual en dd/mm que en mm/dd.
     $fechaLejana = "01/01/2099"
-    $listo = Intentar @("/SC", "ONCE", "/SD", $fechaLejana, "/ST", "00:00") "a pedido"
+    $listo = Intentar @("/SC", "ONCE", "/SD", $fechaLejana, "/ST", "00:00") "a pedido, como SYSTEM"
+    if (-not $listo) {
+        # Ultimo recurso: como la persona. Vuelve la ventana, pero es preferible
+        # un tunel con ventana a no tener tunel.
+        $listo = Intentar @("/SC", "MINUTE", "/MO", "5") "cada 5 minutos, en la sesion" -ComoUsuario
+    }
     if ($listo) {
         Info "Esta variante NO arranca sola: la dispara el vigilante cuando ve"
         Info "el tunel caido. Como el vigilante pasa cada 5 minutos, el tunel"

@@ -289,9 +289,25 @@ if (-not $ngrokExe) {
     # —pasa en esta PC—, ONCE con fecha lejana: no se dispara nunca sola, pero
     # queda registrada y el vigilante la corre con "schtasks /run" cuando ve el
     # túnel caído, que es el camino que el vigilante ya tenía.
-    $r2 = Crear-Tarea -Nombre $TareaNgrok -Comando $cmdNgrok -Programacion @("/SC", "ONLOGON") -Como "al iniciar sesion"
+        # ngrok corre como SYSTEM, no como la persona. Tres motivos, los tres
+        # aprendidos a los golpes en la PC de Volkswagen:
+        #
+        #   1. En la sesion 0 NO PUEDE haber ventana. Corriendo como la persona,
+        #      ngrok abria una consola que, si alguien la cerraba, mataba el tunel.
+        #   2. No hace falta ningun lanzador oculto. El .vbs que usa Ford para
+        #      esconder la ventana lo BLOQUEA el antivirus de esta PC
+        #      ("800700E1: el archivo contiene un virus o software potencialmente no
+        #      deseado"), aunque solo ejecute el .exe y no PowerShell.
+        #   3. Arranca sin que nadie inicie sesion. ngrok solo necesita llegar a
+        #      localhost:80; no toca Docker ni nada de la sesion del usuario.
+        #
+        # /SC MINUTE /MO 5 se REPARA SOLO: si ngrok se cae, a los 5 minutos vuelve, y
+        # si esta vivo Windows ignora la instancia nueva (IgnoreNew es el valor por
+        # defecto de las tareas creadas con schtasks). Es la misma idea que Ford.
+    $r2 = Crear-Tarea -Nombre $TareaNgrok -Comando $cmdNgrok `
+        -Programacion @("/SC", "MINUTE", "/MO", "5", "/RU", "SYSTEM") -Como "cada 5 minutos, como SYSTEM"
     if (-not $r2.ok) {
-        Info "La politica bloquea el arranque al iniciar sesion; se usa la otra forma."
+        Info "No se pudo como SYSTEM; se prueba la otra forma."
         # "01/01/2099" a mano y con ceros: schtasks rechaza el formato corto de
         # Windows ("1/1/2099"), y el 1 de enero se escribe igual en dd/mm que en
         # mm/dd, así que no depende del idioma del sistema.
