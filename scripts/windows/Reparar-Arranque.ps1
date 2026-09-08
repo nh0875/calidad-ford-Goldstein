@@ -170,11 +170,21 @@ else { Ojo "No pude deducir la cuenta: las tareas quedan a nombre de $env:USERNA
 function Crear-Tarea {
     param([string]$Nombre, [string]$Comando, [string[]]$Programacion, [string]$Como)
 
+    # OJO CON LA COMA. Escrito como
+    #     $intentos += ,@("a","b") + $Programacion + @("c")
+    # la coma envuelve SOLO al primer arreglo y el resto queda SUELTO: $intentos
+    # termina con 9 elementos en vez de 1, y el foreach le pasa a schtasks pedazos
+    # sueltos como "/SC". Error real en la PC de Volkswagen:
+    #     Argumento u opcion no valido - "/"
+    # Hay que armar el arreglo COMPLETO y recien despues envolverlo con la coma.
     $intentos = @()
+    $base = @("/create", "/TN", $Nombre, "/TR", $Comando) + $Programacion
     if ($Usuario -and $Usuario -ne $env:USERNAME) {
-        $intentos += ,@("/create", "/TN", $Nombre, "/TR", $Comando) + $Programacion + @("/RU", $Usuario, "/IT", "/F")
+        $conUsuario = $base + @("/RU", $Usuario, "/IT", "/F")
+        $intentos += ,$conUsuario
     }
-    $intentos += ,@("/create", "/TN", $Nombre, "/TR", $Comando) + $Programacion + @("/F")
+    $sinUsuario = $base + @("/F")
+    $intentos += ,$sinUsuario
 
     foreach ($p in $intentos) {
         $salida = & schtasks @p 2>&1
@@ -195,6 +205,7 @@ Titulo "1. Tarea del vigilante (cada 5 minutos)"
 $cmdVigilante = "`"$PowerShell`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Bucle`" -UnaPasada"
 
 $r = Crear-Tarea -Nombre $TareaVigilante -Comando $cmdVigilante -Programacion @("/SC", "MINUTE", "/MO", "5") -Como "cada 5 minutos"
+$vigilanteListo = $r.ok
 if ($r.ok) { Bien "Creada: $TareaVigilante ($($r.como))." }
 else {
     Mal "No se pudo crear la tarea del vigilante."
@@ -207,15 +218,42 @@ else {
 # ---------------------------------------------------------------------------
 Titulo "2. Tarea de ngrok (el tunel)"
 
+# Se busca EN SERIO. La lista corta de antes no lo encontro en la PC de
+# Volkswagen y el script se salteo la tarea del tunel sin mas, que es justo lo que
+# habia que arreglar. Ahora: rutas conocidas, el PATH, where.exe, y si nada de eso
+# da, una busqueda en las carpetas donde la gente suele dejarlo.
 $rutasNgrok = @(
     "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe",
     "$env:ProgramFiles\ngrok\ngrok.exe",
-    "$env:LOCALAPPDATA\ngrok\ngrok.exe"
+    "${env:ProgramFiles(x86)}\ngrok\ngrok.exe",
+    "$env:LOCALAPPDATA\ngrok\ngrok.exe",
+    "$env:USERPROFILE\ngrok\ngrok.exe",
+    "$env:USERPROFILE\Downloads\ngrok.exe",
+    "$env:USERPROFILE\Desktop\ngrok.exe",
+    "C:\ngrok\ngrok.exe",
+    "C:\Calidad\ngrok.exe",
+    (Join-Path $ProjectDir "ngrok.exe"),
+    (Join-Path $PSScriptRoot "ngrok.exe")
 )
-$ngrokExe = $rutasNgrok | Where-Object { Test-Path $_ } | Select-Object -First 1
+$ngrokExe = $rutasNgrok | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+
 if (-not $ngrokExe) {
     $c = Get-Command ngrok -ErrorAction SilentlyContinue
     if ($c) { $ngrokExe = $c.Source }
+}
+if (-not $ngrokExe) {
+    # where.exe mira el PATH de la MAQUINA, que puede no ser el de esta ventana.
+    $w = (& where.exe ngrok.exe 2>$null | Select-Object -First 1)
+    if ($w -and (Test-Path $w)) { $ngrokExe = $w }
+}
+if (-not $ngrokExe) {
+    Info "No esta en las rutas conocidas: buscando en el disco (tarda un momento)..."
+    foreach ($raiz in @("$env:LOCALAPPDATA", "$env:USERPROFILE\Downloads", "$env:ProgramFiles", "C:\Calidad")) {
+        if (-not (Test-Path $raiz)) { continue }
+        $hallado = Get-ChildItem -Path $raiz -Filter "ngrok.exe" -Recurse -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+        if ($hallado) { $ngrokExe = $hallado.FullName; break }
+    }
 }
 
 $ngrokListo = $false
@@ -300,7 +338,12 @@ if ($ngrokListo) { Info ("el tunel esta activo      : " + $(if ($tunelOk) { "SI"
 # ---------------------------------------------------------------------------
 Titulo "RESULTADO"
 Write-Host ""
-if ($sistemaOk -and ($tunelOk -or -not $ngrokListo)) {
+# El veredicto tiene que mirar TAMBIEN si las tareas se crearon. La primera
+# version solo miraba si el sistema respondia, asi que dijo "LISTO, va a arrancar
+# solo" con la tarea del vigilante FALLADA y sin tarea de ngrok: el sistema
+# respondia porque ya estaba levantado de antes, no por nada que hubiera hecho el
+# script. Un cartel verde mentiroso es peor que uno rojo.
+if ($vigilanteListo -and $ngrokListo -and $sistemaOk -and $tunelOk) {
     Write-Host "   LISTO. Va a arrancar solo cada vez que $Usuario inicie sesion." -ForegroundColor Green
     Write-Host ""
     Info "El sistema local : $urlLocal"
@@ -309,8 +352,16 @@ if ($sistemaOk -and ($tunelOk -or -not $ngrokListo)) {
     Info "Se revisa y se repara cada 5 minutos. Queda anotado en:"
     Info "   $PSScriptRoot\vigilante-bucle.log"
 } else {
-    Ojo "Las tareas quedaron creadas, pero algo todavia no responde."
+    Mal "NO quedo listo. Falta esto:"
     Write-Host ""
+    if (-not $vigilanteListo) {
+        Info "* La tarea del VIGILANTE no se pudo crear. Sin ella el sistema NO"
+        Info "  arranca solo cuando se prende la PC."
+    }
+    if (-not $ngrokListo) {
+        Info "* La tarea de NGROK no se pudo crear (o no se encontro ngrok.exe)."
+        Info "  El sistema anda en localhost, pero el link de afuera no."
+    }
     if (-not $sistemaOk) {
         Info "El SISTEMA no contesta. Suele ser que Docker todavia esta arrancando:"
         Info "esperá unos minutos y abrí $urlLocal"
