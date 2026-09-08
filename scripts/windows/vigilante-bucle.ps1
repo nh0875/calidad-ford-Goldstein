@@ -27,6 +27,21 @@
 #  anota y se sigue.
 # ============================================================================
 
+param(
+    # UNA PASADA Y SALGO. Para cuando quien manda es una TAREA PROGRAMADA que
+    # repite cada 5 minutos: ahi la tarea ES el bucle y este script no tiene que
+    # quedarse vivo.
+    #
+    # POR QUE HIZO FALTA: en la PC de Volkswagen el log mostraba "Bucle iniciado"
+    # cada 5 minutos, exactamente el intervalo de la tarea, y NUNCA el mensaje de
+    # "ya hay otro corriendo". O sea que la tarea estaba MATANDO al que corria
+    # para arrancar otro (la regla "si ya se esta ejecutando" quedo en "detener la
+    # instancia existente"). Con un bucle infinito eso es una pelea: el proceso
+    # vive 5 minutos, lo matan, arranca otro. Con este modo deja de importar como
+    # este configurada esa regla, porque cada corrida es corta y termina sola.
+    [switch]$UnaPasada
+)
+
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
@@ -85,12 +100,29 @@ function Anotar($texto) {
     # Siempre a la consola tambien: si alguien corre esto a mano para ver que
     # pasa, tiene que VER algo. Corriendo oculto no molesta a nadie.
     Write-Host "  $linea"
-    try { Add-Content -Path $Registro -Value $linea -Encoding UTF8 } catch { }
+    # Se reintenta: si dos procesos escriben a la vez, el segundo falla y ANTES se
+    # perdia la linea en silencio (por el catch vacio). En el log de la PC de
+    # Volkswagen se veia clarito: en unos arranques faltaba "Registro en" y en
+    # otros "Primera pasada", distintas cada vez. Un log al que le faltan renglones
+    # al azar es peor que no tener log, porque manda a buscar donde no es.
+    for ($i = 0; $i -lt 5; $i++) {
+        try {
+            Add-Content -Path $Registro -Value $linea -Encoding UTF8 -ErrorAction Stop
+            return
+        } catch {
+            Start-Sleep -Milliseconds 120
+        }
+    }
 }
 
 # Que no queden dos bucles dando vueltas si alguien inicia sesión dos veces o
 # ejecuta el acceso directo a mano. El vigilante tiene su propio candado, pero
 # dos bucles igual harían el doble de trabajo al pedo.
+# El candado es para el modo bucle: evita dos procesos infinitos dando vueltas.
+# En modo una-pasada no hace falta y ademas estorba: si dos corridas de la tarea
+# se pisan por unos segundos, la segunda no tiene por que abortar.
+$mutex = $null
+if (-not $UnaPasada) {
 $mutex = New-Object System.Threading.Mutex($false, "Global\CalidadVigilanteBucle")
 if (-not $mutex.WaitOne(0)) {
     Anotar "Ya hay otro bucle corriendo en esta sesion: este se cierra."
@@ -98,6 +130,7 @@ if (-not $mutex.WaitOne(0)) {
     Write-Host "  Si querias arrancar uno nuevo, primero cerra el que ya esta corriendo." -ForegroundColor Yellow
     Write-Host "  El comando para hacerlo esta en el README de scripts/windows." -ForegroundColor Gray
     exit 0
+}
 }
 
 if (-not (Test-Path $Vigilante)) {
@@ -114,14 +147,17 @@ if ((Test-Path $Registro) -and ((Get-Item $Registro).Length -gt 2MB)) {
 
 Anotar "Bucle iniciado (cada $($CadaSegundos / 60) minutos). Usuario: $env:USERNAME"
 Anotar "Registro en: $Registro"
-Anotar "Primera pasada en 45 segundos (se le da tiempo a Docker)."
+# La espera solo tiene sentido cuando esto arranca junto con la sesion: Windows
+# todavia esta levantando cosas y Docker tarda en estar listo. En modo una-pasada
+# no va: la tarea vuelve en 5 minutos igual, y esperar 45 segundos de gusto en
+# cada corrida solo alarga el proceso sin ganar nada.
+if (-not $UnaPasada) {
+    Anotar "Primera pasada en 45 segundos (se le da tiempo a Docker)."
+    Start-Sleep -Seconds 45
+}
 
-# Al iniciar sesión, Windows todavía está levantando cosas y Docker Desktop tarda
-# bastante en estar listo. Se espera un poco antes de la primera pasada para no
-# gastarla en falso.
-Start-Sleep -Seconds 45
+function Pasada {
 
-while ($true) {
     try {
         # Una vez al dia, en la ventana del mediodia, toca actualizar.
         $ahora = Get-Date
@@ -169,5 +205,28 @@ while ($true) {
         # alguien vuelva a iniciar sesión.
         Anotar "Error en una pasada: $($_.Exception.Message)"
     }
+}
+
+if ($UnaPasada) {
+    Pasada
+    # Una senal de vida, pero UNA POR HORA y no una cada 5 minutos: con 288
+    # renglones por dia el log se vuelve ilegible justo cuando hace falta leerlo.
+    # Sin esto el archivo quedaria mudo en este modo, y no poder saber si esto
+    # esta corriendo fue exactamente el problema que llevo a mirarlo.
+    try {
+        $selloVida = Join-Path $PSScriptRoot "ultima-senal.txt"
+        $horaAhora = (Get-Date).ToString("yyyy-MM-dd HH")
+        $ultima = ""
+        if (Test-Path $selloVida) { $ultima = (Get-Content $selloVida -Raw -EA SilentlyContinue).Trim() }
+        if ($ultima -ne $horaAhora) {
+            Set-Content -Path $selloVida -Value $horaAhora -Encoding UTF8
+            Anotar "Vigilando (una pasada cada 5 minutos; esta senal sale una vez por hora)."
+        }
+    } catch { }
+    exit 0
+}
+
+while ($true) {
+    Pasada
     Start-Sleep -Seconds $CadaSegundos
 }
