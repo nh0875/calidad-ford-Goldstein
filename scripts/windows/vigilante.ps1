@@ -93,7 +93,66 @@ function Log {
 }
 
 function Log-Accion { param([string]$m) ; $script:huboAccion = $true ; Log "ACCION" $m }
-function Log-Error  { param([string]$m) ; $script:huboAccion = $true ; Log "ERROR"  $m }
+# huboError va aparte de huboAccion: reparar algo (una accion) es lo NORMAL y no
+# tiene que avisar a nadie. Lo que hay que avisar es lo que NO se pudo arreglar.
+function Log-Error  {
+    param([string]$m)
+    $script:huboAccion = $true
+    $script:huboError = $true
+    $script:motivos = @($script:motivos) + @($m)
+    Log "ERROR" $m
+}
+
+# ---------------------------------------------------------------------------
+#  Aviso por correo cuando algo NO se puede arreglar solo
+# ---------------------------------------------------------------------------
+#  POR QUE EXISTE ESTO. Todo lo que fallo en esta PC fallo EN SILENCIO: el tunel
+#  estuvo caido dias, la actualizacion se revertia sola cada noche, ngrok
+#  directamente habia desaparecido. Todo estaba prolijamente anotado en archivos
+#  de log que nadie abre nunca. Un vigilante que sabe que algo esta roto y no se
+#  lo dice a nadie sirve la mitad.
+#
+#  Se avisa recien despues de VARIAS pasadas fallidas seguidas, no a la primera:
+#  Docker tarda en arrancar, la red parpadea, y un correo por cada hipo es un
+#  correo que se aprende a ignorar. Y se avisa UNA sola vez por episodio, con un
+#  segundo correo cuando se recupera, para que el silencio signifique "esta bien".
+$ArchivoEstado = Join-Path $PSScriptRoot "estado-vigilante.json"
+$FallasParaAvisar = 3      # 3 pasadas de 5 minutos = ~15 minutos caido
+$HorasEntreAvisos = 12     # si sigue roto, se recuerda una vez por dia y media
+
+function Leer-Estado {
+    if (Test-Path $ArchivoEstado) {
+        try { return (Get-Content $ArchivoEstado -Raw | ConvertFrom-Json) } catch { }
+    }
+    return [pscustomobject]@{ fallas = 0; avisadoEn = "" }
+}
+
+function Guardar-Estado($estado) {
+    try { $estado | ConvertTo-Json | Set-Content -Path $ArchivoEstado -Encoding UTF8 } catch { }
+}
+
+function Mandar-Correo([string]$asunto, [string]$cuerpo) {
+    $servidor = Leer-EnvProd "MAIL_HOST";     if (-not $servidor) { $servidor = "smtp.gmail.com" }
+    $puertoM  = Leer-EnvProd "MAIL_PUERTO";   if (-not $puertoM)  { $puertoM = "465" }
+    $usuario  = Leer-EnvProd "MAIL_USUARIO"
+    $clave    = Leer-EnvProd "MAIL_PASSWORD"
+    $para     = Leer-EnvProd "ALERTA_EMAIL"
+    if (-not $para) { $para = Leer-EnvProd "MAIL_COPIA_AVISOS" }
+    if (-not $para) { $para = $usuario }
+    if (-not $usuario -or -not $clave -or -not $para) { return $false }
+
+    try {
+        $cliente = New-Object System.Net.Mail.SmtpClient($servidor, [int]$puertoM)
+        $cliente.EnableSsl = $true
+        $cliente.Credentials = New-Object System.Net.NetworkCredential($usuario, $clave)
+        $mensaje = New-Object System.Net.Mail.MailMessage($usuario, $para, $asunto, $cuerpo)
+        $cliente.Send($mensaje)
+        return $true
+    } catch {
+        Log "ERROR" ("No se pudo mandar el aviso por correo: " + $_.Exception.Message)
+        return $false
+    }
+}
 
 # ---------------------------------------------------------------------------
 #  Consulta HTTP que NO pasa por el proxy cuando el destino es esta misma PC
@@ -445,6 +504,67 @@ try {
             if ($tail) { $m = $tail | Select-String "\[OK\]" | Select-Object -Last 1; if ($m) { $ultimo = $m.Line.Substring(0,10) } }
         }
         if ($ultimo -ne $hoy) { Log "OK" "Todo en orden (Docker, contenedores, /api/health y ngrok)." }
+    }
+
+    # ---------- 6) Avisar si algo no se pudo arreglar ----------
+    $estado = Leer-Estado
+    if ($script:huboError) {
+        $estado.fallas = [int]$estado.fallas + 1
+
+        # Se avisa al llegar al umbral, y despues como mucho una vez cada tantas
+        # horas: un correo por pasada seria un correo que se aprende a ignorar.
+        $tocaAvisar = $false
+        if ($estado.fallas -eq $FallasParaAvisar) { $tocaAvisar = $true }
+        elseif ($estado.fallas -gt $FallasParaAvisar -and $estado.avisadoEn) {
+            $desde = $null
+            try { $desde = [datetime]::Parse($estado.avisadoEn) } catch { }
+            if ($desde -and ((Get-Date) - $desde).TotalHours -ge $HorasEntreAvisos) { $tocaAvisar = $true }
+        }
+
+        if ($tocaAvisar) {
+            $detalle = ($script:motivos | Select-Object -Unique) -join "`n  - "
+            $minutos = $estado.fallas * 5
+            $cuerpo = @"
+El vigilante del Sistema de Calidad encontro algo que NO pudo arreglar solo.
+
+Equipo    : $env:COMPUTERNAME
+Usuario   : $env:USERNAME
+Desde hace: aproximadamente $minutos minutos ($($estado.fallas) revisiones seguidas)
+
+Que esta fallando:
+  - $detalle
+
+Que hacer:
+  1. Fijarse si la PC esta prendida y con la sesion iniciada (Docker solo
+     funciona con la sesion abierta).
+  2. Doble clic en "Iniciar Sistema de Calidad" en el escritorio.
+  3. Si sigue igual, mandarle esta informacion a Ignacio junto con el archivo
+     $LogFile
+
+Este aviso se manda una sola vez por episodio. Cuando se recupere va a llegar
+otro correo avisando.
+"@
+            if (Mandar-Correo "[Calidad $env:COMPUTERNAME] El sistema necesita atencion" $cuerpo) {
+                Log "ACCION" "Se aviso por correo: lleva $($estado.fallas) revisiones con problemas."
+                $estado.avisadoEn = (Get-Date).ToString("s")
+            }
+        }
+        Guardar-Estado $estado
+    }
+    elseif ([int]$estado.fallas -gt 0) {
+        # Se recupero. Si se habia avisado, se avisa tambien la vuelta: si no, el
+        # que recibio el mail no sabe nunca si se soluciono.
+        if ($estado.avisadoEn) {
+            $null = Mandar-Correo "[Calidad $env:COMPUTERNAME] Se recupero solo" @"
+El sistema volvio a funcionar bien y no hace falta hacer nada.
+
+Equipo : $env:COMPUTERNAME
+Estuvo con problemas unas $([int]$estado.fallas * 5) minutos y el vigilante lo
+resolvio solo.
+"@
+            Log "ACCION" "Se aviso por correo que se recupero."
+        }
+        Guardar-Estado ([pscustomobject]@{ fallas = 0; avisadoEn = "" })
     }
 
     Pop-Location
