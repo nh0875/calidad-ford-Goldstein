@@ -88,3 +88,8 @@ gtest/
 # Informes del diagnostico Comparar-PCs: son de UNA maquina y de un momento,
 # no del proyecto. Se mandan por chat y se tiran.
 comparacion-*.txt
+
+# Archivos de prueba sueltos que quedaron de sesiones de depuracion.
+backend/_*.ts
+backend/__*.ts
+backend/src/services/_head_*.ts
