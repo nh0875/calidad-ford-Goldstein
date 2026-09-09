@@ -44,6 +44,16 @@ const CLASE_ESTADO: Record<EstadoCliente, string> = {
   RESPONDIO: "bg-green-50 text-green-900 border-green-200 hover:bg-green-100",
 };
 
+/** Un número del resumen, con su etiqueta al lado. */
+function Dato({ valor, etiqueta, clase }: { valor: number; etiqueta: string; clase: string }) {
+  return (
+    <span className={`inline-flex items-baseline gap-1.5 rounded-full px-3 py-1 ${clase}`}>
+      <span className="text-sm font-bold tabular-nums">{valor}</span>
+      <span className="text-xs">{etiqueta}</span>
+    </span>
+  );
+}
+
 /**
  * El estado del cliente, como pastilla que además se puede cambiar.
  *
@@ -578,17 +588,21 @@ export default function EncuestasFabrica() {
             <h2 className="font-display text-sm font-bold uppercase tracking-wide text-navy">
               Encuestas de fábrica sin responder
             </h2>
-            <p className="mt-1 text-sm text-ink-muted">
-              {/* "Pendientes" son los que todavía NO se avisaron: es exactamente
-                  lo que entraría en el próximo correo. Los avisados se cuentan
-                  aparte porque ya salieron y no van a volver a salir. */}
-              {resumen
-                ? `${resumen.totalPendientes} sin avisar entre ${resumen.vendedoresConPendientes} vendedor(es), ` +
-                  `${resumen.totalAvisados} ya avisado(s) esperando respuesta. ` +
-                  `En total hay ${resumen.totalClientes} cliente(s) cargado(s), de los cuales ` +
-                  `${resumen.totalRespondidos} ya respondieron.`
-                : "Cargando…"}
-            </p>
+            {/* Cuatro numeros sueltos en vez de un parrafo corrido. Antes decia
+                "0 sin avisar entre 0 vendedor(es), 65 ya avisado(s)..." de un
+                tiron: habia que LEERLO entero para sacar un dato que se responde
+                de un vistazo. Ademas, con todo avisado quedaban frases raras
+                ("entre 0 vendedores") que sonaban a error del sistema. */}
+            {resumen ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Dato valor={resumen.totalPendientes} etiqueta="sin avisar" clase="bg-yellow-50 text-yellow-900" />
+                <Dato valor={resumen.totalAvisados} etiqueta="esperando respuesta" clase="bg-accent-light text-accent-dark" />
+                <Dato valor={resumen.totalRespondidos} etiqueta="respondieron" clase="bg-green-50 text-green-900" />
+                <Dato valor={resumen.totalClientes} etiqueta="en total" clase="bg-gray-100 text-ink-muted" />
+              </div>
+            ) : (
+              <p className="mt-1 text-sm text-ink-muted">Cargando…</p>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <label className={`${claseBoton("secundario", "!py-1.5")} cursor-pointer`}>
@@ -814,38 +828,63 @@ export default function EncuestasFabrica() {
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
+                {/* SIETE columnas, no diez. Antes cada dato tenía la suya y no
+                    entraban: el nombre del cliente partía en tres renglones (de ahí
+                    que la lista se viera estirada) y la última columna quedaba
+                    cortada contra el borde, con el botón de eliminar a medias.
+                    Los pares que siempre se leen juntos —cliente y su correo,
+                    vendedor y su sucursal— van apilados en una sola celda: ocupan
+                    DOS renglones fijos en vez de tres impredecibles. */}
                 <tr className="border-b border-gray-200 bg-gray-50/80 text-left text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
-                  <th className="px-4 py-3">Cliente</th>
-                  <th className="px-4 py-3">Correo</th>
-                  <th className="whitespace-nowrap px-4 py-3">Chasis / Dominio</th>
-                  <th className="whitespace-nowrap px-4 py-3">Vendedor</th>
-                  <th className="whitespace-nowrap px-4 py-3">Sucursal</th>
-                  <th className="whitespace-nowrap px-4 py-3">Entrega</th>
-                  <th className="whitespace-nowrap px-4 py-3">Estado</th>
-                  <th className="whitespace-nowrap px-4 py-3">Calificación</th>
-                  <th className="whitespace-nowrap px-4 py-3">Origen</th>
-                  <th className="whitespace-nowrap px-4 py-3"></th>
+                  <th className="px-4 py-2.5">Cliente</th>
+                  <th className="whitespace-nowrap px-3 py-2.5">Chasis / Dominio</th>
+                  <th className="whitespace-nowrap px-3 py-2.5">Vendedor</th>
+                  <th className="whitespace-nowrap px-3 py-2.5">Entrega</th>
+                  <th className="whitespace-nowrap px-3 py-2.5">Estado</th>
+                  <th className="whitespace-nowrap px-3 py-2.5">Calificación</th>
+                  <th className="whitespace-nowrap px-3 py-2.5"></th>
                 </tr>
               </thead>
               <tbody>
                 {clientes.map((c) => (
                   <Fragment key={c.id}>
                     <tr className="border-b border-gray-100 transition-colors duration-150 hover:bg-accent-light/20">
-                      <td className="px-4 py-3 text-ink">{c.nombreCliente}</td>
-                      <td className="px-4 py-3 text-ink-muted">{c.email || "—"}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-ink-muted">
-                        <span className="font-mono text-xs">{c.chasis}</span>
-                        {c.dominio && <span className="ml-2 text-xs">{c.dominio}</span>}
+                      {/* max-w + truncate: un nombre largo se corta con puntos
+                          suspensivos en vez de partirse en tres renglones y
+                          estirar toda la fila. El completo queda en el title. */}
+                      <td className="max-w-[15rem] px-4 py-2.5">
+                        <div className="truncate font-medium text-ink" title={c.nombreCliente}>
+                          {c.nombreCliente}
+                          {/* El origen solo se marca cuando es a mano. "Excel de
+                              fábrica" es el caso normal y repetirlo en las 65
+                              filas era una columna entera de ruido. */}
+                          {c.esManual && (
+                            <span className="ml-2 rounded bg-gray-200 px-1.5 py-0.5 align-middle text-[10px] font-semibold text-gray-700">
+                              A MANO
+                            </span>
+                          )}
+                        </div>
+                        <div className="truncate text-xs text-ink-muted" title={c.email || undefined}>
+                          {c.email || "sin correo"}
+                        </div>
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-ink-muted">{c.vendedorNombre}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-ink-muted">{c.sucursal}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-ink-muted">
+                      <td className="whitespace-nowrap px-3 py-2.5">
+                        <div className="font-mono text-[11px] text-ink-muted">{c.chasis}</div>
+                        <div className="font-mono text-[11px] font-semibold text-ink">{c.dominio || "—"}</div>
+                      </td>
+                      <td className="max-w-[11rem] px-3 py-2.5">
+                        <div className="truncate text-ink" title={c.vendedorNombre}>
+                          {c.vendedorNombre}
+                        </div>
+                        <div className="truncate text-xs text-ink-muted">{c.sucursal}</div>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-ink-muted">
                         {c.fechaEntrega ? fechaCorta(c.fechaEntrega) : "—"}
                       </td>
                       {/* El estado se cambia acá mismo, sin abrir nada: es lo que
                           más se toca, y esconderlo detrás de un botón sumaría un
                           clic a cada corrección. */}
-                      <td className="whitespace-nowrap px-4 py-3">
+                      <td className="whitespace-nowrap px-3 py-2.5">
                         <SelectorEstado
                           valor={c.estado}
                           deshabilitado={guardando}
@@ -857,7 +896,7 @@ export default function EncuestasFabrica() {
                           }
                         />
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3">
+                      <td className="whitespace-nowrap px-3 py-2.5">
                         {c.calificacion ? (
                           <span className="inline-flex items-center gap-1.5">
                             <Estrellas puntaje={c.calificacion} />
@@ -877,18 +916,11 @@ export default function EncuestasFabrica() {
                           </span>
                         )}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3">
-                        {c.esManual ? (
-                          <Badge tono="gris">A mano</Badge>
-                        ) : (
-                          <span className="text-xs text-ink-muted">Excel de fábrica</span>
-                        )}
-                      </td>
                       {/* Botones de verdad, no texto suelto. Antes eran dos
                           palabras sueltas al borde de la fila: no parecían
                           pulsables y "Eliminar" en rojo pelado se leía como un
                           error del sistema, no como una acción. */}
-                      <td className="whitespace-nowrap px-4 py-3 text-right">
+                      <td className="whitespace-nowrap px-3 py-2.5 text-right">
                         <div className="inline-flex items-center gap-1">
                           <button
                             onClick={() => setNotaAbierta(notaAbierta === c.id ? null : c.id)}
@@ -916,7 +948,7 @@ export default function EncuestasFabrica() {
                     </tr>
                     {notaAbierta === c.id && (
                       <tr className="border-b border-gray-100 bg-gradient-to-b from-accent-light/20 to-gray-50">
-                        <td colSpan={10} className="px-4 py-4">
+                        <td colSpan={7} className="px-4 py-4">
                           {/* La animación no es adorno: la fila aparece de golpe
                               en el medio de la tabla y empuja todo lo de abajo.
                               El deslizado corto explica de dónde salió. */}
