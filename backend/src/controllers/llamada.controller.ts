@@ -25,6 +25,7 @@ import { encolarSegundoContactoManual } from "../services/segundo-contacto.servi
 import { ITEMS_POSVENTA } from "../config/posventa-vw";
 import { PuntajeItem, guardarPuntajes } from "../services/encuesta-posventa.service";
 import { ACCIONES, auditar } from "../services/audit.service";
+import { parseConvId } from "./seguimiento.controller";
 
 const SELECT_CASO = {
   id: true,
@@ -35,10 +36,19 @@ const SELECT_CASO = {
   nombrePropietario: true,
 } as const;
 
-/** Busca el caso y corta si la persona no lo puede tocar. Devuelve null si ya respondió. */
+/** Busca el caso y corta si la persona no lo puede tocar. */
 async function traerCasoAutorizado(req: Request, res: Response) {
+  // La pantalla manda el id CON PREFIJO ("caso:abc123"), igual que a los demás
+  // endpoints de seguimiento. Buscarlo tal cual no encuentra nada y los tres
+  // botones responderían 404 sin que se entienda por qué.
+  const conv = parseConvId(req.params.casoId);
+  if (!conv || conv.tipo !== "caso") {
+    res.status(404).json({ message: "No se encontró el caso." });
+    return null;
+  }
+
   const caso = await prisma.caso.findFirst({
-    where: { id: req.params.casoId, eliminadoEn: null },
+    where: { id: conv.id, eliminadoEn: null },
     select: SELECT_CASO,
   });
   if (!caso) {

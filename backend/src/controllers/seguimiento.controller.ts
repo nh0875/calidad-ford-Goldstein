@@ -48,6 +48,10 @@ const SELECT_CASO_ENVIO = {
   ultimoErrorEnvio: true,
   // El cliente apretó "Quiero participar por Llamada": hay que llamarlo.
   quiereLlamadoEn: true,
+  // Circuito de insistencia: si ya salió el segundo WhatsApp (para no ofrecer
+  // mandarlo de nuevo) y por qué no se pudo hablar en el último intento.
+  segundoContactoEn: true,
+  llamadaMotivo: true,
 } satisfies Prisma.CasoSelect;
 
 // Campos del cliente de fidelización para las acciones.
@@ -69,7 +73,10 @@ type ConvTipo = "caso" | "fidelizacion";
 
 /** Parsea el id prefijado de una conversación ("caso:<id>" / "fid:<id>"). Sin
  * prefijo se asume caso (compatibilidad con enlaces viejos). */
-function parseConvId(raw: unknown): { tipo: ConvTipo; id: string } | null {
+// Se exporta porque el circuito de insistencia (llamada.controller) recibe el
+// MISMO id que manda esta pantalla, con el prefijo "caso:" adelante. Sin
+// parsearlo, la busqueda por id no encuentra nada y los botones dan 404.
+export function parseConvId(raw: unknown): { tipo: ConvTipo; id: string } | null {
   const s = String(raw ?? "");
   const i = s.indexOf(":");
   if (i < 0) return s ? { tipo: "caso", id: s } : null;
@@ -461,6 +468,10 @@ export async function verConversacion(req: Request, res: Response) {
         quiereAsesor: false,
         // Pidió que lo llamen (botón de la plantilla de Posventa de VW).
         quiereLlamado: caso.quiereLlamadoEn != null,
+        // Para el circuito de insistencia: la pantalla decide con esto si
+        // ofrecer el botón de segundo contacto o el formulario de la llamada.
+        segundoContactoEn: caso.segundoContactoEn,
+        llamadaMotivo: caso.llamadaMotivo,
       },
       mensajes,
       analisis,

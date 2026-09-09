@@ -17,6 +17,7 @@ import { usaEstrellas } from "../lib/marca";
 import { Alert } from "../components/ui/Alert";
 import { Badge, PuntoSemaforo } from "../components/ui/Badge";
 import { EmptyState } from "../components/ui/EmptyState";
+import { PanelLlamada } from "../components/PanelLlamada";
 
 // ---------- "WhatsApp interno" ----------
 // Reemplaza a "Revisión manual". Como el número del sistema es de la Cloud API
@@ -83,6 +84,10 @@ interface Hilo {
     quiereAsesor: boolean;
     // Apretó "Quiero participar por Llamada" en la plantilla de Posventa.
     quiereLlamado?: boolean;
+    // Circuito de insistencia: cuándo salió el segundo WhatsApp (si salió) y
+    // por qué no se pudo hablar en el último intento de llamada.
+    segundoContactoEn?: string | null;
+    llamadaMotivo?: string | null;
   };
   mensajes: Mensaje[];
   analisis: {
@@ -237,6 +242,30 @@ export default function Seguimiento() {
       cargarLista();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo enviar el mensaje.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  // Insistir a mano, sin esperar las 24 h del circuito automático. Toda la
+  // validación real vive en el backend, que es el mismo camino que usa la
+  // barrida: si estuviera duplicada acá, tarde o temprano las dos versiones
+  // dirían cosas distintas sobre a quién se le puede escribir.
+  async function mandarSegundoContacto() {
+    if (!seleccionadoId) return;
+    setEnviando(true);
+    setError(null);
+    setAviso(null);
+    try {
+      const r = await apiPostJson<{ message: string }>(
+        `/api/seguimiento/${encodeURIComponent(seleccionadoId)}/segundo-contacto`,
+        {}
+      );
+      setAviso(r.message);
+      await cargarHilo(seleccionadoId);
+      cargarLista();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo mandar el segundo contacto.");
     } finally {
       setEnviando(false);
     }
@@ -473,6 +502,19 @@ export default function Seguimiento() {
               )}
             </div>
 
+            {/* El circuito de insistencia dejó este caso para llamar. Va ARRIBA
+                de todo lo demás: es lo único de esta pantalla que pide que
+                alguien levante el teléfono ahora. */}
+            {hilo.caso.estadoContacto === "LLAMADA_PENDIENTE" && (
+              <PanelLlamada
+                casoId={hilo.caso.id}
+                area={hilo.caso.area}
+                puntajesPosventa={hilo.puntajesPosventa}
+                llamadaMotivo={hilo.caso.llamadaMotivo}
+                onListo={() => cargarHilo(hilo.caso.id)}
+              />
+            )}
+
             {hilo.caso.quiereLlamado && (
               <div className="border-b border-amber-200 bg-amber-50 px-4 py-2">
                 <p className="flex items-center gap-2 text-sm font-medium text-amber-900">
@@ -641,6 +683,23 @@ export default function Seguimiento() {
                         <MessageSquare className="h-3.5 w-3.5" />
                         Pedir que repita el mensaje
                       </button>
+
+                      {/* Insistir sin esperar las 24 h del circuito automático.
+                          Solo aparece si el caso está esperando respuesta y el
+                          segundo mensaje TODAVÍA no salió: el peor error de este
+                          circuito es que al cliente le llegue dos veces, así que
+                          el botón desaparece apenas salió una. */}
+                      {hilo.caso.estadoContacto === "ENVIADO" && !hilo.caso.segundoContactoEn && (
+                        <button
+                          onClick={mandarSegundoContacto}
+                          disabled={enviando}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-50"
+                          title="Le manda la plantilla de segundo contacto ahora, sin esperar a que lo haga el sistema"
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          Insistir ahora
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
