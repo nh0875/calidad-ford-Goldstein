@@ -27,7 +27,7 @@ const server = app.listen(env.port, () => {
 const workers = startWorkers();
 
 registrarJobsRepetibles()
-  .then(() => console.log("Cron diario de NO_RESPONDIO registrado (08:00 AR)"))
+  .then(() => console.log("Trabajos automaticos registrados: cierre diario (08:00 AR) y circuito de contacto (cada hora)"))
   .catch((err) => console.error("No se pudo registrar el cron de mantenimiento:", err));
 
 seedAdmin().catch((err) => console.error("[seed] Error creando el admin inicial:", err));

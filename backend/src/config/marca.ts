@@ -92,6 +92,17 @@ export interface PerfilMarca {
    * número de orden. Es un pedido de Volkswagen; en Ford el cartel no aparece.
    */
   avisoPosibleDuplicado: boolean;
+  /**
+   * El circuito de INSISTENCIA: si el cliente no contesta el primer contacto a
+   * las 24 h se le manda la plantilla "segundo_contacto"; si a las 24 h de esa
+   * tampoco contestó, el caso queda para que lo llame Calidad por teléfono.
+   *
+   * En Ford está apagado y no es un olvido: allá un caso sin respuesta pasa a
+   * NO_RESPONDIO y se termina ahí, que es como viene funcionando. Prenderlo
+   * significaría empezar a mandarle un segundo WhatsApp a clientes reales de
+   * Ford sin que nadie lo haya pedido.
+   */
+  segundoContacto: boolean;
   /** Color institucional para los títulos de los documentos que se exportan. */
   colorDocumento: string;
   /** Nombre del archivo del logo dentro de backend/assets (ver su README). */
@@ -111,6 +122,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     refuerzo: { habilitado: true, notificarPorMail: false, formatoExcel: "FORD" },
     visibilidadPorProvincia: false,
     avisoPosibleDuplicado: false,
+    segundoContacto: false,
     colorDocumento: "003478", // azul Ford
     logoArchivo: "logo-ford.png",
   },
@@ -129,6 +141,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     refuerzo: { habilitado: true, notificarPorMail: true, formatoExcel: "VW" },
     visibilidadPorProvincia: true,
     avisoPosibleDuplicado: true,
+    segundoContacto: true,
     colorDocumento: "001E50", // azul Volkswagen
     logoArchivo: "logo-volkswagen.png",
   },

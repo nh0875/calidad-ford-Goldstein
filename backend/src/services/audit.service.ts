@@ -58,6 +58,12 @@ export const ACCIONES = {
   // porque es el único lugar donde una persona puede declarar que un cliente
   // contestó sin que haya un archivo de fábrica que lo respalde.
   ENCUESTA_VW_ESTADO_CAMBIADO: "ENCUESTA_VW_ESTADO_CAMBIADO",
+  // El circuito de insistencia. Las tres se auditan porque las tres terminan
+  // en algo que le pasa a un cliente real: un WhatsApp que sale, o un caso que
+  // se da por respondido sin que haya quedado ni un mensaje escrito.
+  SEGUNDO_CONTACTO_MANUAL: "SEGUNDO_CONTACTO_MANUAL",
+  LLAMADA_CARGADA: "LLAMADA_CARGADA",
+  LLAMADA_FALLIDA: "LLAMADA_FALLIDA",
   TAREA_ASIGNADA: "TAREA_ASIGNADA",
   TAREA_REASIGNADA: "TAREA_REASIGNADA",
   TAREAS_REDISTRIBUIDAS: "TAREAS_REDISTRIBUIDAS",

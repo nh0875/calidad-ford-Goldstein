@@ -67,6 +67,12 @@ export const env = {
     // respuestas perdidas/huérfanas. Se elige a mano desde Seguimiento.
     respuestaNoRecibidaName: process.env.META_RESPUESTA_NO_RECIBIDA_NAME ?? "respuesta_no_recibida",
     respuestaNoRecibidaLang: process.env.META_RESPUESTA_NO_RECIBIDA_LANG ?? "es_AR",
+    // Segundo intento cuando el cliente no contestó el primer contacto a las 24 h.
+    // El idioma va SIN región ("es" y no "es_AR") porque así quedó aprobada en
+    // Meta: si acá dice otra cosa, el envío falla con 132001 ("template does not
+    // exist in this language") y el cliente no recibe nada.
+    segundoContactoName: process.env.META_SEGUNDO_CONTACTO_NAME ?? "segundo_contacto",
+    segundoContactoLang: process.env.META_SEGUNDO_CONTACTO_LANG ?? "es",
     graphBaseUrl: process.env.META_GRAPH_BASE_URL ?? "https://graph.facebook.com/v20.0",
   },
   whatsappEnvioDelayMs: numero(process.env.WHATSAPP_ENVIO_DELAY_MS, 2500),

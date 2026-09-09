@@ -6,6 +6,7 @@ import { usaEstrellas } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { redisConnection } from "../config/redis";
 import { marcarNoRespondidos } from "../services/mantenimiento.service";
+import { encolarSegundosContactos, marcarLlamadasPendientes } from "../services/segundo-contacto.service";
 import { crearRqrAutomatico } from "../services/rqr.service";
 import { ITEM_QUE_DEFINE_EL_CASO, etiquetaItem } from "../config/posventa-vw";
 import { PuntajeItem, guardarPuntajes, usaEncuestaPorItems } from "../services/encuesta-posventa.service";
@@ -51,7 +52,11 @@ interface DatosEnvio {
   // "contacto" (default): plantilla de contacto del área, SOLO casos PENDIENTE.
   // "respuesta_no_recibida": pedir que el cliente repita su mensaje (envío
   // masivo de recuperación), a clientes ya contactados en CUALQUIER estado.
-  plantilla?: "contacto" | "respuesta_no_recibida";
+  // "segundo_contacto": el cliente no contesto el primer WhatsApp a las 24 h y
+  // se insiste una vez mas. Va sobre casos en ENVIADO (no PENDIENTE) y NO les
+  // cambia el estado: siguen ENVIADO hasta que contesten o hasta que el
+  // circuito los pase a LLAMADA_PENDIENTE.
+  plantilla?: "contacto" | "respuesta_no_recibida" | "segundo_contacto";
 }
 
 function formatearFecha(fecha: Date | null): string {
@@ -68,12 +73,27 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
   }
 
   const esRecuperacion = job.data.plantilla === "respuesta_no_recibida";
+  const esSegundoContacto = job.data.plantilla === "segundo_contacto";
+
+  // Idempotencia del segundo contacto. Es la guarda que impide el peor error
+  // posible de este circuito: que al cliente le llegue dos veces. Entre que el
+  // job se encola y sale puede pasar de todo -el cliente contesta, alguien lo
+  // manda a mano, la barrida corre otra vez- asi que se revisa contra la base
+  // JUSTO ANTES de mandar, no al encolar.
+  if (esSegundoContacto) {
+    if (caso.estadoContacto !== EstadoContacto.ENVIADO) {
+      return { omitido: true, motivo: `estado ${caso.estadoContacto}` };
+    }
+    if (caso.segundoContactoEn) {
+      return { omitido: true, motivo: "ya se le mando el segundo contacto" };
+    }
+  }
 
   // Idempotencia de la campaña de CONTACTO: solo se envía a PENDIENTE (si cambió
   // entre el encolado y ahora —respondió, otro envío, interno— no se manda). La
   // RECUPERACIÓN ("pedir que repitan") NO exige PENDIENTE: va a clientes ya
   // contactados en cualquier estado.
-  if (!esRecuperacion && caso.estadoContacto !== EstadoContacto.PENDIENTE) {
+  if (!esRecuperacion && !esSegundoContacto && caso.estadoContacto !== EstadoContacto.PENDIENTE) {
     return { omitido: true, motivo: `estado ${caso.estadoContacto}` };
   }
 
@@ -125,6 +145,9 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
   if (esRecuperacion) {
     const creds = await obtenerCredencialesMeta();
     plantillaMeta = { name: creds.respuestaNoRecibidaName, lang: creds.respuestaNoRecibidaLang };
+  } else if (esSegundoContacto) {
+    const creds = await obtenerCredencialesMeta();
+    plantillaMeta = { name: creds.segundoContactoName, lang: creds.segundoContactoLang };
   } else {
     plantillaMeta = await plantillaContactoPara(caso.area);
   }
@@ -152,7 +175,9 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
           direction: MessageDirection.SALIENTE,
           content: esRecuperacion
             ? `Plantilla "${templateName}" (pedir que repita el mensaje)`
-            : `Template "${templateName}" → ${variables.join(" | ")}`,
+            : esSegundoContacto
+              ? `Plantilla "${templateName}" (segundo intento, no contesto el primero)`
+              : `Template "${templateName}" → ${variables.join(" | ")}`,
           templateName,
           waMessageId,
           status: "enviado",
@@ -162,7 +187,17 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
       // que aparece en Seguimiento). La campaña de contacto sí lo pasa a ENVIADO.
       ...(esRecuperacion
         ? []
-        : [
+        : esSegundoContacto
+          ? [
+              // El estado NO cambia: el caso sigue ENVIADO. Lo unico que se anota
+              // es CUANDO salio, que es lo que despues cuenta las 24 h hasta
+              // pasar a LLAMADA_PENDIENTE y lo que impide mandarlo dos veces.
+              prisma.caso.update({
+                where: { id: caso.id },
+                data: { segundoContactoEn: new Date() },
+              }),
+            ]
+          : [
             prisma.caso.update({
               where: { id: caso.id },
               data: { estadoContacto: EstadoContacto.ENVIADO, ultimoErrorEnvio: null },
@@ -946,7 +981,24 @@ export function startWorkers() {
 
   const mantenimientoWorker = new Worker(
     QUEUE_NAMES.MANTENIMIENTO,
-    async () => {
+    // Se despacha POR NOMBRE de job. Antes esta cola tenía uno solo y la función
+    // ignoraba cuál era; ahora conviven el cierre diario y el circuito horario,
+    // y sin mirar el nombre el cron de cada hora estaría cerrando casos como
+    // "no respondió" sesenta veces por día.
+    async (job) => {
+      if (job.name === "circuito-contacto") {
+        const { encolados, omitidos } = await encolarSegundosContactos();
+        const aLlamar = await marcarLlamadasPendientes();
+        if (encolados || omitidos || aLlamar) {
+          console.log(
+            `[circuito] ${encolados} segundo(s) contacto(s) encolado(s)` +
+              (omitidos ? `, ${omitidos} omitido(s)` : "") +
+              `, ${aLlamar} caso(s) pasaron a LLAMADA_PENDIENTE`
+          );
+        }
+        return { encolados, omitidos, aLlamar };
+      }
+
       const marcados = await marcarNoRespondidos();
       console.log(
         `[mantenimiento] ${marcados} caso(s) ENVIADO sin respuesta hace más de ${env.diasSinRespuestaParaNC} días pasaron a NO_RESPONDIO`

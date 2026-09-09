@@ -103,6 +103,9 @@ export const CLAVES_META = {
   // Plantilla de recuperación ("no nos llegó tu mensaje, ¿lo repetís?").
   RESPUESTA_NO_RECIBIDA_NAME: "meta.respuestaNoRecibidaName",
   RESPUESTA_NO_RECIBIDA_LANG: "meta.respuestaNoRecibidaLang",
+  // Segundo intento cuando el cliente no contesto el primer contacto a las 24 h.
+  SEGUNDO_CONTACTO_NAME: "meta.segundoContactoName",
+  SEGUNDO_CONTACTO_LANG: "meta.segundoContactoLang",
   // Estado de la plantilla de fidelización según Meta (lo actualiza el webhook
   // message_template_status_update): APPROVED / PENDING / REJECTED / ... o "".
   FIDELIZACION_TEMPLATE_STATUS: "meta.fidelizacionTemplateStatus",
@@ -135,6 +138,8 @@ export interface CredencialesMeta {
   fidelizacionTemplateLang: string;
   respuestaNoRecibidaName: string;
   respuestaNoRecibidaLang: string;
+  segundoContactoName: string;
+  segundoContactoLang: string;
   graphBaseUrl: string;
 }
 
@@ -158,7 +163,7 @@ export async function plantillaContactoPara(area: AreaTrabajo): Promise<{ name: 
 // Credenciales efectivas para USAR (envío, verificación de webhook): primero lo
 // guardado en /configuracion; si algo falta, cae al .env (bootstrap/migración).
 export async function obtenerCredencialesMeta(): Promise<CredencialesMeta> {
-  const [token, phone, verify, tName, tLang, tVentaName, tVentaLang, tFidel, tFidelLang, tRnrName, tRnrLang] =
+  const [token, phone, verify, tName, tLang, tVentaName, tVentaLang, tFidel, tFidelLang, tRnrName, tRnrLang, tSegName, tSegLang] =
     await Promise.all([
       leerMeta(CLAVES_META.TOKEN),
       leerMeta(CLAVES_META.PHONE_NUMBER_ID),
@@ -171,6 +176,8 @@ export async function obtenerCredencialesMeta(): Promise<CredencialesMeta> {
       leerMeta(CLAVES_META.FIDELIZACION_TEMPLATE_LANG),
       leerMeta(CLAVES_META.RESPUESTA_NO_RECIBIDA_NAME),
       leerMeta(CLAVES_META.RESPUESTA_NO_RECIBIDA_LANG),
+      leerMeta(CLAVES_META.SEGUNDO_CONTACTO_NAME),
+      leerMeta(CLAVES_META.SEGUNDO_CONTACTO_LANG),
     ]);
   const templateLang = tLang || env.meta.templateLang;
   return {
@@ -187,6 +194,11 @@ export async function obtenerCredencialesMeta(): Promise<CredencialesMeta> {
     fidelizacionTemplateLang: tFidelLang || templateLang,
     respuestaNoRecibidaName: tRnrName || env.meta.respuestaNoRecibidaName,
     respuestaNoRecibidaLang: tRnrLang || env.meta.respuestaNoRecibidaLang || templateLang,
+    segundoContactoName: tSegName || env.meta.segundoContactoName,
+    // A diferencia de las demas, este idioma NO cae a templateLang: la plantilla
+    // quedo aprobada en "es" y no en "es_AR", y mandar el idioma equivocado hace
+    // fallar el envio con 132001 sin que el cliente reciba nada.
+    segundoContactoLang: tSegLang || env.meta.segundoContactoLang,
     graphBaseUrl: env.meta.graphBaseUrl, // la base no es secreto: va por .env
   };
 }

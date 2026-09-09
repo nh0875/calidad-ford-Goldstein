@@ -80,13 +80,31 @@ const FILTROS_INICIALES: Filtros = {
   area: "",
 };
 
-const ESTADOS_CONTACTO = ["PENDIENTE", "ENVIADO", "RESPONDIDO", "NO_RESPONDIO", "INTERNO", "ERROR"];
+// LLAMADA_PENDIENTE y RESPONDIO_LLAMADA son del circuito de insistencia, que
+// hoy solo corre en Volkswagen. Se listan igual en las dos marcas: son estados
+// que ya existen en la base, y si no estuvieran aca un caso que quedo en uno de
+// ellos no se podria filtrar ni se veria con etiqueta, solo con el codigo crudo.
+const ESTADOS_CONTACTO = [
+  "PENDIENTE",
+  "ENVIADO",
+  "RESPONDIDO",
+  "LLAMADA_PENDIENTE",
+  "RESPONDIO_LLAMADA",
+  "NO_RESPONDIO",
+  "INTERNO",
+  "ERROR",
+];
 const ORIGENES = ["DEALER", "FORDPASS", "ONLINEBOOKING", "OTRO"];
 
 const BADGE_ESTADO: Record<string, { tono: "gris" | "azul" | "verde" | "amarillo" | "morado" | "rojo"; etiqueta: string }> = {
   PENDIENTE: { tono: "gris", etiqueta: "Pendiente" },
   ENVIADO: { tono: "azul", etiqueta: "Enviado" },
   RESPONDIDO: { tono: "verde", etiqueta: "Respondido" },
+  // Rojo a proposito: es el unico estado que pide que ALGUIEN HAGA ALGO a mano
+  // (levantar el telefono). Con el mismo tono que los demas se perderia en la
+  // lista, que es justo lo que no puede pasar con una tarea pendiente.
+  LLAMADA_PENDIENTE: { tono: "rojo", etiqueta: "Llamar" },
+  RESPONDIO_LLAMADA: { tono: "verde", etiqueta: "Respondió (llamada)" },
   NO_RESPONDIO: { tono: "amarillo", etiqueta: "No respondió" },
   INTERNO: { tono: "morado", etiqueta: "Interno" },
   ERROR: { tono: "rojo", etiqueta: "Error" },
