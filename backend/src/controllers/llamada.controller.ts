@@ -190,12 +190,18 @@ const fallidaSchema = z.object({
 });
 
 /**
- * "No se pudo hablar", con el motivo.
+ * "No se pudo hablar": se agotaron los tres contactos.
  *
- * El caso SE QUEDA en LLAMADA_PENDIENTE a propósito: no atender no es un
- * desenlace, es un intento. Si esto lo cerrara, un número equivocado se
- * confundiría con un cliente que no quiso contestar, y nadie volvería a intentar.
- * Lo único que cambia es que queda escrito qué pasó.
+ * El caso pasa a NO_RESPONDE_CONTACTOS, que es el final del circuito: no
+ * contestó el WhatsApp inicial, no contestó la insistencia y tampoco se lo pudo
+ * agarrar por teléfono. A partir de ahí sale de la lista de pendientes y no se
+ * le manda nada más.
+ *
+ * El MOTIVO es obligatorio y queda guardado. Sin él, "no se pudo" sería una
+ * bolsa donde caen cosas muy distintas —número equivocado, no atiende nunca, se
+ * negó a contestar— y esas tres piden acciones diferentes: la primera es un dato
+ * mal cargado que hay que corregir, la última es una decisión del cliente que
+ * hay que respetar.
  */
 export async function marcarLlamadaFallida(req: Request, res: Response) {
   if (!marca.segundoContacto) {
@@ -210,7 +216,10 @@ export async function marcarLlamadaFallida(req: Request, res: Response) {
 
   await prisma.caso.update({
     where: { id: caso.id },
-    data: { llamadaMotivo: parseo.data.motivo },
+    data: {
+      estadoContacto: EstadoContacto.NO_RESPONDE_CONTACTOS,
+      llamadaMotivo: parseo.data.motivo,
+    },
   });
 
   auditar(req, {
@@ -220,5 +229,7 @@ export async function marcarLlamadaFallida(req: Request, res: Response) {
     detalles: { cliente: caso.nombrePropietario, motivo: parseo.data.motivo },
   });
 
-  res.json({ message: "Anotado. El caso sigue pendiente de llamada para volver a intentar." });
+  res.json({
+    message: "Anotado. El caso queda como “No responde contactos”: se intentaron los tres contactos y no hubo forma.",
+  });
 }

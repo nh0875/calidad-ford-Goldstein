@@ -38,6 +38,10 @@ const casosFiltrosSchema = z.object({
   sucursal: z.string().trim().min(1).optional(),
   asesor: z.string().trim().min(1).optional(),
   estadoContacto: z.nativeEnum(EstadoContacto).optional(),
+  // "si" / "no": si al cliente ya se le insistió (segundo contacto) o todavía
+  // no. Es la pregunta que se hace Calidad antes de agarrar el teléfono, y sin
+  // este filtro había que abrir caso por caso para responderla.
+  insistido: z.enum(["si", "no"]).optional(),
   origenAgendamiento: z.nativeEnum(OrigenAgendamiento).optional(),
   periodo: z
     .string()
@@ -72,6 +76,12 @@ async function whereCasosDesdeFiltros(
     ...(q.sucursal ? { sucursal: { equals: q.sucursal, mode: "insensitive" } } : {}),
     ...(q.asesor ? { asesor: { contains: q.asesor, mode: "insensitive" } } : {}),
     ...(q.estadoContacto ? { estadoContacto: q.estadoContacto } : {}),
+    // Se filtra por la FECHA del segundo contacto y no por el estado: el estado
+    // sigue cambiando después de insistir (pasa a 3° contacto pendiente, o a
+    // respondió si el cliente contesta), pero la fecha queda para siempre. Es
+    // el único dato que responde "¿a este ya le insistimos?" sin ambigüedad.
+    ...(q.insistido === "si" ? { segundoContactoEn: { not: null } } : {}),
+    ...(q.insistido === "no" ? { segundoContactoEn: null } : {}),
     ...(q.origenAgendamiento ? { origenAgendamiento: q.origenAgendamiento } : {}),
     ...(q.periodo ? { upload: { periodo: q.periodo } } : {}),
     ...(q.fechaDesde || q.fechaHasta

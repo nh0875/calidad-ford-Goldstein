@@ -208,7 +208,24 @@ export async function dashboardResumen(f: FiltrosReporte) {
   const noRespondieron = sumaEstado(EstadoContacto.NO_RESPONDIO);
   const enviados = sumaEstado(EstadoContacto.ENVIADO);
   const conError = sumaEstado(EstadoContacto.ERROR);
-  const contactados = respondidos + noRespondieron + enviados + conError;
+
+  // Los tres estados del circuito de insistencia (Volkswagen). En las marcas sin
+  // circuito dan cero y nada de esto cambia.
+  const enTercerContacto = sumaEstado(EstadoContacto.LLAMADA_PENDIENTE);
+  const respondioLlamada = sumaEstado(EstadoContacto.RESPONDIO_LLAMADA);
+  const noRespondeContactos = sumaEstado(EstadoContacto.NO_RESPONDE_CONTACTOS);
+
+  // Los tres van adentro de "contactados", y no es un detalle: son clientes a los
+  // que SÍ se les escribió. Sin ellos, cada caso que entra al circuito se caía
+  // del denominador y la tasa de respuesta subía sola a medida que la gente NO
+  // contestaba, que es exactamente al revés de lo que tiene que pasar.
+  const contactados =
+    respondidos + noRespondieron + enviados + conError + enTercerContacto + respondioLlamada + noRespondeContactos;
+
+  // Quien contestó por teléfono contestó igual: cuenta como respuesta. Se guarda
+  // aparte para poder responder "¿cuánto nos rinde insistir?", que es la pregunta
+  // por la que existe todo este circuito.
+  const respondieronEnTotal = respondidos + respondioLlamada;
   const pctContactados = (n: number) =>
     contactados > 0 ? Math.round((n / contactados) * 1000) / 10 : 0;
 
@@ -264,7 +281,35 @@ export async function dashboardResumen(f: FiltrosReporte) {
       pendientesSinContactar: sumaEstado(EstadoContacto.PENDIENTE),
       pctRespondidos: pctContactados(respondidos),
       pctNoRespondieron: pctContactados(noRespondieron),
+      // Sumando los que se rescataron por teléfono. La diferencia entre este
+      // número y pctRespondidos ES el rendimiento del circuito de insistencia.
+      respondieronEnTotal,
+      pctRespondieronEnTotal: pctContactados(respondieronEnTotal),
     },
+    // El embudo de contactos, para seguir dónde se traba la gente. null en las
+    // marcas sin circuito, así el tablero no muestra una sección vacía.
+    circuitoContacto: marca.segundoContacto
+      ? {
+          // Se le escribió y todavía no se le insistió: son los que esperan el 2°.
+          esperandoInsistencia: enviados,
+          // Ya se les insistió (tengan el estado que tengan hoy). Se cuenta por la
+          // FECHA y no por el estado: el estado sigue moviéndose después, la fecha
+          // queda para siempre.
+          insistidos: await prisma.caso.count({
+            // El MISMO universo que el resto del bloque: los casos del período
+            // con los filtros de área y provincia ya aplicados. Contar sobre otro
+            // conjunto haría que los números del embudo no cierren con los de
+            // arriba, que es peor que no tener el embudo.
+            where: { ...whereCasosPeriodo, segundoContactoEn: { not: null } },
+          }),
+          // No contestaron ninguno de los dos WhatsApp: hay que llamarlos.
+          tercerContactoPendiente: enTercerContacto,
+          // Se rescataron por teléfono.
+          respondioLlamada,
+          // Se agotaron los tres contactos.
+          noRespondeContactos,
+        }
+      : null,
     // Con qué escala mide esta marca (SEMAFORO en Ford, ESTRELLAS en VW).
     escala: sentimiento.escala,
     semaforo: {

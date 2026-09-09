@@ -26,6 +26,8 @@ export interface InfoMarca {
     encuestaFabrica: boolean;
     // Pantalla de desempeño de Posventa por ítems (Volkswagen).
     desempenoPosventa: boolean;
+    // Circuito de insistencia: 2° contacto por WhatsApp y 3° por llamada.
+    segundoContacto: boolean;
   };
   // Los 5 ítems que mide la encuesta de Posventa. Vacío en las marcas que no la usan.
   posventa: {
@@ -54,7 +56,7 @@ const POR_DEFECTO: InfoMarca = {
   nombre: "Ford",
   escala: "SEMAFORO",
   estrellasSinRqr: null,
-  modulos: { fidelizacion: true, refuerzo: true, encuestaFabrica: false, desempenoPosventa: false },
+  modulos: { fidelizacion: true, refuerzo: true, encuestaFabrica: false, desempenoPosventa: false, segundoContacto: false },
   posventa: { porItems: false, items: [] },
   rqr: { porSubareas: false, clienteAnonimo: false, areas: [], origenes: [] },
 };

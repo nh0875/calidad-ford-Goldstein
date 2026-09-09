@@ -1,12 +1,19 @@
-import { AreaTrabajo, EstadoContacto, OrigenAgendamiento, Prisma } from "@prisma/client";
+import { AreaTrabajo, EstadoContacto, MessageDirection, OrigenAgendamiento, Prisma } from "@prisma/client";
 import { env } from "../config/env";
 import { prisma } from "../config/prisma";
 import { whatsappQueue } from "../jobs/queues";
 import { telefonosSuprimidos } from "./supresion.service";
 
-// REGLA CRÍTICA: las campañas operan SOLO sobre casos PENDIENTE.
-// Eso excluye internos (INTERNO), históricos ya clasificados
-// (RESPONDIDO / NO_RESPONDIO), ya enviados (ENVIADO) y fallidos (ERROR).
+// Tres envíos distintos salen por acá, y cada uno tiene su propia regla de a
+// quién alcanza:
+//
+//   contacto              -> SOLO casos PENDIENTE. Excluye internos, históricos ya
+//                            clasificados, los ya enviados y los fallidos.
+//   respuesta_no_recibida -> clientes YA contactados en cualquier estado (salvo
+//                            interno) con un teléfono válido: se les pide que
+//                            repitan un mensaje que se perdió.
+//   segundo_contacto      -> la insistencia: solo ENVIADO, sin respuesta y sin
+//                            haber insistido antes. A nadie se le insiste dos veces.
 
 export interface FiltrosCampana {
   uploadId?: string;
@@ -29,7 +36,7 @@ export interface FiltrosCampana {
   // "contacto" (default): campaña de contacto, SOLO casos PENDIENTE.
   // "respuesta_no_recibida": envío masivo de "pedir que repitan el mensaje", a
   // clientes ya contactados en cualquier estado (para respuestas que se perdieron).
-  plantilla?: "contacto" | "respuesta_no_recibida";
+  plantilla?: "contacto" | "respuesta_no_recibida" | "segundo_contacto";
 }
 
 export async function construirWhereCampana(filtros: FiltrosCampana): Promise<Prisma.CasoWhereInput> {
@@ -38,6 +45,7 @@ export async function construirWhereCampana(filtros: FiltrosCampana): Promise<Pr
   // pasan casoIds a mano (no se puede saltear pasando IDs en la request).
   const suprimidos = await telefonosSuprimidos();
   const esRecuperacion = filtros.plantilla === "respuesta_no_recibida";
+  const esInsistencia = filtros.plantilla === "segundo_contacto";
 
   return {
     // CONTACTO: solo PENDIENTE (regla de siempre). RECUPERACIÓN ("pedir que
@@ -48,7 +56,25 @@ export async function construirWhereCampana(filtros: FiltrosCampana): Promise<Pr
           estadoContacto: { not: EstadoContacto.INTERNO },
           OR: [{ whatsapp: { startsWith: "+" } }, { celular: { startsWith: "+" } }],
         }
-      : { estadoContacto: EstadoContacto.PENDIENTE }),
+      : esInsistencia
+        ? {
+            // INSISTENCIA: solo a quien ya recibió el primer WhatsApp y sigue sin
+            // contestar. Las tres condiciones son candados distintos y ninguno
+            // sobra:
+            //   - ENVIADO: no se insiste a quien nunca recibió el primero, ni a
+            //     quien ya contestó, ni a los casos internos.
+            //   - segundoContactoEn en null: A NADIE SE LE INSISTE DOS VECES. Es
+            //     la regla que pidió Calidad y la que más caro sale romper: el
+            //     mensaje le llega a una persona real y no hay como deshacerlo.
+            //   - sin ningún mensaje ENTRANTE: se mira si el cliente escribió, y
+            //     no solo el estado, porque un caso puede seguir en ENVIADO un
+            //     rato después de que el cliente contestó. Volver a escribirle a
+            //     alguien que acaba de responder es de las cosas que más molestan.
+            estadoContacto: EstadoContacto.ENVIADO,
+            segundoContactoEn: null,
+            mensajes: { none: { direction: MessageDirection.ENTRANTE } },
+          }
+        : { estadoContacto: EstadoContacto.PENDIENTE }),
     eliminadoEn: null, // un caso borrado no recibe campañas de WhatsApp
     whatsappOptOut: false, // el cliente que pidió la baja (BAJA/STOP) nunca recibe campañas
     ...(suprimidos.size > 0
@@ -88,7 +114,10 @@ export async function encolarCampana(filtros: FiltrosCampana): Promise<number> {
   const plantilla = filtros.plantilla ?? "contacto";
   // jobId con prefijo por plantilla: la recuperación NO debe pisar (deduplicar
   // contra) un envío de contacto pendiente del mismo caso, y viceversa.
-  const prefijo = plantilla === "respuesta_no_recibida" ? "recup" : "envio";
+  // Un prefijo por plantilla: los tres envios del mismo caso son cosas
+  // distintas y no se tienen que deduplicar entre si.
+  const prefijo =
+    plantilla === "respuesta_no_recibida" ? "recup" : plantilla === "segundo_contacto" ? "segundo-contacto" : "envio";
 
   // El jobId es fijo por caso, y BullMQ conserva los jobs YA TERMINADOS un rato
   // (fallidos, 24 hs). Mientras esa clave siga en Redis, volver a encolar el

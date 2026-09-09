@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { EstadoContacto, OrigenAgendamiento } from "@prisma/client";
 import { z } from "zod";
 import { env } from "../config/env";
+import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { contarDestinatarios, encolarCampana, progresoCola } from "../services/campana.service";
 import { ACCIONES, auditar } from "../services/audit.service";
@@ -34,7 +35,7 @@ const filtrosSchema = z.object({
   casoIds: z.array(z.string().trim().min(1)).max(5000).optional(),
   // "contacto" (default) o "respuesta_no_recibida" (envío masivo de "pedir que
   // repitan el mensaje", a clientes ya contactados en cualquier estado).
-  plantilla: z.enum(["contacto", "respuesta_no_recibida"]).optional(),
+  plantilla: z.enum(["contacto", "respuesta_no_recibida", "segundo_contacto"]).optional(),
 });
 
 // En el GET de preview los casoIds llegan como lista separada por comas
@@ -70,18 +71,29 @@ export async function previewCampana(req: Request, res: Response) {
   // CRITICO: esta pantalla MANDA WhatsApps. Sin esto, un usuario de una
   // provincia podia escribirle a los clientes de la otra.
   const sucursal = provinciaPermitida(req.usuario!) ?? parsed.data.sucursal;
+  // La insistencia no existe en las marcas sin circuito: contestar acá es más
+  // claro que contar cero destinatarios y dejar a la persona adivinando.
+  if (parsed.data.plantilla === "segundo_contacto" && !marca.segundoContacto) {
+    return res.status(404).json({ message: `La insistencia no está disponible en ${marca.nombre}.` });
+  }
+
   const destinatarios = await contarDestinatarios({ ...parsed.data, sucursal, area });
   const esRecup = parsed.data.plantilla === "respuesta_no_recibida";
+  const esInsistir = parsed.data.plantilla === "segundo_contacto";
   res.json({
     destinatarios,
     message:
       destinatarios === 0
         ? esRecup
           ? "Ningún cliente contactable coincide con esos filtros: no se enviaría ningún mensaje."
-          : "Ningún caso pendiente coincide con esos filtros: no se enviaría ningún mensaje."
+          : esInsistir
+            ? "No quedan clientes a los que insistir: a todos los que no contestaron ya se les insistió una vez."
+            : "Ningún caso pendiente coincide con esos filtros: no se enviaría ningún mensaje."
         : esRecup
           ? `Se le va a pedir a ${destinatarios} cliente(s) que repitan su mensaje (plantilla "no nos llegó tu mensaje").`
-          : `Se va a enviar el mensaje de WhatsApp a ${destinatarios} cliente(s) con contacto pendiente.`,
+          : esInsistir
+            ? `Se les va a insistir a ${destinatarios} cliente(s) que no contestaron el primer contacto. A cada uno se le insiste UNA sola vez.`
+            : `Se va a enviar el mensaje de WhatsApp a ${destinatarios} cliente(s) con contacto pendiente.`,
   });
 }
 
@@ -108,6 +120,10 @@ export async function enviarCampana(req: Request, res: Response) {
 
   const area = areaEfectiva(req.usuario!, parsearAreaQuery(req.query.area));
   const sucursal = provinciaPermitida(req.usuario!) ?? parsed.data.sucursal;
+  if (parsed.data.plantilla === "segundo_contacto" && !marca.segundoContacto) {
+    return res.status(404).json({ message: `La insistencia no está disponible en ${marca.nombre}.` });
+  }
+
   const encolados = await encolarCampana({ ...parsed.data, sucursal, area });
   const esRecup = parsed.data.plantilla === "respuesta_no_recibida";
 

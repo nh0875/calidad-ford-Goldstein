@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { FileDown, MessageSquarePlus, Pencil, RotateCcw, Search, Send, SearchX, Trash2, UserPlus } from "lucide-react";
 import { apiDelete, apiDescargarArchivo, apiGet, apiPostJson } from "../lib/api";
+import { getMarca } from "../lib/marca";
 import { getModoDemo, getUsuario, veTodasLasAreas } from "../lib/auth";
 import { AREAS, etiquetaArea, tonoArea } from "../lib/area";
 import { Card } from "../components/ui/Card";
@@ -65,6 +66,8 @@ interface Filtros {
   fechaHasta: string;
   origenAgendamiento: string;
   estadoContacto: string;
+  // "si" / "no" / "": si al cliente ya se le insistió (segundo contacto).
+  insistido: string;
   area: string;
 }
 
@@ -77,6 +80,7 @@ const FILTROS_INICIALES: Filtros = {
   fechaHasta: "",
   origenAgendamiento: "",
   estadoContacto: "",
+  insistido: "",
   area: "",
 };
 
@@ -90,6 +94,7 @@ const ESTADOS_CONTACTO = [
   "RESPONDIDO",
   "LLAMADA_PENDIENTE",
   "RESPONDIO_LLAMADA",
+  "NO_RESPONDE_CONTACTOS",
   "NO_RESPONDIO",
   "INTERNO",
   "ERROR",
@@ -103,8 +108,11 @@ const BADGE_ESTADO: Record<string, { tono: "gris" | "azul" | "verde" | "amarillo
   // Rojo a proposito: es el unico estado que pide que ALGUIEN HAGA ALGO a mano
   // (levantar el telefono). Con el mismo tono que los demas se perderia en la
   // lista, que es justo lo que no puede pasar con una tarea pendiente.
-  LLAMADA_PENDIENTE: { tono: "rojo", etiqueta: "Llamar" },
+  LLAMADA_PENDIENTE: { tono: "rojo", etiqueta: "3° contacto pendiente" },
   RESPONDIO_LLAMADA: { tono: "verde", etiqueta: "Respondió (llamada)" },
+  // Gris y no rojo: no es una falla ni algo que haya que atender, es un caso
+  // cerrado. El rojo tiene que quedar reservado para lo que pide accion.
+  NO_RESPONDE_CONTACTOS: { tono: "gris", etiqueta: "No responde contactos" },
   NO_RESPONDIO: { tono: "amarillo", etiqueta: "No respondió" },
   INTERNO: { tono: "morado", etiqueta: "Interno" },
   ERROR: { tono: "rojo", etiqueta: "Error" },
@@ -118,6 +126,9 @@ function fechaCorta(iso: string): string {
 // ---------- Componente ----------
 
 export default function Casos() {
+  // El perfil de la marca decide si esta pantalla muestra lo del circuito de
+  // insistencia. En Ford no existe y esas partes no se dibujan.
+  const marcaInfo = getMarca();
   // El cartel de avisos linkea acá con ?busqueda=<nro de orden> (p. ej. desde un
   // "posible duplicado", donde lo que hace falta es comparar las dos cargas).
   // Sin esto la pantalla ignoraba el parámetro y el botón no hacía nada.
@@ -178,7 +189,7 @@ export default function Casos() {
   // Modal de confirmación de envío
   const [modal, setModal] = useState<{
     modo: "seleccion" | "filtro";
-    plantilla: "contacto" | "respuesta_no_recibida";
+    plantilla: "contacto" | "respuesta_no_recibida" | "segundo_contacto";
     destinatarios: number;
     mensaje: string;
   } | null>(null);
@@ -271,6 +282,7 @@ export default function Casos() {
       if (filtros.fechaHasta.trim()) params.set("fechaHasta", filtros.fechaHasta.trim());
       if (filtros.origenAgendamiento) params.set("origenAgendamiento", filtros.origenAgendamiento);
       if (filtros.estadoContacto) params.set("estadoContacto", filtros.estadoContacto);
+      if (filtros.insistido) params.set("insistido", filtros.insistido);
       if (filtros.area) params.set("area", filtros.area);
       for (const [k, v] of Object.entries(extra)) params.set(k, v);
       return params;
@@ -341,7 +353,7 @@ export default function Casos() {
 
   async function abrirPreview(
     modo: "seleccion" | "filtro",
-    plantilla: "contacto" | "respuesta_no_recibida" = "contacto"
+    plantilla: "contacto" | "respuesta_no_recibida" | "segundo_contacto" = "contacto"
   ) {
     setError(null);
     try {
@@ -523,6 +535,18 @@ export default function Casos() {
             ))}
           </Select>
         </Campo>
+        {/* Responde la pregunta que se hace Calidad antes de agarrar el telefono:
+            a este cliente, ¿ya le insistimos o no? Antes habia que abrir caso por
+            caso para saberlo. */}
+        {marcaInfo.modulos.segundoContacto && (
+          <Campo etiqueta="Insistencia">
+            <Select value={filtros.insistido} onChange={(e) => cambiarFiltro("insistido", e.target.value)}>
+              <option value="">Todos</option>
+              <option value="no">Todavía sin insistir</option>
+              <option value="si">Ya se le insistió</option>
+            </Select>
+          </Campo>
+        )}
         <Campo etiqueta="Estado de contacto">
           <Select value={filtros.estadoContacto} onChange={(e) => cambiarFiltro("estadoContacto", e.target.value)}>
             <option value="">Todos</option>
@@ -589,6 +613,19 @@ export default function Casos() {
           <RotateCcw className="h-4 w-4" aria-hidden="true" />
           Pedir que repitan el mensaje
         </button>
+        {/* Solo en las marcas con circuito de insistencia. El backend igual lo
+            rechaza, pero mostrar un boton que siempre falla es peor que no
+            mostrarlo. */}
+        {marcaInfo.modulos.segundoContacto && (
+          <button
+            onClick={() => abrirPreview("filtro", "segundo_contacto")}
+            className={claseBoton("secundario")}
+            title="Manda la plantilla de segundo contacto a todos los clientes del filtro actual que ya recibieron el primero y no contestaron. A cada cliente se le insiste UNA sola vez."
+          >
+            <Send className="h-4 w-4" aria-hidden="true" />
+            Insistir ahora
+          </button>
+        )}
         <button
           onClick={() => setNuevoCaso(true)}
           className={claseBoton("secundario")}
@@ -845,9 +882,19 @@ export default function Casos() {
             <h3 className="font-display text-lg font-semibold text-ink">
               {modal.plantilla === "respuesta_no_recibida"
                 ? "Pedir que repitan el mensaje"
-                : "Confirmar envío de WhatsApp"}
+                : modal.plantilla === "segundo_contacto"
+                  ? "Insistir a los que no contestaron"
+                  : "Confirmar envío de WhatsApp"}
             </h3>
             <p className="mt-3 text-sm text-ink-muted">{modal.mensaje}</p>
+            {/* Se dice explicito porque es la regla que mas caro sale romper:
+                el mensaje le llega a una persona real y no hay como deshacerlo. */}
+            {modal.plantilla === "segundo_contacto" && modal.destinatarios > 0 && (
+              <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                A cada cliente se le insiste <strong>una sola vez</strong>. Los que ya recibieron la
+                insistencia no vuelven a entrar en este envío, aunque sigan sin contestar.
+              </p>
+            )}
             {modal.destinatarios > 0 && (
               <p className="mt-2 text-sm text-ink-muted">
                 Los mensajes salen espaciados entre sí para respetar los límites de WhatsApp, así

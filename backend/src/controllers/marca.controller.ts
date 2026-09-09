@@ -33,6 +33,10 @@ export function infoMarca(_req: Request, res: Response) {
       encuestaFabrica: marca.refuerzo.habilitado && marca.refuerzo.formatoExcel === "VW",
       // Pantalla de desempeño de Posventa por ítems.
       desempenoPosventa: marca.posventaPorItems,
+      // El circuito de insistencia (2° contacto + llamada). La pantalla lo usa
+      // para decidir si mostrar el botón de insistir, el filtro y el embudo del
+      // tablero: en las marcas sin circuito esas tres cosas no existen.
+      segundoContacto: marca.segundoContacto,
     },
     // Los 5 ítems que se miden en Posventa. Van acá para que la pantalla arme
     // sus columnas y sus etiquetas sin una consulta aparte: son fijos y chicos.

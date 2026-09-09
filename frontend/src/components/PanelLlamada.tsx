@@ -184,9 +184,10 @@ export function PanelLlamada({
             Guardar lo que dijo
           </button>
 
-          {/* "No se pudo hablar" NO cierra el caso: no atender es un intento, no
-              un desenlace. Cerrarlo confundiría un número equivocado con un
-              cliente que no quiso contestar, y nadie volvería a intentar. */}
+          {/* "No se pudo hablar" CIERRA el caso como "No responde contactos":
+              se agotaron los tres intentos. Por eso el motivo es obligatorio —
+              número equivocado, no atiende nunca y se negó a contestar son tres
+              cosas distintas, y sin escribirlas quedan todas en la misma bolsa. */}
           {mostrarMotivo ? (
             <div className="flex flex-1 flex-wrap items-center gap-2">
               <input
@@ -216,7 +217,7 @@ export function PanelLlamada({
               type="button"
               onClick={() => setMostrarMotivo(true)}
               className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-gray-50"
-              title="El caso sigue pendiente de llamada para volver a intentar"
+              title="Cierra el caso como “No responde contactos”: se intentaron los tres contactos"
             >
               <PhoneOff className="h-3.5 w-3.5" />
               No se pudo hablar

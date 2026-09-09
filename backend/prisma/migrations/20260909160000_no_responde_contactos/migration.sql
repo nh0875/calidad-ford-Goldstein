@@ -1,0 +1,13 @@
+-- El final del circuito de insistencia: "No responde contactos".
+--
+-- Hasta ahora, un cliente al que no se lo podía agarrar por teléfono se quedaba
+-- en LLAMADA_PENDIENTE para siempre: la lista de "hay que llamar" crecía sin
+-- techo y no había forma de distinguir al que todavía no se llamó del que ya se
+-- intentó y no hubo caso.
+--
+-- Es DISTINTO de NO_RESPONDIO, y la diferencia importa. Aquel significa "se le
+-- escribió una vez y no contestó", que en las marcas sin circuito de insistencia
+-- es todo lo que se sabe. Este significa "se le escribió, se le insistió y se lo
+-- llamó, y a esta persona no se la puede alcanzar": es una conclusión, no un
+-- vencimiento de plazo. Mezclarlos haría imposible medir cuánto sirve insistir.
+ALTER TYPE "EstadoContacto" ADD VALUE IF NOT EXISTS 'NO_RESPONDE_CONTACTOS';

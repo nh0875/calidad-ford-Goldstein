@@ -19,7 +19,22 @@ interface Resumen {
   periodo: { fechaDesde: string | null; fechaHasta: string | null };
   totalCasos: number;
   mensajesSalientes: number;
-  tasaRespuesta: { contactados: number; respondidos: number; pctRespondidos: number };
+  tasaRespuesta: {
+    contactados: number;
+    respondidos: number;
+    pctRespondidos: number;
+    // Sumando los que se rescataron por telefono.
+    respondieronEnTotal: number;
+    pctRespondieronEnTotal: number;
+  };
+  // El embudo de contactos. null en las marcas sin circuito de insistencia.
+  circuitoContacto: {
+    esperandoInsistencia: number;
+    insistidos: number;
+    tercerContactoPendiente: number;
+    respondioLlamada: number;
+    noRespondeContactos: number;
+  } | null;
   escala: "SEMAFORO" | "ESTRELLAS";
   semaforo: {
     totales: { VERDE: number; AMARILLO: number; ROJO: number; sinClasificar: number; revisionManual: number };
@@ -191,13 +206,27 @@ export default function Dashboard() {
               detalle={`${resumen.mensajesSalientes} WhatsApp enviados`}
               color="text-ink"
             />
-            <Kpi
-              titulo="Tasa de respuesta"
-              valor={resumen.tasaRespuesta.pctRespondidos}
-              sufijo="%"
-              detalle={`${resumen.tasaRespuesta.respondidos} de ${resumen.tasaRespuesta.contactados}`}
-              color="text-accent-dark"
-            />
+            {/* Con circuito de insistencia, la tasa que importa incluye a los que
+                contestaron por telefono: son respuestas igual, y dejarlos afuera
+                haria parecer que insistir no sirve. Sin circuito, se muestra la
+                de siempre. */}
+            {resumen.circuitoContacto ? (
+              <Kpi
+                titulo="Tasa de respuesta"
+                valor={resumen.tasaRespuesta.pctRespondieronEnTotal}
+                sufijo="%"
+                detalle={`${resumen.tasaRespuesta.respondieronEnTotal} de ${resumen.tasaRespuesta.contactados} · ${resumen.circuitoContacto.respondioLlamada} por llamada`}
+                color="text-accent-dark"
+              />
+            ) : (
+              <Kpi
+                titulo="Tasa de respuesta"
+                valor={resumen.tasaRespuesta.pctRespondidos}
+                sufijo="%"
+                detalle={`${resumen.tasaRespuesta.respondidos} de ${resumen.tasaRespuesta.contactados}`}
+                color="text-accent-dark"
+              />
+            )}
             {porEstrellas ? (
               <>
                 {/* El promedio es el numero que se puede seguir mes a mes: con
@@ -264,6 +293,51 @@ export default function Dashboard() {
               color="text-red-700"
             />
           </div>
+
+          {/* El embudo de contactos (solo donde existe el circuito de insistencia).
+              Responde de un vistazo la pregunta por la que se armó todo esto:
+              ¿dónde se traba la gente, y cuántos rescatamos insistiendo? */}
+          {resumen.circuitoContacto && (
+            <Card>
+              <h3 className="mb-1 text-sm font-semibold text-ink">Circuito de contacto</h3>
+              <p className="mb-3 text-xs text-ink-muted">
+                Qué pasó con cada cliente al que se le escribió: primero el WhatsApp inicial, después la
+                insistencia, y por último la llamada.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <PasoCircuito
+                  titulo="Esperando insistencia"
+                  valor={resumen.circuitoContacto.esperandoInsistencia}
+                  detalle="Recibieron el 1° y todavía no se les insistió"
+                  clase="bg-yellow-50 text-yellow-900"
+                />
+                <PasoCircuito
+                  titulo="Ya se les insistió"
+                  valor={resumen.circuitoContacto.insistidos}
+                  detalle="Recibieron el 2° contacto"
+                  clase="bg-accent-light text-accent-dark"
+                />
+                <PasoCircuito
+                  titulo="3° contacto pendiente"
+                  valor={resumen.circuitoContacto.tercerContactoPendiente}
+                  detalle="Hay que llamarlos"
+                  clase="bg-red-50 text-red-900"
+                />
+                <PasoCircuito
+                  titulo="Respondió por llamada"
+                  valor={resumen.circuitoContacto.respondioLlamada}
+                  detalle="Se rescataron por teléfono"
+                  clase="bg-green-50 text-green-900"
+                />
+                <PasoCircuito
+                  titulo="No responde contactos"
+                  valor={resumen.circuitoContacto.noRespondeContactos}
+                  detalle="Se agotaron los tres intentos"
+                  clase="bg-gray-100 text-ink-muted"
+                />
+              </div>
+            </Card>
+          )}
 
           {/* Comparativa por área (solo cuando el admin ve las dos) */}
           {resumen.desgloseArea && (
@@ -721,5 +795,33 @@ function TablaRanking({
         </p>
       )}
     </Card>
+  );
+}
+
+/**
+ * Un escalón del embudo de contactos.
+ *
+ * Se muestran los cinco SIEMPRE, incluso en cero: un escalón vacío es
+ * información —"a nadie le falta la llamada"— y esconderlo haría que el embudo
+ * cambie de forma cada vez que se mira, que es justo lo contrario de lo que
+ * sirve para seguir algo en el tiempo.
+ */
+function PasoCircuito({
+  titulo,
+  valor,
+  detalle,
+  clase,
+}: {
+  titulo: string;
+  valor: number;
+  detalle: string;
+  clase: string;
+}) {
+  return (
+    <div className={`rounded-lg px-3 py-2.5 transition-colors ${clase}`}>
+      <div className="text-2xl font-bold tabular-nums">{valor}</div>
+      <div className="text-xs font-semibold">{titulo}</div>
+      <div className="mt-0.5 text-[11px] opacity-75">{detalle}</div>
+    </div>
   );
 }

@@ -88,10 +88,22 @@ enum EstadoContacto {
   INTERNO
   ERROR
   // No contestó ninguno de los dos WhatsApp: lo tiene que llamar Calidad.
+  // En pantalla se lee "3° contacto pendiente", que es el nombre con el que lo
+  // pidió Calidad: el 1° es el WhatsApp inicial, el 2° la insistencia y el 3°
+  // la llamada. El valor guardado no se renombra para no migrar datos que ya están.
   LLAMADA_PENDIENTE
   // Contestó, pero por teléfono. Se mide aparte para saber cuántos se rescatan
   // llamando y cuántos contestan solos.
   RESPONDIO_LLAMADA
+  // Se agotaron los tres contactos: no contestó el WhatsApp inicial, no contestó
+  // la insistencia y tampoco se lo pudo agarrar por teléfono.
+  //
+  // Es DISTINTO de NO_RESPONDIO, y la diferencia importa: aquel es "se le
+  // escribió una vez y no contestó", que en las marcas sin circuito de
+  // insistencia es todo lo que se sabe. Este es "se intentó todo lo que el
+  // sistema sabe hacer y a esta persona no se la puede alcanzar", que es una
+  // conclusión, no un vencimiento de plazo.
+  NO_RESPONDE_CONTACTOS
 }
 
 enum MessageDirection {
