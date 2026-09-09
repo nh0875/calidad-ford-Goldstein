@@ -1,7 +1,11 @@
 import { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 
+// font-sans NO es decorativo: los controles de formulario (select, input,
+// textarea) NO heredan la tipografía de la página. Sin esto, Windows los dibuja
+// con la fuente del sistema y quedan en otra letra que el resto de la pantalla
+// —se nota sobre todo en los desplegables, al lado de una celda de tabla—.
 export const claseCampo =
-  "w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-ink placeholder:text-gray-400 transition-colors focus:border-accent focus:outline-none disabled:bg-gray-50 disabled:text-gray-400";
+  "w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-sans text-sm text-ink placeholder:text-gray-400 transition-colors focus:border-accent focus:outline-none disabled:bg-gray-50 disabled:text-gray-400";
 
 export function Etiqueta({ children }: { children: ReactNode }) {
   return <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-ink-muted">{children}</span>;
@@ -24,7 +28,9 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
 
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
   const { className = "", ...rest } = props;
-  return <select className={`${claseCampo} ${className}`} {...rest} />;
+  // cursor-pointer porque el select nativo muestra la flecha de texto y no
+  // parece pulsable; es la diferencia entre "esto se puede tocar" y no.
+  return <select className={`${claseCampo} cursor-pointer ${className}`} {...rest} />;
 }
 
 export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {

@@ -8,7 +8,7 @@
 // Por eso esta pantalla se organiza por vendedor y no por cliente: la unidad de
 // trabajo es "a quién le mando el mail y con qué lista adentro".
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, Mail, MailCheck, Pencil, Plus, Star, Trash2, UploadCloud, UserPlus } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Mail, MailCheck, MessageSquare, Pencil, Plus, Star, Trash2, UploadCloud, UserPlus } from "lucide-react";
 import { apiDelete, apiGet, apiPatchJson, apiPostForm, apiPostJson } from "../lib/api";
 import { getMarca } from "../lib/marca";
 import { Card } from "../components/ui/Card";
@@ -39,10 +39,58 @@ const ETIQUETA_ESTADO: Record<EstadoCliente, string> = {
 // por el color, como cuando era una etiqueta fija. En una lista de cientos de
 // filas el color es lo que deja barrer la pantalla sin leer palabra por palabra.
 const CLASE_ESTADO: Record<EstadoCliente, string> = {
-  PENDIENTE: "!bg-yellow-50 !text-yellow-900",
-  AVISADO: "!bg-accent-light !text-accent-dark",
-  RESPONDIO: "!bg-green-50 !text-green-900",
+  PENDIENTE: "bg-yellow-50 text-yellow-900 border-yellow-200 hover:bg-yellow-100",
+  AVISADO: "bg-accent-light text-accent-dark border-accent/30 hover:bg-accent-light/70",
+  RESPONDIO: "bg-green-50 text-green-900 border-green-200 hover:bg-green-100",
 };
+
+/**
+ * El estado del cliente, como pastilla que además se puede cambiar.
+ *
+ * NO usa el <Select> del sistema a propósito. El desplegable nativo de Windows
+ * dibuja su propia flecha, con su propio gris y su propia tipografía, y al lado
+ * de una celda de tabla se ve como un parche pegado. Con appearance-none se
+ * apaga ese dibujo y se pone una flecha nuestra, que hereda el color del estado.
+ *
+ * El <select> real sigue estando abajo, invisible pero funcional: así se conserva
+ * el teclado, el lector de pantalla y el desplegable del sistema operativo, que es
+ * lo que la gente ya sabe usar. Es maquillaje, no un control inventado de cero.
+ */
+function SelectorEstado({
+  valor,
+  onCambiar,
+  deshabilitado,
+  titulo,
+}: {
+  valor: EstadoCliente;
+  onCambiar: (e: EstadoCliente) => void;
+  deshabilitado?: boolean;
+  titulo?: string;
+}) {
+  // Ancho FIJO en el contenedor, no en el select: las tres etiquetas miden
+  // distinto ("Pendiente" / "Avisado" / "Respondió") y sin esto cada pastilla
+  // tendría su propio ancho, con la columna quedando dentada al recorrerla.
+  return (
+    <div className="relative inline-flex w-32">
+      <select
+        value={valor}
+        disabled={deshabilitado}
+        title={titulo}
+        onChange={(e) => onCambiar(e.target.value as EstadoCliente)}
+        className={`w-full cursor-pointer appearance-none rounded-full border py-1 pl-3 pr-7 font-sans text-xs font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-50 ${CLASE_ESTADO[valor]}`}
+      >
+        {ESTADOS.map((e) => (
+          <option key={e} value={e}>
+            {ETIQUETA_ESTADO[e]}
+          </option>
+        ))}
+      </select>
+      {/* pointer-events-none: la flecha es decorativa, el clic tiene que llegar
+          al select que está abajo. */}
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 opacity-60" />
+    </div>
+  );
+}
 
 /**
  * La calificación del cliente y lo que haya dicho.
@@ -68,24 +116,30 @@ function EditorNota({
 }) {
   const [puntaje, setPuntaje] = useState<number | null>(cliente.calificacion ?? null);
   const [texto, setTexto] = useState(cliente.observacionCalidad ?? "");
+  // Se pintan las estrellas al pasar el mouse, antes de hacer clic. Sin esto no
+  // hay forma de saber qué va a quedar seleccionado hasta después de tocar, que
+  // es justo cuando ya es tarde.
+  const [encima, setEncima] = useState<number | null>(null);
+  const marcadas = encima ?? puntaje ?? 0;
 
   return (
     <div className="grid gap-4 sm:grid-cols-[auto,1fr,auto] sm:items-end">
       <Campo etiqueta="Calificación" hint="La que puso el cliente en la encuesta de fábrica">
-        <div className="flex items-center gap-1 py-1">
+        <div className="flex items-center gap-0.5 py-1" onMouseLeave={() => setEncima(null)}>
           {[1, 2, 3, 4, 5].map((n) => (
             <button
               key={n}
               type="button"
               onClick={() => setPuntaje(n)}
-              className="rounded p-0.5 transition-transform hover:scale-110"
+              onMouseEnter={() => setEncima(n)}
+              className="rounded p-0.5 transition-transform duration-150 hover:scale-125 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
               title={`${n} de 5`}
               aria-label={`Poner ${n} de 5`}
               aria-pressed={puntaje === n}
             >
               <Star
-                className={`h-5 w-5 ${
-                  puntaje !== null && n <= puntaje ? "fill-current text-amber-500" : "text-gray-300"
+                className={`h-5 w-5 transition-colors duration-150 ${
+                  n <= marcadas ? "fill-current text-amber-500" : "text-gray-300"
                 }`}
               />
             </button>
@@ -96,7 +150,7 @@ function EditorNota({
             <button
               type="button"
               onClick={() => setPuntaje(null)}
-              className="ml-2 text-xs text-ink-muted hover:underline"
+              className="ml-2 rounded px-1.5 py-0.5 text-xs text-ink-muted transition-colors hover:bg-gray-200 hover:text-ink"
             >
               Sin calificar
             </button>
@@ -760,7 +814,7 @@ export default function EncuestasFabrica() {
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                <tr className="border-b border-gray-200 bg-gray-50/80 text-left text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
                   <th className="px-4 py-3">Cliente</th>
                   <th className="px-4 py-3">Correo</th>
                   <th className="whitespace-nowrap px-4 py-3">Chasis / Dominio</th>
@@ -776,7 +830,7 @@ export default function EncuestasFabrica() {
               <tbody>
                 {clientes.map((c) => (
                   <Fragment key={c.id}>
-                    <tr className="border-b border-gray-100 transition-colors hover:bg-gray-50">
+                    <tr className="border-b border-gray-100 transition-colors duration-150 hover:bg-accent-light/20">
                       <td className="px-4 py-3 text-ink">{c.nombreCliente}</td>
                       <td className="px-4 py-3 text-ink-muted">{c.email || "—"}</td>
                       <td className="whitespace-nowrap px-4 py-3 text-ink-muted">
@@ -792,33 +846,34 @@ export default function EncuestasFabrica() {
                           más se toca, y esconderlo detrás de un botón sumaría un
                           clic a cada corrección. */}
                       <td className="whitespace-nowrap px-4 py-3">
-                        <Select
-                          value={c.estado}
-                          disabled={guardando}
-                          onChange={(e) => cambiarCliente(c.id, { estado: e.target.value as EstadoCliente })}
-                          className={`!w-36 !py-1 !text-xs font-medium ${CLASE_ESTADO[c.estado]}`}
-                          title={
+                        <SelectorEstado
+                          valor={c.estado}
+                          deshabilitado={guardando}
+                          onCambiar={(estado) => cambiarCliente(c.id, { estado })}
+                          titulo={
                             c.avisadoEn
                               ? `Se le avisó al vendedor el ${fechaCorta(c.avisadoEn)}`
                               : "Todavía no se le avisó al vendedor"
                           }
-                        >
-                          {ESTADOS.map((e) => (
-                            <option key={e} value={e}>
-                              {ETIQUETA_ESTADO[e]}
-                            </option>
-                          ))}
-                        </Select>
+                        />
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         {c.calificacion ? (
-                          <Estrellas puntaje={c.calificacion} />
+                          <span className="inline-flex items-center gap-1.5">
+                            <Estrellas puntaje={c.calificacion} />
+                          </span>
                         ) : (
-                          <span className="text-xs text-ink-muted">—</span>
+                          <span className="text-xs text-gray-400">Sin calificar</span>
                         )}
+                        {/* El globito avisa que hay una observación cargada sin
+                            ocupar una columna entera: el texto entra en el título
+                            y se lee al pasar el mouse. */}
                         {c.observacionCalidad && (
-                          <span className="ml-1 text-xs text-ink-muted" title={c.observacionCalidad}>
-                            💬
+                          <span
+                            className="ml-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 align-middle text-ink-muted transition-colors hover:bg-gray-200"
+                            title={c.observacionCalidad}
+                          >
+                            <MessageSquare className="h-3 w-3" />
                           </span>
                         )}
                       </td>
@@ -829,28 +884,45 @@ export default function EncuestasFabrica() {
                           <span className="text-xs text-ink-muted">Excel de fábrica</span>
                         )}
                       </td>
+                      {/* Botones de verdad, no texto suelto. Antes eran dos
+                          palabras sueltas al borde de la fila: no parecían
+                          pulsables y "Eliminar" en rojo pelado se leía como un
+                          error del sistema, no como una acción. */}
                       <td className="whitespace-nowrap px-4 py-3 text-right">
-                        <button
-                          onClick={() => setNotaAbierta(notaAbierta === c.id ? null : c.id)}
-                          className="mr-3 text-xs font-medium text-accent hover:underline"
-                          title="Cargar la calificación o una observación"
-                        >
-                          {notaAbierta === c.id ? "Cerrar" : "Nota"}
-                        </button>
-                        <button
-                          onClick={() => eliminarCliente(c)}
-                          disabled={guardando}
-                          className="text-xs font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
-                          title="Sacar este cliente de la lista"
-                        >
-                          Eliminar
-                        </button>
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            onClick={() => setNotaAbierta(notaAbierta === c.id ? null : c.id)}
+                            className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-all duration-150 ${
+                              notaAbierta === c.id
+                                ? "bg-accent-light text-accent-dark"
+                                : "text-ink-muted hover:bg-gray-100 hover:text-accent-dark"
+                            }`}
+                            title="Cargar la calificación o una observación"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            {notaAbierta === c.id ? "Cerrar" : "Nota"}
+                          </button>
+                          <button
+                            onClick={() => eliminarCliente(c)}
+                            disabled={guardando}
+                            className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-ink-muted transition-all duration-150 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            title="Sacar este cliente de la lista"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Eliminar
+                          </button>
+                        </div>
                       </td>
                     </tr>
                     {notaAbierta === c.id && (
-                      <tr className="border-b border-gray-100 bg-gray-50">
+                      <tr className="border-b border-gray-100 bg-gradient-to-b from-accent-light/20 to-gray-50">
                         <td colSpan={10} className="px-4 py-4">
-                          <EditorNota cliente={c} guardando={guardando} onGuardar={cambiarCliente} />
+                          {/* La animación no es adorno: la fila aparece de golpe
+                              en el medio de la tabla y empuja todo lo de abajo.
+                              El deslizado corto explica de dónde salió. */}
+                          <div className="motion-safe:animate-fade-slide-in">
+                            <EditorNota cliente={c} guardando={guardando} onGuardar={cambiarCliente} />
+                          </div>
                         </td>
                       </tr>
                     )}
