@@ -8,14 +8,14 @@
 // Por eso esta pantalla se organiza por vendedor y no por cliente: la unidad de
 // trabajo es "a quién le mando el mail y con qué lista adentro".
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, Mail, MailCheck, MessageSquare, Pencil, Plus, Star, Trash2, UploadCloud, UserPlus } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Mail, MailCheck, Pencil, Plus, Trash2, UploadCloud, UserPlus } from "lucide-react";
 import { apiDelete, apiGet, apiPatchJson, apiPostForm, apiPostJson } from "../lib/api";
 import { getMarca } from "../lib/marca";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
-import { Badge, Estrellas } from "../components/ui/Badge";
+import { Badge } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
-import { Campo, Input, Select, Textarea } from "../components/ui/Field";
+import { Campo, Input, Select } from "../components/ui/Field";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 
@@ -102,93 +102,6 @@ function SelectorEstado({
   );
 }
 
-/**
- * La calificación del cliente y lo que haya dicho.
- *
- * Se guarda con un botón y no a cada tecla: es texto libre y guardar en cada
- * letra llenaría el registro de auditoría de ruido y pelearía con el cursor.
- *
- * La calificación NO es obligatoria para marcar Respondió. Pasa seguido que el
- * cliente contestó pero nadie sabe qué puso —o fábrica todavía no publicó el
- * puntaje— y forzar un número inventado ensuciaría los promedios.
- */
-function EditorNota({
-  cliente,
-  guardando,
-  onGuardar,
-}: {
-  cliente: { id: string; calificacion?: number | null; observacionCalidad?: string | null };
-  guardando: boolean;
-  onGuardar: (
-    id: string,
-    cambios: { estado?: EstadoCliente; calificacion?: number | null; observacionCalidad?: string | null }
-  ) => Promise<void>;
-}) {
-  const [puntaje, setPuntaje] = useState<number | null>(cliente.calificacion ?? null);
-  const [texto, setTexto] = useState(cliente.observacionCalidad ?? "");
-  // Se pintan las estrellas al pasar el mouse, antes de hacer clic. Sin esto no
-  // hay forma de saber qué va a quedar seleccionado hasta después de tocar, que
-  // es justo cuando ya es tarde.
-  const [encima, setEncima] = useState<number | null>(null);
-  const marcadas = encima ?? puntaje ?? 0;
-
-  return (
-    <div className="grid gap-4 sm:grid-cols-[auto,1fr,auto] sm:items-end">
-      <Campo etiqueta="Calificación" hint="La que puso el cliente en la encuesta de fábrica">
-        <div className="flex items-center gap-0.5 py-1" onMouseLeave={() => setEncima(null)}>
-          {[1, 2, 3, 4, 5].map((n) => (
-            <button
-              key={n}
-              type="button"
-              onClick={() => setPuntaje(n)}
-              onMouseEnter={() => setEncima(n)}
-              className="rounded p-0.5 transition-transform duration-150 hover:scale-125 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-              title={`${n} de 5`}
-              aria-label={`Poner ${n} de 5`}
-              aria-pressed={puntaje === n}
-            >
-              <Star
-                className={`h-5 w-5 transition-colors duration-150 ${
-                  n <= marcadas ? "fill-current text-amber-500" : "text-gray-300"
-                }`}
-              />
-            </button>
-          ))}
-          {/* Hace falta poder DEJARLA VACÍA: si alguien se equivoca de estrella,
-              sin esto no habría forma de volver a "sin calificar". */}
-          {puntaje !== null && (
-            <button
-              type="button"
-              onClick={() => setPuntaje(null)}
-              className="ml-2 rounded px-1.5 py-0.5 text-xs text-ink-muted transition-colors hover:bg-gray-200 hover:text-ink"
-            >
-              Sin calificar
-            </button>
-          )}
-        </div>
-      </Campo>
-
-      <Campo etiqueta="Observación" hint="Lo que dijo el cliente, o algo a tener en cuenta">
-        <Textarea
-          rows={2}
-          value={texto}
-          onChange={(e) => setTexto(e.target.value)}
-          placeholder="Dijo que la entrega se demoró pero que lo atendieron bien."
-        />
-      </Campo>
-
-      <button
-        type="button"
-        disabled={guardando}
-        onClick={() => onGuardar(cliente.id, { calificacion: puntaje, observacionCalidad: texto })}
-        className={claseBoton("primario", "!py-2")}
-      >
-        Guardar
-      </button>
-    </div>
-  );
-}
-
 interface Pendiente {
   id: string;
   chasis: string;
@@ -203,9 +116,6 @@ interface Pendiente {
   esManual?: boolean;
   avisadoEn?: string | null;
   respondioEn?: string | null;
-  // Lo que carga Calidad a mano cuando el cliente contesta.
-  calificacion?: number | null;
-  observacionCalidad?: string | null;
   detectadaEn?: string | null;
 }
 
@@ -435,9 +345,6 @@ export default function EncuestasFabrica() {
   // justo cuando el caso se cerraba. Esta lista los junta a todos, con buscador.
   const [busquedaCliente, setBusquedaCliente] = useState("");
   const [filtroEstado, setFiltroEstado] = useState<"TODOS" | EstadoCliente>("TODOS");
-  // Qué fila tiene abierto el editor de calificación. Uno a la vez: abrirlos
-  // todos llenaría la pantalla de cajas de texto sin que nadie las pida.
-  const [notaAbierta, setNotaAbierta] = useState<string | null>(null);
 
   const clientes = useMemo(() => {
     const filas = vendedores.flatMap((v) =>
@@ -479,7 +386,7 @@ export default function EncuestasFabrica() {
   // verdad si el cliente contestó y qué puso.
   async function cambiarCliente(
     id: string,
-    cambios: { estado?: EstadoCliente; calificacion?: number | null; observacionCalidad?: string | null }
+    cambios: { estado?: EstadoCliente }
   ) {
     setGuardando(true);
     setError(null);
@@ -841,7 +748,6 @@ export default function EncuestasFabrica() {
                   <th className="whitespace-nowrap px-3 py-2.5">Vendedor</th>
                   <th className="whitespace-nowrap px-3 py-2.5">Entrega</th>
                   <th className="whitespace-nowrap px-3 py-2.5">Estado</th>
-                  <th className="whitespace-nowrap px-3 py-2.5">Calificación</th>
                   <th className="whitespace-nowrap px-3 py-2.5"></th>
                 </tr>
               </thead>
@@ -896,44 +802,11 @@ export default function EncuestasFabrica() {
                           }
                         />
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2.5">
-                        {c.calificacion ? (
-                          <span className="inline-flex items-center gap-1.5">
-                            <Estrellas puntaje={c.calificacion} />
-                          </span>
-                        ) : (
-                          <span className="text-xs text-gray-400">Sin calificar</span>
-                        )}
-                        {/* El globito avisa que hay una observación cargada sin
-                            ocupar una columna entera: el texto entra en el título
-                            y se lee al pasar el mouse. */}
-                        {c.observacionCalidad && (
-                          <span
-                            className="ml-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 align-middle text-ink-muted transition-colors hover:bg-gray-200"
-                            title={c.observacionCalidad}
-                          >
-                            <MessageSquare className="h-3 w-3" />
-                          </span>
-                        )}
-                      </td>
-                      {/* Botones de verdad, no texto suelto. Antes eran dos
-                          palabras sueltas al borde de la fila: no parecían
-                          pulsables y "Eliminar" en rojo pelado se leía como un
-                          error del sistema, no como una acción. */}
+                      {/* Botón de verdad, no texto suelto: antes era una palabra
+                          contra el borde de la fila, y "Eliminar" en rojo pelado
+                          se leía como un error del sistema y no como una acción. */}
                       <td className="whitespace-nowrap px-3 py-2.5 text-right">
                         <div className="inline-flex items-center gap-1">
-                          <button
-                            onClick={() => setNotaAbierta(notaAbierta === c.id ? null : c.id)}
-                            className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-all duration-150 ${
-                              notaAbierta === c.id
-                                ? "bg-accent-light text-accent-dark"
-                                : "text-ink-muted hover:bg-gray-100 hover:text-accent-dark"
-                            }`}
-                            title="Cargar la calificación o una observación"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                            {notaAbierta === c.id ? "Cerrar" : "Nota"}
-                          </button>
                           <button
                             onClick={() => eliminarCliente(c)}
                             disabled={guardando}
@@ -946,18 +819,6 @@ export default function EncuestasFabrica() {
                         </div>
                       </td>
                     </tr>
-                    {notaAbierta === c.id && (
-                      <tr className="border-b border-gray-100 bg-gradient-to-b from-accent-light/20 to-gray-50">
-                        <td colSpan={7} className="px-4 py-4">
-                          {/* La animación no es adorno: la fila aparece de golpe
-                              en el medio de la tabla y empuja todo lo de abajo.
-                              El deslizado corto explica de dónde salió. */}
-                          <div className="motion-safe:animate-fade-slide-in">
-                            <EditorNota cliente={c} guardando={guardando} onGuardar={cambiarCliente} />
-                          </div>
-                        </td>
-                      </tr>
-                    )}
                   </Fragment>
                 ))}
               </tbody>

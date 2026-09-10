@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { asyncHandler } from "../middlewares/asyncHandler";
-import { requireAdmin } from "../middlewares/auth";
 import { recibirXlsx } from "../middlewares/uploadXlsx";
 import {
   confirmEncuestaVW,
@@ -38,27 +37,32 @@ router.post("/confirm", asyncHandler(confirmEncuestaVW));
 // nunca se mostraba.
 router.get("/estado-mail", asyncHandler(estadoMailRefuerzo));
 
+// NINGUNA de estas rutas pide ser administrador, y es a proposito. Esta pantalla
+// ES el trabajo diario de Calidad: avisar a los vendedores, corregir un vendedor
+// mal cargado y sacar un cliente que no corresponde. Con requireAdmin, cada una
+// de esas cosas obligaba a interrumpir a un administrador y frenaba el trabajo
+// de todo el dia. La puerta que importa la sigue cerrando requireEncuestaVW (la
+// pantalla no existe fuera de Volkswagen) y todo queda auditado.
+
 // Aviso por correo a los vendedores con su lista.
 // Va ANTES de "/vendedores/:id" para que "notificar" no se lea como un id.
-router.post("/notificar", requireAdmin, asyncHandler(notificarEncuestaVW));
+router.post("/notificar", asyncHandler(notificarEncuestaVW));
 
 // ABM de vendedores: acá se les carga el correo, que es lo que habilita el aviso.
 router.post("/vendedores", asyncHandler(crearVendedorVW));
 router.patch("/vendedores/:id", asyncHandler(editarVendedorVW));
 // Borra el vendedor si no tiene encuestas asociadas; si las tiene, explica
 // por que no se puede y ofrece desactivarlo.
-router.delete("/vendedores/:id", requireAdmin, asyncHandler(eliminarVendedorVW));
+router.delete("/vendedores/:id", asyncHandler(eliminarVendedorVW));
 
 // Alta a mano de un pendiente que no vino en el Excel de fabrica.
 router.post("/manual", asyncHandler(crearEncuestaManualVW));
 
-// Cambio de estado a mano, con la calificacion y la observacion. SIN requireAdmin
-// a proposito: es trabajo de todos los dias de Calidad, igual que el alta manual.
-// Lo destructivo (borrar) si queda para administradores.
+// Cambio de estado a mano (Pendiente / Avisado / Respondio).
 router.patch("/clientes/:id", asyncHandler(editarEstadoEncuestaVW));
 
 // Saca un cliente de la lista. Si vino del Excel de fabrica y sigue figurando
 // ahi, la proxima carga lo vuelve a traer; los cargados a mano no vuelven.
-router.delete("/clientes/:id", requireAdmin, asyncHandler(eliminarEncuestaVW));
+router.delete("/clientes/:id", asyncHandler(eliminarEncuestaVW));
 
 export default router;

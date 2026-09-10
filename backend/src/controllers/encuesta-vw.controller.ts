@@ -238,8 +238,6 @@ export async function listarEncuestaVW(req: Request, res: Response) {
           estado: true,
           avisadoEn: true,
           respondioEn: true,
-          calificacion: true,
-          observacionCalidad: true,
           detectadaEn: true,
           observacionesFabrica: true,
           // Para distinguir en pantalla los que cargó Calidad a mano de los que
@@ -531,12 +529,13 @@ export async function crearEncuestaManualVW(req: Request, res: Response) {
 // dos van en una sola dirección y ninguno sabe lo que pasa por teléfono. Cuando
 // el vendedor llama y el cliente le dice que ya contestó y puso 4, no había dónde
 // anotarlo: el cliente seguía figurando como pendiente hasta la carga siguiente.
+// Solo el ESTADO. La calificación y la observación se sacaron de esta pantalla
+// a pedido de Calidad: acá los clientes no tienen teléfono y nunca entran al
+// circuito de WhatsApp, así que no hay una llamada de la cual anotar nada. Eso
+// vive ahora en la pantalla de Casos, sobre el 3° contacto, que es donde de
+// verdad se habla con el cliente.
 const estadoEncuestaSchema = z.object({
   estado: z.nativeEnum(EstadoEncuestaFabrica).optional(),
-  // 1 a 5, la misma escala que la encuesta de posventa por WhatsApp. null borra
-  // la nota que hubiera: hace falta para corregir una cargada por error.
-  calificacion: z.number().int().min(1).max(5).nullable().optional(),
-  observacionCalidad: z.string().trim().max(2000).nullable().optional(),
 });
 
 export async function editarEstadoEncuestaVW(req: Request, res: Response) {
@@ -554,25 +553,11 @@ export async function editarEstadoEncuestaVW(req: Request, res: Response) {
 
   const estadoNuevo = cambios.estado ?? encuesta.estado;
 
-  // La calificación solo tiene sentido en RESPONDIDO. Si se lo saca de ahí, se
-  // borra: dejar un 4 colgando en un cliente que volvió a estar pendiente haría
-  // que los promedios cuenten una respuesta que ya no existe.
-  const vuelveAtras =
-    estadoNuevo !== EstadoEncuestaFabrica.RESPONDIO && encuesta.estado === EstadoEncuestaFabrica.RESPONDIO;
-
   const data: {
     estado: EstadoEncuestaFabrica;
     respondioEn?: Date | null;
     avisadoEn?: Date | null;
-    calificacion?: number | null;
-    observacionCalidad?: string | null;
   } = { estado: estadoNuevo };
-
-  if (cambios.calificacion !== undefined) data.calificacion = cambios.calificacion;
-  if (cambios.observacionCalidad !== undefined) {
-    data.observacionCalidad = cambios.observacionCalidad || null;
-  }
-  if (vuelveAtras) data.calificacion = null;
 
   // Las fechas las pone el sistema, no la persona: son el registro de CUÁNDO
   // pasó cada cosa y no un dato editable.
@@ -599,7 +584,6 @@ export async function editarEstadoEncuestaVW(req: Request, res: Response) {
       vendedor: encuesta.vendedor?.codigo ?? null,
       estadoAnterior: encuesta.estado,
       estadoNuevo: actualizada.estado,
-      calificacion: actualizada.calificacion,
     },
   });
 

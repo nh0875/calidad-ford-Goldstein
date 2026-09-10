@@ -22,19 +22,26 @@ export interface ItemPuntaje {
 }
 
 function Estrellas({ valor, onElegir }: { valor: number | null; onElegir: (n: number | null) => void }) {
+  // Se pintan al pasar el mouse, antes de hacer clic: sin esto no hay forma de
+  // saber qué va a quedar seleccionado hasta después de tocar, que es cuando ya
+  // es tarde para cambiar de idea.
+  const [encima, setEncima] = useState<number | null>(null);
+  const marcadas = encima ?? valor ?? 0;
+
   return (
-    <span className="inline-flex items-center gap-0.5">
+    <span className="inline-flex items-center gap-0.5" onMouseLeave={() => setEncima(null)}>
       {[1, 2, 3, 4, 5].map((n) => (
         <button
           key={n}
           type="button"
           onClick={() => onElegir(n)}
+          onMouseEnter={() => setEncima(n)}
           title={`${n} de 5`}
           aria-label={`Poner ${n} de 5`}
-          className="rounded p-0.5 transition-transform hover:scale-110"
+          className="rounded p-0.5 transition-transform duration-150 hover:scale-125 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         >
           <Star
-            className={`h-4 w-4 ${valor !== null && n <= valor ? "fill-current text-amber-500" : "text-gray-300"}`}
+            className={`h-4 w-4 transition-colors duration-150 ${n <= marcadas ? "fill-current text-amber-500" : "text-gray-300"}`}
           />
         </button>
       ))}
@@ -44,7 +51,7 @@ function Estrellas({ valor, onElegir }: { valor: number | null; onElegir: (n: nu
         <button
           type="button"
           onClick={() => onElegir(null)}
-          className="ml-1 text-[11px] text-ink-muted hover:underline"
+          className="ml-1 rounded px-1.5 py-0.5 text-[11px] text-ink-muted transition-colors hover:bg-gray-200 hover:text-ink"
         >
           borrar
         </button>
@@ -134,7 +141,7 @@ export function PanelLlamada({
         </p>
       )}
 
-      <div className="mt-3 rounded-md border border-red-200 bg-white p-3">
+      <div className="mt-3 rounded-lg border border-red-200 bg-white p-3 shadow-sm">
         <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
           Lo que dijo por teléfono
         </div>
@@ -170,7 +177,7 @@ export function PanelLlamada({
           value={comentario}
           onChange={(e) => setComentario(e.target.value)}
           placeholder="Lo que contó el cliente en la llamada."
-          className="mt-2 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none"
+          className="mt-2 w-full rounded-md border border-gray-300 px-2.5 py-1.5 font-sans text-sm transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
         />
 
         <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -178,7 +185,7 @@ export function PanelLlamada({
             type="button"
             onClick={guardar}
             disabled={guardando}
-            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-accent-dark disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all duration-150 hover:bg-accent-dark hover:shadow disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Check className="h-3.5 w-3.5" />
             Guardar lo que dijo
@@ -194,7 +201,7 @@ export function PanelLlamada({
                 value={motivo}
                 onChange={(e) => setMotivo(e.target.value)}
                 placeholder="No atendió / número equivocado / no quiso contestar"
-                className="min-w-[12rem] flex-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-xs focus:border-accent focus:outline-none"
+                className="min-w-[12rem] flex-1 rounded-md border border-gray-300 px-2.5 py-1.5 font-sans text-xs transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
               />
               <button
                 type="button"
@@ -216,7 +223,7 @@ export function PanelLlamada({
             <button
               type="button"
               onClick={() => setMostrarMotivo(true)}
-              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-gray-50"
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-ink transition-all duration-150 hover:border-gray-400 hover:bg-gray-50"
               title="Cierra el caso como “No responde contactos”: se intentaron los tres contactos"
             >
               <PhoneOff className="h-3.5 w-3.5" />

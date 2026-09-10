@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { FileDown, MessageSquarePlus, Pencil, RotateCcw, Search, Send, SearchX, Trash2, UserPlus } from "lucide-react";
+import { FileDown, MessageSquarePlus, Pencil, RotateCcw, Search, Send, SearchX, Trash2, UserPlus, Phone } from "lucide-react";
 import { apiDelete, apiDescargarArchivo, apiGet, apiPostJson } from "../lib/api";
 import { getMarca } from "../lib/marca";
+import { PanelLlamada } from "../components/PanelLlamada";
 import { getModoDemo, getUsuario, veTodasLasAreas } from "../lib/auth";
 import { AREAS, etiquetaArea, tonoArea } from "../lib/area";
 import { Card } from "../components/ui/Card";
@@ -129,6 +130,9 @@ export default function Casos() {
   // El perfil de la marca decide si esta pantalla muestra lo del circuito de
   // insistencia. En Ford no existe y esas partes no se dibujan.
   const marcaInfo = getMarca();
+  // Qué caso tiene abierto el panel de la llamada. Uno a la vez: el panel es
+  // alto y con varios abiertos la lista se vuelve ilegible.
+  const [llamadaAbierta, setLlamadaAbierta] = useState<string | null>(null);
   // El cartel de avisos linkea acá con ?busqueda=<nro de orden> (p. ej. desde un
   // "posible duplicado", donde lo que hace falta es comparar las dos cargas).
   // Sin esto la pantalla ignoraba el parámetro y el botón no hacía nada.
@@ -710,7 +714,8 @@ export default function Casos() {
               const badge = BADGE_ESTADO[c.estadoContacto] ?? BADGE_ESTADO.PENDIENTE;
               const elegible = esElegible(c);
               return (
-                <tr key={c.id} className="border-b border-gray-100 transition-colors hover:bg-gray-50">
+                <Fragment key={c.id}>
+                <tr className="border-b border-gray-100 transition-colors hover:bg-gray-50">
                   <td className="px-3 py-2">
                     <input
                       type="checkbox"
@@ -799,6 +804,24 @@ export default function Casos() {
                             {reintentando === c.id ? "Reintentando…" : "Reintentar"}
                           </button>
                         )}
+                        {/* El 3° contacto es el único estado que pide que alguien
+                            levante el teléfono. El botón abre acá mismo el mismo
+                            formulario que la pantalla del caso, para poder cargar
+                            varias llamadas seguidas sin entrar y salir de cada una. */}
+                        {marcaInfo.modulos.segundoContacto && c.estadoContacto === "LLAMADA_PENDIENTE" && (
+                          <button
+                            onClick={() => setLlamadaAbierta(llamadaAbierta === c.id ? null : c.id)}
+                            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold transition-colors ${
+                              llamadaAbierta === c.id
+                                ? "bg-red-100 text-red-800"
+                                : "text-red-700 hover:bg-red-50"
+                            }`}
+                            title="Cargar lo que dijo el cliente por teléfono"
+                          >
+                            <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                            {llamadaAbierta === c.id ? "Cerrar" : "Cargar llamada"}
+                          </button>
+                        )}
                         {/* Editar datos del caso (corregir cargas erróneas). */}
                         <button
                           onClick={() => setCasoEditar(c)}
@@ -835,6 +858,24 @@ export default function Casos() {
                     </td>
                   }
                 </tr>
+                {llamadaAbierta === c.id && (
+                  <tr className="border-b border-gray-100">
+                    <td colSpan={columnas} className="p-0">
+                      <div className="motion-safe:animate-fade-slide-in">
+                        <PanelLlamada
+                          casoId={c.id}
+                          area={c.area}
+                          puntajesPosventa={marcaInfo.posventa.items}
+                          onListo={async () => {
+                            setLlamadaAbierta(null);
+                            await cargarCasos();
+                          }}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               );
             })}
             {casos.length === 0 && !cargando && (
