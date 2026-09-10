@@ -1,4 +1,5 @@
 import { AreaTrabajo, EstadoContacto, EstadoRQR, Prisma, Semaforo } from "@prisma/client";
+import { porcentaje as porcentajeDe, promedio as promedioDe } from "./redondeo";
 import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { claveAgrupacionAsesor, claveNormalizada } from "./normalizacion.service";
@@ -106,14 +107,14 @@ export async function reporteSentimiento(f: FiltrosReporte) {
     distribucion,
     // Promedio con un decimal: es el número que se puede seguir mes a mes,
     // algo que con tres colores no se podía.
-    promedio: conPuntaje > 0 ? Math.round((sumaEstrellas / conPuntaje) * 10) / 10 : null,
+    promedio: promedioDe(sumaEstrellas, conPuntaje),
     // En Volkswagen el 5 es el único puntaje que NO abre RQR, así que este
     // porcentaje es la métrica que de verdad importa.
-    pctCinco: conPuntaje > 0 ? Math.round((distribucion[5] / conPuntaje) * 1000) / 10 : 0,
+    pctCinco: porcentajeDe(distribucion[5], conPuntaje),
   };
 
   const clasificados = totales.VERDE + totales.AMARILLO + totales.ROJO;
-  const pct = (n: number) => (clasificados > 0 ? Math.round((n / clasificados) * 1000) / 10 : 0);
+  const pct = (n: number) => porcentajeDe(n, clasificados);
   const porcentajes = {
     VERDE: pct(totales.VERDE),
     AMARILLO: pct(totales.AMARILLO),
@@ -152,7 +153,7 @@ export async function reporteSentimiento(f: FiltrosReporte) {
       AMARILLO: v.AMARILLO,
       ROJO: v.ROJO,
       // Promedio del período: es lo que se grafica en las marcas de estrellas.
-      promedioEstrellas: v.conPuntaje > 0 ? Math.round((v.sumaEstrellas / v.conPuntaje) * 10) / 10 : null,
+      promedioEstrellas: promedioDe(v.sumaEstrellas, v.conPuntaje),
     }));
 
   // Desglose por sucursal y por asesor (con % de rojos para detectar concentración).
@@ -188,10 +189,10 @@ export async function reporteSentimiento(f: FiltrosReporte) {
           AMARILLO: v.AMARILLO,
           ROJO: v.ROJO,
           total,
-          pctRojos: total > 0 ? Math.round((v.ROJO / total) * 1000) / 10 : 0,
+          pctRojos: porcentajeDe(v.ROJO, total),
           // Desempeño en estrellas de ese asesor/sucursal (null si no aplica).
-          promedioEstrellas: v.conPuntaje > 0 ? Math.round((v.suma / v.conPuntaje) * 10) / 10 : null,
-          pctCinco: v.conPuntaje > 0 ? Math.round((v.cinco / v.conPuntaje) * 1000) / 10 : 0,
+          promedioEstrellas: promedioDe(v.suma, v.conPuntaje),
+          pctCinco: porcentajeDe(v.cinco, v.conPuntaje),
         };
       })
       // Peor primero. En las marcas de estrellas ordena por promedio ascendente
@@ -215,7 +216,7 @@ export async function reporteSentimiento(f: FiltrosReporte) {
   const contactados =
     (conteoEstados.RESPONDIDO ?? 0) + (conteoEstados.NO_RESPONDIO ?? 0) + (conteoEstados.ENVIADO ?? 0) + (conteoEstados.ERROR ?? 0);
   const pctContactados = (n: number) =>
-    contactados > 0 ? Math.round((n / contactados) * 1000) / 10 : 0;
+    porcentajeDe(n, contactados);
 
   return {
     // Con qué escala mide esta marca: el frontend decide si dibuja semáforo o
@@ -378,7 +379,7 @@ export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
   const diasCierre = (r: (typeof cerrados)[number]) =>
     (r.fechaCierre!.getTime() - r.fechaApertura.getTime()) / 86_400_000;
   const promedio = (valores: number[]) =>
-    valores.length ? Math.round((valores.reduce((a, b) => a + b, 0) / valores.length) * 10) / 10 : null;
+    promedioDe(valores.reduce((a, b) => a + b, 0), valores.length);
 
   const cierrePorCategoriaMapa = new Map<string, number[]>();
   for (const r of cerrados) {

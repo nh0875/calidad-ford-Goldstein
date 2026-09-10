@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { getMarca } from "../lib/marca";
+import { DECIMALES, numero, porcentaje, promedio } from "../lib/numeros";
 import { Link } from "react-router-dom";
 import { DatabaseBackup, PartyPopper } from "lucide-react";
 import { apiGet } from "../lib/api";
@@ -214,6 +215,7 @@ export default function Dashboard() {
               <Kpi
                 titulo="Tasa de respuesta"
                 valor={resumen.tasaRespuesta.pctRespondieronEnTotal}
+                decimales={DECIMALES}
                 sufijo="%"
                 detalle={`${resumen.tasaRespuesta.respondieronEnTotal} de ${resumen.tasaRespuesta.contactados} · ${resumen.circuitoContacto.respondioLlamada} por llamada`}
                 color="text-accent-dark"
@@ -222,6 +224,7 @@ export default function Dashboard() {
               <Kpi
                 titulo="Tasa de respuesta"
                 valor={resumen.tasaRespuesta.pctRespondidos}
+                decimales={DECIMALES}
                 sufijo="%"
                 detalle={`${resumen.tasaRespuesta.respondidos} de ${resumen.tasaRespuesta.contactados}`}
                 color="text-accent-dark"
@@ -234,6 +237,7 @@ export default function Dashboard() {
                 <Kpi
                   titulo="Promedio"
                   valor={resumen.estrellas.promedio ?? 0}
+                decimales={DECIMALES}
                   sufijo=" ★"
                   detalle={`sobre ${resumen.estrellas.conPuntaje} caso(s) puntuados`}
                   color="text-accent-dark"
@@ -243,6 +247,7 @@ export default function Dashboard() {
                 <Kpi
                   titulo="5 estrellas"
                   valor={resumen.estrellas.pctCinco}
+                decimales={DECIMALES}
                   sufijo="%"
                   detalle={`${resumen.estrellas.distribucion["5"]} caso(s) perfectos`}
                   color="text-green-700"
@@ -260,6 +265,7 @@ export default function Dashboard() {
                   titulo="Verdes"
                   punto="VERDE"
                   valor={resumen.semaforo.porcentajes.VERDE}
+                decimales={DECIMALES}
                   sufijo="%"
                   detalle={`${resumen.semaforo.totales.VERDE} casos`}
                   color="text-green-700"
@@ -268,6 +274,7 @@ export default function Dashboard() {
                   titulo="Amarillos"
                   punto="AMARILLO"
                   valor={resumen.semaforo.porcentajes.AMARILLO}
+                decimales={DECIMALES}
                   sufijo="%"
                   detalle={`${resumen.semaforo.totales.AMARILLO} casos`}
                   color="text-yellow-700"
@@ -276,6 +283,7 @@ export default function Dashboard() {
                   titulo="Rojos"
                   punto="ROJO"
                   valor={resumen.semaforo.porcentajes.ROJO}
+                decimales={DECIMALES}
                   sufijo="%"
                   detalle={`${resumen.semaforo.totales.ROJO} casos`}
                   color="text-red-700"
@@ -354,13 +362,13 @@ export default function Dashboard() {
                         <span className="text-xs text-ink-muted">{clasif} clasificados</span>
                       </div>
                       <div className="flex gap-4 text-sm">
-                        <span className="text-green-700">● {d.porcentajes.VERDE}%</span>
-                        <span className="text-yellow-700">● {d.porcentajes.AMARILLO}%</span>
-                        <span className="text-red-700">● {d.porcentajes.ROJO}%</span>
+                        <span className="text-green-700">● {porcentaje(d.porcentajes.VERDE)}</span>
+                        <span className="text-yellow-700">● {porcentaje(d.porcentajes.AMARILLO)}</span>
+                        <span className="text-red-700">● {porcentaje(d.porcentajes.ROJO)}</span>
                       </div>
                       <div className="mt-2 text-xs text-ink-muted">
                         Tasa de respuesta:{" "}
-                        <span className="font-medium text-ink">{d.tasaRespuesta.pctRespondidos}%</span> (
+                        <span className="font-medium text-ink">{porcentaje(d.tasaRespuesta.pctRespondidos)}</span> (
                         {d.tasaRespuesta.respondidos}/{d.tasaRespuesta.contactados})
                       </div>
                     </div>
@@ -432,7 +440,7 @@ export default function Dashboard() {
                 </Link>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
-                <MiniKpi titulo="Tasa de respuesta" valor={resumen.encuestaFord.tasaRespuesta !== null ? `${resumen.encuestaFord.tasaRespuesta}%` : "—"} color="text-accent-dark" />
+                <MiniKpi titulo="Tasa de respuesta" valor={porcentaje(resumen.encuestaFord.tasaRespuesta)} color="text-accent-dark" />
                 <MiniKpi titulo="Respondidas" valor={resumen.encuestaFord.respondidas} color="text-green-700" />
                 <MiniKpi titulo="Pendientes" valor={resumen.encuestaFord.pendientes} color="text-yellow-700" />
                 <MiniKpi titulo="Email inválido" valor={resumen.encuestaFord.emailInvalido} color="text-amber-700" />
@@ -454,7 +462,7 @@ export default function Dashboard() {
                 </Link>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-                <MiniKpi titulo="Tasa de respuesta" valor={resumen.encuestaFabrica.tasaRespuesta !== null ? `${resumen.encuestaFabrica.tasaRespuesta}%` : "—"} color="text-accent-dark" />
+                <MiniKpi titulo="Tasa de respuesta" valor={porcentaje(resumen.encuestaFabrica.tasaRespuesta)} color="text-accent-dark" />
                 <MiniKpi titulo="Respondieron" valor={resumen.encuestaFabrica.respondieron} color="text-green-700" />
                 <MiniKpi titulo="Pendientes" valor={resumen.encuestaFabrica.pendientes} color="text-yellow-700" />
                 <MiniKpi titulo="Vendedores con pendientes" valor={resumen.encuestaFabrica.vendedoresConPendientes} color="text-ink" />
@@ -668,6 +676,7 @@ function Kpi({
   detalle,
   color,
   punto,
+  decimales = 0,
 }: {
   titulo: string;
   valor: number;
@@ -675,6 +684,15 @@ function Kpi({
   detalle: string;
   color: string;
   punto?: "VERDE" | "AMARILLO" | "ROJO";
+  /**
+   * Cuántos decimales mostrar. CERO para lo que se cuenta (casos, RQR); DOS para
+   * promedios y porcentajes.
+   *
+   * Antes esto no existía y todo se dibujaba con Math.round: el promedio de 4,94
+   * aparecía como 5 —"todos perfectos"— con un 94% de cinco estrellas. Se perdía
+   * justo el decimal que dice que hay algo que mejorar.
+   */
+  decimales?: number;
 }) {
   return (
     <Card>
@@ -683,7 +701,7 @@ function Kpi({
         {titulo}
       </div>
       <div className={`font-display text-2xl font-bold ${color}`}>
-        <AnimatedNumber value={valor} formatear={(v) => `${Math.round(v)}${sufijo}`} />
+        <AnimatedNumber value={valor} formatear={(v) => `${numero(v, decimales)}${sufijo}`} />
       </div>
       <div className="truncate text-xs text-ink-muted">{detalle}</div>
     </Card>
@@ -700,7 +718,7 @@ function MiniKpi({ titulo, valor, color }: { titulo: string; valor: number | str
 }
 
 function BadgeRojos({ pct }: { pct: number }) {
-  return <Badge tono={pct >= 30 ? "rojo" : pct >= 10 ? "amarillo" : "verde"}>{pct}%</Badge>;
+  return <Badge tono={pct >= 30 ? "rojo" : pct >= 10 ? "amarillo" : "verde"}>{porcentaje(pct)}</Badge>;
 }
 
 function TablaRanking({
@@ -760,9 +778,9 @@ function TablaRanking({
                   {porEstrellas ? (
                     <>
                       <td className="px-2 py-1.5 text-right text-ink-muted">{f.total}</td>
-                      <td className="px-2 py-1.5 text-right text-ink-muted">{f.pctCinco}%</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-ink-muted">{porcentaje(f.pctCinco)}</td>
                       <td className="px-2 py-1.5 text-right font-medium text-ink">
-                        {f.promedioEstrellas !== null ? `${f.promedioEstrellas} ★` : "—"}
+                        {f.promedioEstrellas !== null ? `${promedio(f.promedioEstrellas)} ★` : "—"}
                       </td>
                     </>
                   ) : (
@@ -772,7 +790,7 @@ function TablaRanking({
                       <td className="px-2 py-1.5 text-right text-ink-muted">{f.ROJO}</td>
                       <td className="px-2 py-1.5 text-right text-ink-muted">{f.total}</td>
                       <td className="px-2 py-1.5 text-right">
-                        {pocos ? <span className="text-xs text-ink-muted">{f.pctRojos}%</span> : <BadgeRojos pct={f.pctRojos} />}
+                        {pocos ? <span className="text-xs tabular-nums text-ink-muted">{porcentaje(f.pctRojos)}</span> : <BadgeRojos pct={f.pctRojos} />}
                       </td>
                     </>
                   )}

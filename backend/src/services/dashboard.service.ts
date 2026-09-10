@@ -9,6 +9,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { marca } from "../config/marca";
+import { porcentaje, promedio } from "./redondeo";
 import { prisma } from "../config/prisma";
 import { FiltrosReporte, reporteCausaRaiz, reporteSentimiento } from "./reporte.service";
 import { nombreClienteRqr } from "./rqr.service";
@@ -69,7 +70,7 @@ async function resumenEncuestaFabrica() {
   return {
     pendientes,
     respondieron,
-    tasaRespuesta: total > 0 ? Math.round((respondieron / total) * 1000) / 10 : null,
+    tasaRespuesta: total > 0 ? porcentaje(respondieron, total) : null,
     vendedoresConPendientes: ranking.length,
     // Sin correo cargado no se les puede avisar: es lo que traba el circuito.
     vendedoresSinCorreo: ranking.filter((v) => v.sinCorreo).length,
@@ -195,7 +196,7 @@ export async function dashboardResumen(f: FiltrosReporte) {
     .map(([origen, v]) => ({
       origen,
       total: v.total,
-      tasaRespuesta: v.contactados > 0 ? Math.round((v.respondidos / v.contactados) * 1000) / 10 : null,
+      tasaRespuesta: v.contactados > 0 ? porcentaje(v.respondidos, v.contactados) : null,
     }))
     .sort((a, b) => b.total - a.total);
 
@@ -227,7 +228,7 @@ export async function dashboardResumen(f: FiltrosReporte) {
   // por la que existe todo este circuito.
   const respondieronEnTotal = respondidos + respondioLlamada;
   const pctContactados = (n: number) =>
-    contactados > 0 ? Math.round((n / contactados) * 1000) / 10 : 0;
+    porcentaje(n, contactados);
 
   // Parte B: encuesta oficial de Ford (estado actual, no atado al período).
   // Tasa = RESPONDIDA / (RESPONDIDA + PENDIENTE_RESPUESTA + EMAIL_INVALIDO);
@@ -255,7 +256,7 @@ export async function dashboardResumen(f: FiltrosReporte) {
     emailInvalido: fordEmailInvalido,
     noElegible: ford[EncuestaFordEstado.NO_ELEGIBLE] ?? 0,
     sinDato: ford[EncuestaFordEstado.SIN_DATO] ?? 0,
-    tasaRespuesta: fordDenom > 0 ? Math.round((fordRespondidas / fordDenom) * 1000) / 10 : null,
+    tasaRespuesta: fordDenom > 0 ? porcentaje(fordRespondidas, fordDenom) : null,
     tareasAbiertas: tareasRefuerzoAbiertas,
   };
 

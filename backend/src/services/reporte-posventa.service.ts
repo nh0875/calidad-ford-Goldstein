@@ -8,6 +8,7 @@
 // Word: un solo cálculo, para que el reporte impreso no pueda diferir de lo que
 // se ve en pantalla.
 import { AreaTrabajo, ItemPosventa, Prisma } from "@prisma/client";
+import { porcentaje as porcentajeDe, promedio as promedioDe } from "./redondeo";
 import { prisma } from "../config/prisma";
 import { DEFINICION_ITEMS, ITEM_QUE_DEFINE_EL_CASO, etiquetaItem } from "../config/posventa-vw";
 
@@ -38,14 +39,16 @@ export interface ResumenItem {
   porcentajeMalos: number | null;
 }
 
+// Envuelven a los compartidos para conservar la diferencia que ya tenia este
+// reporte: aca "sin datos" devuelve NULL y no cero, porque un cero en la tabla de
+// items se lee como "el lavado saco 0", que es lo contrario de "nadie lo puntuo".
 function promedio(valores: number[]): number | null {
-  if (valores.length === 0) return null;
-  return Math.round((valores.reduce((a, b) => a + b, 0) / valores.length) * 100) / 100;
+  return promedioDe(valores.reduce((a, b) => a + b, 0), valores.length);
 }
 
 function porcentaje(parte: number, total: number): number | null {
   if (total === 0) return null;
-  return Math.round((parte / total) * 1000) / 10;
+  return porcentajeDe(parte, total);
 }
 
 /**
