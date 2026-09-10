@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
@@ -134,6 +134,57 @@ function fechaCorta(iso: string): string {
   return isNaN(d.getTime()) ? "" : d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", timeZone: TZ_AR });
 }
 
+/** El día de un instante, en horario de Argentina, como "2026-09-10". */
+function diaAR(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  // en-CA da directamente el formato aaaa-mm-dd, que se puede comparar como texto.
+  return d.toLocaleDateString("en-CA", { timeZone: TZ_AR });
+}
+
+/**
+ * Cómo se anuncia un día en el separador.
+ *
+ * "Hoy" y "Ayer" en vez de la fecha porque es como se habla: quien está mirando
+ * una conversación piensa "esto lo contestó ayer", no "esto fue el 09/09". Para
+ * lo más viejo se escribe el día con nombre, que ubica mejor que un número
+ * suelto; y si es de otro año se agrega, o "12 de marzo" no diría cuál.
+ */
+function etiquetaDia(iso: string): string {
+  const dia = diaAR(iso);
+  const hoy = diaAR(new Date().toISOString());
+  if (dia === hoy) return "Hoy";
+
+  const ayer = new Date();
+  ayer.setDate(ayer.getDate() - 1);
+  if (dia === diaAR(ayer.toISOString())) return "Ayer";
+
+  const d = new Date(iso);
+  const mismoAno = dia.slice(0, 4) === hoy.slice(0, 4);
+  return d.toLocaleDateString("es-AR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    ...(mismoAno ? {} : { year: "numeric" }),
+    timeZone: TZ_AR,
+  });
+}
+
+/** Fecha y hora completas, para el título de cada mensaje. */
+function fechaHoraLarga(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString("es-AR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: TZ_AR,
+  });
+}
+
 // Estado de un mensaje NUESTRO (saliente): tilde según el acuse de Meta.
 function EstadoMensaje({ status }: { status: string }) {
   const s = status.toLowerCase();
@@ -162,6 +213,9 @@ export default function Seguimiento() {
   const [q, setQ] = useState("");
   // Filtros extra (solo aparecen para quien ve más de una provincia / área)
   const [provincia, setProvincia] = useState("");
+  // Rango de días con actividad, para revisar el trabajo de una jornada.
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
   const [area, setArea] = useState("");
   const [opciones, setOpciones] = useState<{ provincias: string[]; areas: string[] }>({ provincias: [], areas: [] });
   // Mostrar el badge de área cuando hay más de una en juego (incluye Fidelización):
@@ -182,14 +236,16 @@ export default function Seguimiento() {
         `/api/seguimiento?filtro=${filtro}` +
         (q ? `&q=${encodeURIComponent(q)}` : "") +
         (area ? `&area=${area}` : "") +
-        (provincia ? `&sucursal=${encodeURIComponent(provincia)}` : "");
+        (provincia ? `&sucursal=${encodeURIComponent(provincia)}` : "") +
+        (desde ? `&fechaDesde=${desde}` : "") +
+        (hasta ? `&fechaHasta=${hasta}` : "");
       const r = await apiGet<{ data: Conversacion[]; opciones?: { provincias: string[]; areas: string[] } }>(url);
       setConversaciones(r.data);
       if (r.opciones) setOpciones(r.opciones);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos cargar las conversaciones.");
     }
-  }, [filtro, q, area, provincia]);
+  }, [filtro, q, area, provincia, desde, hasta]);
 
   const cargarHilo = useCallback(async (casoId: string) => {
     try {
@@ -342,6 +398,42 @@ export default function Seguimiento() {
               placeholder="Buscar por nombre u orden…"
               className="w-full rounded-md border border-gray-300 py-2 pl-8 pr-3 text-sm focus:border-accent focus:outline-none"
             />
+          </div>
+          {/* Rango de días. Va SIEMPRE, en las dos marcas: la pregunta "¿a quién
+              le escribimos el martes?" no depende de cuántas provincias vea la
+              persona. Con un solo extremo cargado también filtra (desde tal día
+              en adelante, o hasta tal día). */}
+          <div className="flex items-center gap-1.5">
+            <input
+              type="date"
+              value={desde}
+              max={hasta || undefined}
+              onChange={(e) => setDesde(e.target.value)}
+              title="Desde qué día"
+              className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1 font-sans text-xs text-ink transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+            />
+            <span className="text-xs text-ink-muted">a</span>
+            <input
+              type="date"
+              value={hasta}
+              min={desde || undefined}
+              onChange={(e) => setHasta(e.target.value)}
+              title="Hasta qué día"
+              className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1 font-sans text-xs text-ink transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+            />
+            {(desde || hasta) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDesde("");
+                  setHasta("");
+                }}
+                title="Quitar el filtro de fechas"
+                className="shrink-0 rounded-md px-1.5 py-1 text-xs text-ink-muted transition-colors hover:bg-gray-200 hover:text-ink"
+              >
+                ✕
+              </button>
+            )}
           </div>
           {(opciones.provincias.length > 1 || opciones.areas.length > 1) && (
             <div className="flex gap-1.5">
@@ -575,12 +667,29 @@ export default function Seguimiento() {
 
             {/* Mensajes */}
             <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4">
-              {hilo.mensajes.map((m) => {
+              {hilo.mensajes.map((m, i) => {
                 const saliente = m.direction === "SALIENTE";
                 const audio = esAudio(m);
                 const audioFallido = audio && contenidoAudioFallido(m.content);
+                // Se separa cuando CAMBIA el día respecto del mensaje anterior.
+                // Antes cada globo mostraba solo la hora: en una conversación que
+                // duró tres días se leían "14:32" y "09:15" seguidos sin forma de
+                // saber si pasaron veinte minutos o dos días entre uno y otro,
+                // que es justamente lo que hay que poder ver para seguir un caso.
+                const anterior = i > 0 ? hilo.mensajes[i - 1] : null;
+                const abreDia = !anterior || diaAR(anterior.createdAt) !== diaAR(m.createdAt);
                 return (
-                  <div key={m.id} className={`flex ${saliente ? "justify-end" : "justify-start"}`}>
+                  <Fragment key={m.id}>
+                  {abreDia && (
+                    <div className="flex items-center gap-3 py-1">
+                      <div className="h-px flex-1 bg-gray-200" />
+                      <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-medium capitalize text-ink-muted">
+                        {etiquetaDia(m.createdAt)}
+                      </span>
+                      <div className="h-px flex-1 bg-gray-200" />
+                    </div>
+                  )}
+                  <div className={`flex ${saliente ? "justify-end" : "justify-start"}`}>
                     <div
                       className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
                         saliente ? "bg-navy text-white" : "bg-white text-ink border border-gray-200"
@@ -617,11 +726,17 @@ export default function Seguimiento() {
                             autor no registrado
                           </span>
                         )}
-                        <span>{hora(m.createdAt)}</span>
+                        {/* La fecha va junto a la hora, no solo en el separador:
+                            al copiar o citar un mensaje suelto hace falta saber
+                            de cuándo es sin tener que buscar el separador arriba. */}
+                        <span title={fechaHoraLarga(m.createdAt)}>
+                          {fechaCorta(m.createdAt)} {hora(m.createdAt)}
+                        </span>
                         {saliente && <EstadoMensaje status={m.status} />}
                       </div>
                     </div>
                   </div>
+                  </Fragment>
                 );
               })}
               <div ref={finRef} />

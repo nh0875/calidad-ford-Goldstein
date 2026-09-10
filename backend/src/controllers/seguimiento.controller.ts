@@ -152,6 +152,10 @@ const listQuerySchema = z.object({
   q: z.string().trim().max(80).optional(),
   // Filtro por provincia (solo NARROWING: nunca deja ver fuera de lo permitido).
   sucursal: z.string().trim().max(80).optional(),
+  // Rango de días con actividad de WhatsApp, para revisar el trabajo de una
+  // jornada ("¿a quién le escribimos el martes?"). Formato aaaa-mm-dd.
+  fechaDesde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  fechaHasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 export async function listarConversaciones(req: Request, res: Response) {
@@ -159,7 +163,7 @@ export async function listarConversaciones(req: Request, res: Response) {
   if (!parsed.success) {
     return res.status(400).json({ message: "Filtro inválido." });
   }
-  const { filtro, q, sucursal } = parsed.data;
+  const { filtro, q, sucursal, fechaDesde, fechaHasta } = parsed.data;
   const areaFiltro = parseAreaSeguimiento(req.query.area); // VENTAS | POSVENTA | FIDELIZACION | null
   const sucursalPedida = sucursal ?? "";
   // Para la base traemos con la restricción de área del usuario SOBRE LOS CASOS
@@ -187,6 +191,26 @@ export async function listarConversaciones(req: Request, res: Response) {
 
   // Los filtros de la pantalla también, por el mismo motivo: "Para revisar" y
   // "Rojos" son justo las vistas donde no se puede perder ninguno.
+  // El rango se arma en HORA DE ARGENTINA y no en UTC. La base guarda en UTC, y
+  // Argentina está tres horas atrás: filtrando por el día "pelado" se colaban los
+  // mensajes de las 21:00 a las 23:59 del día anterior y faltaban los últimos del
+  // día pedido. Para quien revisa la jornada de ayer, eso es la diferencia entre
+  // ver su trabajo o ver el de otro.
+  const rangoFechas =
+    fechaDesde || fechaHasta
+      ? {
+          ...(fechaDesde ? { gte: new Date(`${fechaDesde}T00:00:00-03:00`) } : {}),
+          ...(fechaHasta ? { lte: new Date(`${fechaHasta}T23:59:59.999-03:00`) } : {}),
+        }
+      : null;
+
+  // Se filtra por los MENSAJES y no por la fecha del caso: la pregunta es "¿qué
+  // se conversó ese día?", y un caso cargado en agosto puede tener el mensaje que
+  // interesa en septiembre.
+  const whereFechaCaso: Prisma.CasoWhereInput = rangoFechas
+    ? { mensajes: { some: { createdAt: rangoFechas } } }
+    : {};
+
   const whereFiltroCaso: Prisma.CasoWhereInput =
     filtro === "revision"
       ? { analisis: { some: { esSeguimiento: false, requiereRevisionManual: true } } }
@@ -202,6 +226,7 @@ export async function listarConversaciones(req: Request, res: Response) {
         mensajes: { some: {} }, // solo casos con actividad de WhatsApp
         ...whereBusquedaCaso,
         ...whereFiltroCaso,
+        ...whereFechaCaso,
       },
       select: {
         id: true,
@@ -236,6 +261,10 @@ export async function listarConversaciones(req: Request, res: Response) {
         eliminadoEn: null,
         mensajes: { some: {} },
         ...whereBusquedaFidel,
+        // El mismo rango de fechas que los casos: si no, filtrar por día dejaría
+        // la lista mezclada, con los casos del día pedido y TODOS los clientes de
+        // fidelización.
+        ...(rangoFechas ? { mensajes: { some: { createdAt: rangoFechas } } } : {}),
         // Los filtros de semáforo no aplican a Fidelización (no se clasifica):
         // con "Para revisar" o "Rojos" puestos, no tiene que traer ninguno.
         ...(filtro === "revision" || filtro === "rojos" ? { id: "" } : {}),
