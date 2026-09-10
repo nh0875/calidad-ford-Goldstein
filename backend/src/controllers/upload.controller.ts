@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { normalizarLibroSiEsVW } from "../services/contacto-posventa-vw.service";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import {
@@ -50,6 +51,12 @@ export async function previewUpload(req: Request, res: Response) {
   if (workbook.SheetNames.length === 0) {
     return res.status(400).json({ message: "El archivo Excel no tiene ninguna hoja." });
   }
+
+  // El export de Contacto Posventa de Volkswagen se traduce ACÁ, apenas se abre,
+  // a las columnas que el sistema ya entiende. Si no es ese formato no hace nada.
+  // De este modo el preview muestra las columnas ya reconocidas y el resto del
+  // circuito no se entera de que existe un formato nuevo.
+  workbook = normalizarLibroSiEsVW(workbook);
 
   const fileToken = guardarArchivoTemporal(req.file.buffer, req.file.originalname);
 

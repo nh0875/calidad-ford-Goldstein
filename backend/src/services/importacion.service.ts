@@ -12,6 +12,7 @@ import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { olvidarSucursalesConocidas } from "./area.service";
 import { crearAviso } from "./aviso.service";
+import { normalizarLibroSiEsVW } from "./contacto-posventa-vw.service";
 import {
   CampoCaso,
   HojaParseada,
@@ -203,7 +204,12 @@ export async function importarHojas(params: ParamsImportacion): Promise<{
     suprimidos: number;
   };
 }> {
-  const workbook = abrirWorkbook(params.buffer);
+  // La MISMA traducción que hace el preview: si es el export de Contacto
+  // Posventa de Volkswagen, se pasa a las columnas que el sistema entiende.
+  // Tiene que estar en los dos lados y ser la misma función; si el preview
+  // tradujera y la importación no, la persona confirmaría una cosa y se
+  // guardaría otra.
+  const workbook = normalizarLibroSiEsVW(abrirWorkbook(params.buffer));
   const resultados: ResultadoHoja[] = [];
 
   // Se cargan una sola vez para toda la importación (alias + supresión).
