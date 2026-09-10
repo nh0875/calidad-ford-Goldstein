@@ -8,6 +8,7 @@ import {
   enviarFidelizacion,
   estadoPlantillaFidelizacion,
   hojasDelExcel,
+  editarSucursalCargaFidelizacion,
   listarFidelizacion,
   progresoFidelizacion,
   subirFidelizacion,
@@ -43,6 +44,11 @@ router.post("/", recibirXlsx("archivo"), asyncHandler(subirFidelizacion));
 router.post("/hojas", recibirXlsx("archivo"), asyncHandler(hojasDelExcel));
 
 // Listado de cargas de fidelización con sus conteos.
+// Corregir a que sucursal pertenece una carga. Cambia QUIEN VE a esos
+// clientes, asi que es la salida cuando al subir el Excel se eligio la
+// sucursal equivocada y esa gente le quedo invisible a quien corresponde.
+router.patch("/cargas/:id", asyncHandler(editarSucursalCargaFidelizacion));
+
 router.get("/", asyncHandler(listarFidelizacion));
 
 // Progreso de la cola de envío (antes de /:id para que no lo capture como id).

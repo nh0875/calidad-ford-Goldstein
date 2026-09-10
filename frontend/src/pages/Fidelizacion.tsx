@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { getMarca } from "../lib/marca";
 import { Link } from "react-router-dom";
 import { FileUp, Gift, Send, Trash2, Users } from "lucide-react";
-import { apiDelete, apiGet, apiPostForm, apiPostJson } from "../lib/api";
+import { apiDelete, apiGet, apiPatchJson, apiPostForm, apiPostJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
@@ -235,6 +235,39 @@ export default function Fidelizacion() {
     }, 2500);
   }
 
+  // Corregir a qué sucursal pertenece una carga.
+  //
+  // Es la que decide QUIÉN VE a estos clientes en Seguimiento: un usuario
+  // asignado a San Juan no ve lo que quedó rotulado como Mendoza. Cuando al
+  // subir el Excel se elige la sucursal equivocada, esa gente le queda invisible
+  // a quien corresponde, y sin esto había que corregirlo por base de datos.
+  async function cambiarSucursalCarga(upload: DetalleCarga["upload"]) {
+    const propuesta = window.prompt(
+      `¿A qué sucursal pertenece "${upload.filename}"?
+
+` +
+        "Esto decide quién ve a estos clientes en Seguimiento: solo los usuarios de esa " +
+        "sucursal (y los que no tienen ninguna asignada).",
+      upload.sucursal
+    );
+    if (propuesta === null) return;
+    const limpia = propuesta.trim();
+    if (!limpia || limpia === upload.sucursal) return;
+
+    setError(null);
+    try {
+      const r = await apiPatchJson<{ message: string }>(
+        `/api/fidelizacion/cargas/${encodeURIComponent(upload.id)}`,
+        { sucursal: limpia }
+      );
+      setMensaje(r.message);
+      await cargarLista();
+      setDetalle(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo cambiar la sucursal de la carga.");
+    }
+  }
+
   async function enviar(id: string) {
     setError(null);
     setMensaje(null);
@@ -449,6 +482,7 @@ export default function Fidelizacion() {
           puedeEnviar={plantilla ? plantilla.puedeEnviar : true}
           onEnviar={() => enviar(detalle.upload.id)}
           onCerrar={() => setDetalle(null)}
+          cambiarSucursal={cambiarSucursalCarga}
         />
       )}
     </div>
@@ -460,11 +494,13 @@ function DetalleClientes({
   puedeEnviar,
   onEnviar,
   onCerrar,
+  cambiarSucursal,
 }: {
   detalle: DetalleCarga;
   puedeEnviar: boolean;
   onEnviar: () => void;
   onCerrar: () => void;
+  cambiarSucursal: (upload: DetalleCarga["upload"]) => void;
 }) {
   const { upload, clientes } = detalle;
   const esVentas = upload.origen === "VENTAS";
@@ -483,7 +519,19 @@ function DetalleClientes({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
         <div className="text-sm">
           <span className="font-semibold text-ink">{upload.filename}</span>{" "}
-          <span className="text-ink-muted">· {clientes.length} cliente(s) detectados · {upload.sucursal}</span>
+          <span className="text-ink-muted">· {clientes.length} cliente(s) detectados · </span>
+          {/* La sucursal de la carga NO es un dato decorativo: es la que decide
+              QUIÉN VE a estos clientes en Seguimiento. Si al subir el Excel se
+              eligió la equivocada, esa gente le queda invisible a quien
+              corresponde, y hasta ahora la única salida era tocar la base. */}
+          <button
+            type="button"
+            onClick={() => cambiarSucursal(upload)}
+            title="Corregir a qué sucursal pertenece esta carga (decide quién ve a estos clientes)"
+            className="rounded px-1.5 py-0.5 text-ink-muted underline decoration-dotted underline-offset-2 transition-colors hover:bg-gray-100 hover:text-accent-dark"
+          >
+            {upload.sucursal}
+          </button>
           <div className="mt-1 flex flex-wrap gap-1.5">
             <Badge tono={esVentas ? "morado" : "azul"} className="cursor-default">
               {LABEL_ORIGEN[upload.origen]}

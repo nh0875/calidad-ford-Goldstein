@@ -31,6 +31,9 @@ export const ACCIONES = {
   FIDELIZACION_CLIENTE_EXCLUIDO: "FIDELIZACION_CLIENTE_EXCLUIDO",
   FIDELIZACION_CLIENTE_REINCORPORADO: "FIDELIZACION_CLIENTE_REINCORPORADO",
   FIDELIZACION_CLIENTE_ELIMINADO: "FIDELIZACION_CLIENTE_ELIMINADO",
+  // Corregir la sucursal de una carga cambia QUIEN VE a esos clientes: se
+  // audita porque es una decision de visibilidad, no un retoque cosmetico.
+  FIDELIZACION_CARGA_SUCURSAL: "FIDELIZACION_CARGA_SUCURSAL",
   // Refuerzo de encuesta: se le mando a cada vendedor su lista por correo
   REFUERZO_NOTIFICADO: "REFUERZO_NOTIFICADO",
   CAMPANA_ENVIADA: "CAMPANA_ENVIADA",

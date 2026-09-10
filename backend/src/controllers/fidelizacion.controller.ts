@@ -1,10 +1,11 @@
 import { Request, Response } from "express";
-import { EstadoFidelizacion, OrigenFidelizacion, Prisma, TipoUpload, UploadStatus } from "@prisma/client";
+import { EstadoFidelizacion, OrigenFidelizacion, Prisma, TipoAlias, TipoUpload, UploadStatus } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { env } from "../config/env";
 import { marca } from "../config/marca";
 import { abrirWorkbook, derivarPeriodoDeNombreHoja, hojaVacia } from "../services/excel.service";
+import { aplicarAlias, cargarAliasMap, parsearSucursal } from "../services/normalizacion.service";
 import {
   encolarEnviosFidelizacion,
   motivoBloqueoEnvio,
@@ -202,6 +203,62 @@ export async function subirFidelizacion(req: Request, res: Response) {
 }
 
 // ---------- GET /api/fidelizacion (listado de cargas) ----------
+
+// ---------- PATCH /api/fidelizacion/cargas/:id ----------
+//
+// Corregir a qué sucursal pertenece una carga.
+//
+// POR QUÉ HACE FALTA. La sucursal de la carga es la que decide QUIÉN VE a esos
+// clientes (ver sucursalDeCargaFidelizacion). Si al subir el Excel se eligió la
+// equivocada —o no se eligió ninguna y quedó el valor por defecto—, esos
+// clientes desaparecen para la gente de la sucursal a la que en realidad
+// pertenecen, y hasta ahora la única salida era tocar la base a mano.
+//
+// Se corrige la CARGA y también la sucursal guardada en cada cliente, para que
+// las dos digan lo mismo: si quedaran distintas, el cliente se vería en una
+// pantalla y se listaría bajo otra provincia en la de al lado.
+
+const cargaSucursalSchema = z.object({
+  sucursal: z.string().trim().min(1, "Indicá la sucursal."),
+});
+
+export async function editarSucursalCargaFidelizacion(req: Request, res: Response) {
+  const parsed = cargaSucursalSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Datos inválidos." });
+  }
+
+  const upload = await prisma.excelUpload.findFirst({
+    where: { id: req.params.id, tipo: TipoUpload.FIDELIZACION, eliminadoEn: null },
+    select: { id: true, sucursal: true, filename: true },
+  });
+  if (!upload) return res.status(404).json({ message: "No se encontró esa carga." });
+
+  // La MISMA normalización que usan los casos y los usuarios (Title Case + los
+  // alias que haya cargado el admin). Sin esto, escribir "san juan" a mano acá
+  // no coincidiría con el "San Juan" de un usuario y el problema seguiría igual,
+  // solo que más difícil de ver.
+  const alias = await cargarAliasMap(TipoAlias.SUCURSAL);
+  const norm = aplicarAlias(parsearSucursal(parsed.data.sucursal), alias);
+  const sucursal = norm.nombre || parsed.data.sucursal.trim();
+
+  const [, clientes] = await prisma.$transaction([
+    prisma.excelUpload.update({ where: { id: upload.id }, data: { sucursal } }),
+    prisma.clienteFidelizacion.updateMany({ where: { uploadId: upload.id }, data: { sucursal } }),
+  ]);
+
+  await auditar(req, {
+    accion: ACCIONES.FIDELIZACION_CARGA_SUCURSAL,
+    entidad: "ExcelUpload",
+    entidadId: upload.id,
+    detalles: { archivo: upload.filename, antes: upload.sucursal, ahora: sucursal, clientes: clientes.count },
+  });
+
+  res.json({
+    message: `Listo: la carga "${upload.filename}" ahora es de ${sucursal} (${clientes.count} cliente(s)).`,
+    sucursal,
+  });
+}
 
 export async function listarFidelizacion(_req: Request, res: Response) {
   const uploads = await prisma.excelUpload.findMany({
