@@ -2,6 +2,32 @@ import { AreaTrabajo, AreaUsuario, EstadoTareaRefuerzo, Prisma } from "@prisma/c
 import { prisma } from "../config/prisma";
 import { claveNormalizada } from "./normalizacion.service";
 
+/**
+ * La sucursal que decide QUIÉN VE a un cliente de fidelización.
+ *
+ * Es la de la CARGA, no la del cliente, y la diferencia importa. Un Excel que
+ * sube San Juan es trabajo de San Juan aunque adentro venga un cliente que vive
+ * en Mendoza: quien lo tiene que llamar es San Juan, que fue quien lo atendió.
+ *
+ * Los casos de Contacto Posterior ya funcionan así desde siempre —Caso.sucursal
+ * se llena con la sucursal de la carga, una sola para todo el archivo— y
+ * fidelización era el único que se comportaba distinto: guardaba
+ * `provincia_de_la_fila ?? sucursal_de_la_carga`, o sea que la provincia del
+ * cliente le ganaba a la de la carga.
+ *
+ * Eso hacía que un usuario de San Juan no viera clientes cargados por San Juan
+ * (porque el cliente figuraba como de otra provincia, o como "General", que es lo
+ * que el sistema escribe cuando nadie completa el campo al subir el archivo).
+ *
+ * Se lee del upload y NO se migran los datos: así queda arreglado también para
+ * todo lo que ya está cargado, sin tocar una sola fila.
+ */
+export function sucursalDeCargaFidelizacion(
+  cliente: { sucursal: string | null; upload?: { sucursal: string } | null }
+): string | null {
+  return cliente.upload?.sucursal ?? cliente.sucursal;
+}
+
 /** ¿Coincide la provincia del usuario con la del caso? Insensible a mayúsculas
  * y ACENTOS ("Córdoba" == "Cordoba"). Un usuario sin sucursal (null) atiende todas. */
 export function mismaProvincia(sucursalUsuario: string | null, sucursalCaso: string | null | undefined): boolean {

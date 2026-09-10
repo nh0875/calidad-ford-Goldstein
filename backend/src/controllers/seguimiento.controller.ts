@@ -3,7 +3,7 @@ import { EstadoContacto, EstadoFidelizacion, MessageDirection, Prisma } from "@p
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { areaPermitida, parsearAreaQuery, puedeAcceder, whereArea } from "../services/area.service";
-import { mismaProvincia } from "../services/refuerzo.service";
+import { mismaProvincia, sucursalDeCargaFidelizacion } from "../services/refuerzo.service";
 import { etiquetaFidelizacion } from "../services/fidelizacion.service";
 import { estadoVentana, telefonoContactable, ultimoEntranteAt } from "../services/seguimiento.service";
 import { sendTemplateMessage, sendTextMessage, WhatsappApiError } from "../services/whatsapp.service";
@@ -61,6 +61,11 @@ const SELECT_FIDEL_ENVIO = {
   modelo: true,
   asesor: true,
   sucursal: true,
+  // La sucursal de la CARGA: es la que decide quién puede abrir esta
+  // conversación. Sin esto, la puerta de atrás (escribir la URL a mano) quedaría
+  // comparando contra la provincia del cliente y no contra la de la carga, o sea
+  // con una regla distinta a la de la lista.
+  upload: { select: { sucursal: true } },
   telefono: true,
   telefonosNorm: true,
   numeroServicio: true,
@@ -125,8 +130,11 @@ function autorizadoSobreCaso(req: Request, caso: { area: any; sucursal: string |
 }
 
 /** Fidelización: NO se restringe por área, solo por PROVINCIA (decisión de negocio). */
-function autorizadoSobreFidelizacion(req: Request, cliente: { sucursal: string | null }): boolean {
-  return mismaProvincia(req.usuario!.sucursal, cliente.sucursal);
+function autorizadoSobreFidelizacion(
+  req: Request,
+  cliente: { sucursal: string | null; upload?: { sucursal: string } | null }
+): boolean {
+  return mismaProvincia(req.usuario!.sucursal, sucursalDeCargaFidelizacion(cliente));
 }
 
 /** El mejor teléfono (E.164) para escribirle a un cliente de fidelización. */
@@ -275,6 +283,8 @@ export async function listarConversaciones(req: Request, res: Response) {
         modelo: true,
         asesor: true,
         sucursal: true,
+        // La sucursal de la CARGA es la que decide quién lo ve.
+        upload: { select: { sucursal: true } },
         numeroServicio: true,
         estado: true,
         quiereAsesorEn: true,
@@ -298,7 +308,7 @@ export async function listarConversaciones(req: Request, res: Response) {
   const casosVis = soloFidelizacion(req)
     ? []
     : casos.filter((c) => mismaProvincia(req.usuario!.sucursal, c.sucursal));
-  const fidelsVis = fidels.filter((f) => mismaProvincia(req.usuario!.sucursal, f.sucursal));
+  const fidelsVis = fidels.filter((f) => mismaProvincia(req.usuario!.sucursal, sucursalDeCargaFidelizacion(f)));
 
   // Opciones para los desplegables: todo lo que el usuario PUEDE ver, ANTES de
   // aplicar el filtro pedido (así no se vacían al elegir uno).
@@ -350,7 +360,12 @@ export async function listarConversaciones(req: Request, res: Response) {
       nombre: f.nombre,
       modelo: f.modelo ?? "",
       asesor: f.asesor ?? "",
-      sucursal: f.sucursal,
+      // La de la CARGA, la misma con la que se decidió mostrarlo. Si acá fuera la
+      // del cliente, el desplegable de provincia y la lista dirían cosas
+      // distintas: un cliente cargado por San Juan que vive en Mendoza se vería
+      // (bien) pero figuraría bajo Mendoza, y al filtrar por San Juan
+      // desaparecería. Se muestra por dónde se trabaja, no por dónde vive.
+      sucursal: sucursalDeCargaFidelizacion(f) ?? "",
       area: "FIDELIZACION",
       estadoContacto: estadoFidelParaMostrar(um?.direction, f.estado),
       tieneRqrAbierto: false,
@@ -394,13 +409,15 @@ export async function contarPendientesSeguimiento(req: Request, res: Response) {
     // Fidelización que pidió turno con asesor (sin restricción de área).
     prisma.clienteFidelizacion.findMany({
       where: { eliminadoEn: null, quiereAsesorEn: { not: null } },
-      select: { sucursal: true },
+      select: { sucursal: true, upload: { select: { sucursal: true } } },
     }),
   ]);
   const pendCasos = soloFidelizacion(req)
     ? 0
     : analisis.filter((a) => mismaProvincia(req.usuario!.sucursal, a.caso?.sucursal)).length;
-  const pendFidel = fidelAsesor.filter((f) => mismaProvincia(req.usuario!.sucursal, f.sucursal)).length;
+  const pendFidel = fidelAsesor.filter((f) =>
+    mismaProvincia(req.usuario!.sucursal, sucursalDeCargaFidelizacion(f))
+  ).length;
   res.json({ pendientes: pendCasos + pendFidel });
 }
 

@@ -15,7 +15,7 @@ import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { encolarEnvioFidelizacionCliente, motivoBloqueoEnvio } from "../services/fidelizacion.service";
-import { mismaProvincia } from "../services/refuerzo.service";
+import { mismaProvincia, sucursalDeCargaFidelizacion } from "../services/refuerzo.service";
 import { normalizarTelefonoARFlexible } from "../services/telefono.service";
 
 const MAX_POR_PAGINA = 100;
@@ -40,7 +40,9 @@ const SELECT_CLIENTE = {
   quiereAsesorEn: true,
   createdAt: true,
   updatedAt: true,
-  upload: { select: { id: true, filename: true, periodo: true } },
+  // sucursal del UPLOAD: es la que decide quién ve a este cliente (ver
+  // sucursalDeCargaFidelizacion). La del cliente queda para mostrar.
+  upload: { select: { id: true, filename: true, periodo: true, sucursal: true } },
   _count: { select: { mensajes: true } },
 } satisfies Prisma.ClienteFidelizacionSelect;
 
@@ -122,16 +124,23 @@ export async function listarClientesFidelizacion(req: Request, res: Response) {
   });
 
   const visibles = todos
-    .filter((c) => mismaProvincia(req.usuario!.sucursal, c.sucursal))
-    .filter((c) => !sucursal || mismaProvincia(sucursal, c.sucursal));
+    .filter((c) => mismaProvincia(req.usuario!.sucursal, sucursalDeCargaFidelizacion(c)))
+    .filter((c) => !sucursal || mismaProvincia(sucursal, sucursalDeCargaFidelizacion(c)));
 
   const desde = (pagina - 1) * porPagina;
   const pagina_ = visibles.slice(desde, desde + porPagina);
 
   // Opciones de los desplegables: lo que el usuario PUEDE ver, antes de filtrar.
-  const visiblesSinFiltroProvincia = todos.filter((c) => mismaProvincia(req.usuario!.sucursal, c.sucursal));
+  const visiblesSinFiltroProvincia = todos.filter((c) =>
+    mismaProvincia(req.usuario!.sucursal, sucursalDeCargaFidelizacion(c))
+  );
+  // Las provincias que se ofrecen son las de la CARGA, las mismas con las que se
+  // filtra. Si acá salieran las del cliente, el desplegable ofrecería opciones
+  // que al elegirlas no devuelven nada.
   const provincias = [
-    ...new Set(visiblesSinFiltroProvincia.map((c) => c.sucursal).filter(Boolean) as string[]),
+    ...new Set(
+      visiblesSinFiltroProvincia.map((c) => sucursalDeCargaFidelizacion(c)).filter(Boolean) as string[]
+    ),
   ].sort();
   const cargas = [
     ...new Map(
@@ -281,7 +290,7 @@ export async function editarClienteFidelizacion(req: Request, res: Response) {
     select: { id: true, nombre: true, sucursal: true, telefono: true },
   });
   if (!actual) return res.status(404).json({ message: "No se encontró el cliente." });
-  if (!mismaProvincia(req.usuario!.sucursal, actual.sucursal)) {
+  if (!mismaProvincia(req.usuario!.sucursal, sucursalDeCargaFidelizacion(actual))) {
     return res.status(403).json({ message: "Ese cliente es de otra provincia." });
   }
 
@@ -346,7 +355,7 @@ export async function excluirClienteFidelizacion(req: Request, res: Response) {
     select: { id: true, nombre: true, sucursal: true, estado: true, telefonosNorm: true },
   });
   if (!actual) return res.status(404).json({ message: "No se encontró el cliente." });
-  if (!mismaProvincia(req.usuario!.sucursal, actual.sucursal)) {
+  if (!mismaProvincia(req.usuario!.sucursal, sucursalDeCargaFidelizacion(actual))) {
     return res.status(403).json({ message: "Ese cliente es de otra provincia." });
   }
 
@@ -401,7 +410,7 @@ export async function enviarClienteFidelizacion(req: Request, res: Response) {
     select: { id: true, nombre: true, sucursal: true, estado: true, telefonosNorm: true },
   });
   if (!actual) return res.status(404).json({ message: "No se encontró el cliente." });
-  if (!mismaProvincia(req.usuario!.sucursal, actual.sucursal)) {
+  if (!mismaProvincia(req.usuario!.sucursal, sucursalDeCargaFidelizacion(actual))) {
     return res.status(403).json({ message: "Ese cliente es de otra provincia." });
   }
 
