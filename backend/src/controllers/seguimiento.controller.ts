@@ -394,7 +394,45 @@ export async function listarConversaciones(req: Request, res: Response) {
       return tb - ta; // más reciente primero (como WhatsApp)
     });
 
-  res.json({ data: lista, total: lista.length, opciones: { provincias, areas } });
+  // ---------------------------------------------------------------------------
+  //  Por qué la lista quedó vacía
+  // ---------------------------------------------------------------------------
+  //  Una pantalla que dice "no hay conversaciones" y nada más es indistinguible
+  //  de una rota. Ya nos pasó: un usuario de Fidelización no veía nada y hubo que
+  //  salir a leer código para descartar, de a una, cinco causas posibles.
+  //
+  //  Cuando no hay NADA que mostrar se manda el conteo de lo que quedó afuera y
+  //  por qué, y la pantalla lo explica. No se manda nunca con datos: es
+  //  información para entender el vacío, no para la operación de todos los días.
+  const diagnostico =
+    lista.length === 0
+      ? {
+          // Lo que existe en la base con al menos un mensaje, ANTES de filtrar.
+          casosConMensajes: casos.length,
+          clientesFidelizacionConMensajes: fidels.length,
+          // Lo que se cayó en cada corte, en orden.
+          ocultosPorRol: soloFidelizacion(req) ? casos.length : 0,
+          ocultosPorProvincia:
+            casos.length - casosVis.length - (soloFidelizacion(req) ? casos.length : 0) +
+            (fidels.length - fidelsVis.length),
+          tuProvincia: req.usuario!.sucursal,
+          // Las provincias que TIENE lo que quedó afuera: es el dato que dice si
+          // el problema es una provincia mal cargada.
+          provinciasDeLoOculto: [
+            ...new Set(
+              [
+                ...casos.filter((c) => !mismaProvincia(req.usuario!.sucursal, c.sucursal)).map((c) => c.sucursal),
+                ...fidels
+                  .filter((f) => !mismaProvincia(req.usuario!.sucursal, sucursalDeCargaFidelizacion(f)))
+                  .map((f) => sucursalDeCargaFidelizacion(f) || "(sin provincia)"),
+              ].filter(Boolean) as string[]
+            ),
+          ].sort(),
+          hayFiltrosPuestos: Boolean(termino || areaFiltro || sucursalPedida || filtro !== "todas" || rangoFechas),
+        }
+      : null;
+
+  res.json({ data: lista, total: lista.length, opciones: { provincias, areas }, diagnostico });
 }
 
 // ---------- GET /api/seguimiento/pendientes (badge del menú, por provincia) ----------

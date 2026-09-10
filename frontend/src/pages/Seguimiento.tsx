@@ -109,6 +109,20 @@ interface Hilo {
   puedeReenviarPlantilla: boolean;
 }
 
+/**
+ * Por qué la lista quedó vacía. El backend lo manda SOLO cuando no hay nada que
+ * mostrar: es para entender el vacío, no un dato de todos los días.
+ */
+interface Diagnostico {
+  casosConMensajes: number;
+  clientesFidelizacionConMensajes: number;
+  ocultosPorRol: number;
+  ocultosPorProvincia: number;
+  tuProvincia: string | null;
+  provinciasDeLoOculto: string[];
+  hayFiltrosPuestos: boolean;
+}
+
 const FILTROS: Array<{ valor: "todas" | "revision" | "rojos" | "asesor"; etiqueta: string }> = [
   { valor: "todas", etiqueta: "Todas" },
   { valor: "revision", etiqueta: "Para revisar" },
@@ -185,6 +199,56 @@ function fechaHoraLarga(iso: string): string {
   });
 }
 
+/**
+ * El vacío, explicado.
+ *
+ * Antes decía "No hay conversaciones para mostrar" y punto, que es
+ * indistinguible de una pantalla rota. Cuando efectivamente hay conversaciones
+ * pero quedaron afuera por la provincia o por el rol, decirlo ahorra el rato de
+ * ir a revisar por qué —o peor, de dar por hecho que el sistema anda mal—.
+ */
+function VacioExplicado({ diagnostico }: { diagnostico: Diagnostico | null }) {
+  if (!diagnostico) {
+    return <p className="p-4 text-center text-xs text-ink-muted">No hay conversaciones para mostrar.</p>;
+  }
+
+  const { ocultosPorProvincia, ocultosPorRol, tuProvincia, provinciasDeLoOculto, hayFiltrosPuestos } = diagnostico;
+  const total = diagnostico.casosConMensajes + diagnostico.clientesFidelizacionConMensajes;
+
+  return (
+    <div className="space-y-2 p-4 text-center text-xs text-ink-muted">
+      <p className="font-medium text-ink">No hay conversaciones para mostrar.</p>
+
+      {total === 0 && (
+        <p>
+          Todavía no se mandó ningún WhatsApp: esta pantalla lista las conversaciones que ya empezaron.
+        </p>
+      )}
+
+      {ocultosPorProvincia > 0 && (
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-left text-amber-900">
+          Hay <strong>{ocultosPorProvincia}</strong> conversación(es) que no ves porque son de otra provincia.
+          {tuProvincia ? <> Tu usuario está asignado a <strong>{tuProvincia}</strong>.</> : null}
+          {provinciasDeLoOculto.length > 0 && (
+            <> Esas conversaciones figuran en: {provinciasDeLoOculto.join(", ")}.</>
+          )}
+        </p>
+      )}
+
+      {ocultosPorRol > 0 && (
+        <p>
+          Además hay {ocultosPorRol} caso(s) de Contacto Posterior que tu usuario de Fidelización no ve, que es
+          como está pensado el puesto.
+        </p>
+      )}
+
+      {hayFiltrosPuestos && total > 0 && ocultosPorProvincia === 0 && (
+        <p>Probá sacando los filtros de arriba: puede que ninguno coincida.</p>
+      )}
+    </div>
+  );
+}
+
 // Estado de un mensaje NUESTRO (saliente): tilde según el acuse de Meta.
 function EstadoMensaje({ status }: { status: string }) {
   const s = status.toLowerCase();
@@ -209,6 +273,7 @@ export default function Seguimiento() {
   const [params, setParams] = useSearchParams();
 
   const [conversaciones, setConversaciones] = useState<Conversacion[]>([]);
+  const [diagnostico, setDiagnostico] = useState<Diagnostico | null>(null);
   const [filtro, setFiltro] = useState<"todas" | "revision" | "rojos" | "asesor">("todas");
   const [q, setQ] = useState("");
   // Filtros extra (solo aparecen para quien ve más de una provincia / área)
@@ -239,8 +304,13 @@ export default function Seguimiento() {
         (provincia ? `&sucursal=${encodeURIComponent(provincia)}` : "") +
         (desde ? `&fechaDesde=${desde}` : "") +
         (hasta ? `&fechaHasta=${hasta}` : "");
-      const r = await apiGet<{ data: Conversacion[]; opciones?: { provincias: string[]; areas: string[] } }>(url);
+      const r = await apiGet<{
+        data: Conversacion[];
+        opciones?: { provincias: string[]; areas: string[] };
+        diagnostico?: Diagnostico | null;
+      }>(url);
       setConversaciones(r.data);
+      setDiagnostico(r.diagnostico ?? null);
       if (r.opciones) setOpciones(r.opciones);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos cargar las conversaciones.");
@@ -482,7 +552,7 @@ export default function Seguimiento() {
 
         <div className="flex-1 overflow-y-auto">
           {conversaciones.length === 0 ? (
-            <p className="p-4 text-center text-xs text-ink-muted">No hay conversaciones para mostrar.</p>
+            <VacioExplicado diagnostico={diagnostico} />
           ) : (
             conversaciones.map((c) => {
               const um = c.ultimoMensaje;
