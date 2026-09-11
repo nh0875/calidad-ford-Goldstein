@@ -993,16 +993,19 @@ export function startWorkers() {
     // "no respondió" sesenta veces por día.
     async (job) => {
       if (job.name === "circuito-contacto") {
-        const { encolados, omitidos } = await encolarSegundosContactos();
+        const { encolados, omitidos, yaEnCola } = await encolarSegundosContactos();
         const aLlamar = await marcarLlamadasPendientes();
-        if (encolados || omitidos || aLlamar) {
-          console.log(
-            `[circuito] ${encolados} segundo(s) contacto(s) encolado(s)` +
-              (omitidos ? `, ${omitidos} omitido(s)` : "") +
-              `, ${aLlamar} caso(s) pasaron a LLAMADA_PENDIENTE`
-          );
-        }
-        return { encolados, omitidos, aLlamar };
+        // SIEMPRE se loguea, aunque no haya hecho nada. Antes solo hablaba cuando
+        // encontraba algo, y entonces "el cron no corrió" y "el cron corrió y no
+        // había nadie" se veían iguales desde afuera: exactamente la duda que
+        // hubo que responder leyendo todo el código.
+        console.log(
+          `[circuito] ${encolados} segundo(s) contacto(s) encolado(s)` +
+            (omitidos ? `, ${omitidos} con error al encolar` : "") +
+            (yaEnCola ? `, ${yaEnCola} ya tenían envío en Redis` : "") +
+            `, ${aLlamar} caso(s) pasaron a LLAMADA_PENDIENTE`
+        );
+        return { encolados, omitidos, yaEnCola, aLlamar };
       }
 
       const marcados = await marcarNoRespondidos();

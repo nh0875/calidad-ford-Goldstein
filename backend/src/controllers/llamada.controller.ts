@@ -17,13 +17,16 @@
 
 import { Request, Response } from "express";
 import { z } from "zod";
-import { AreaTrabajo, EstadoContacto } from "@prisma/client";
+import { AreaTrabajo, EstadoContacto, MessageDirection, Semaforo, TipoAviso } from "@prisma/client";
 import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { puedeVer } from "../services/area.service";
 import { encolarSegundoContactoManual } from "../services/segundo-contacto.service";
-import { ITEMS_POSVENTA, itemsPreguntados } from "../config/posventa-vw";
+import { ITEM_QUE_DEFINE_EL_CASO, ITEMS_POSVENTA, itemsPreguntados } from "../config/posventa-vw";
 import { PuntajeItem, guardarPuntajes } from "../services/encuesta-posventa.service";
+import { aplicarReglaRQR, derivarDeEstrellas } from "../services/sentiment.service";
+import { crearRqrAutomatico } from "../services/rqr.service";
+import { crearAviso } from "../services/aviso.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { parseConvId } from "./seguimiento.controller";
 
@@ -129,25 +132,33 @@ export async function cargarResultadoLlamada(req: Request, res: Response) {
 
   const { puntajes, estrellasGeneral, comentario } = parseo.data;
 
-  // Posventa se mide por ítems y Ventas con una nota sola. No es un capricho de
-  // pantalla: es la misma diferencia que ya existe en la encuesta por WhatsApp, y
-  // guardar Ventas por ítems ensuciaría los promedios por ítem con datos que no
-  // corresponden a ese circuito.
-  if (caso.area === AreaTrabajo.POSVENTA && puntajes?.length) {
-    // Se descarta lo que no se le preguntó a este caso. La pantalla ya no
-    // muestra el lavado cuando al auto no lo lavaron, pero el pedido se puede
-    // armar a mano, y un puntaje de lavado inventado entra al promedio del área
-    // sin que después nadie lo pueda distinguir de uno real.
-    const preguntados = itemsPreguntados(caso.tuvoLavado);
-    const aGuardar: PuntajeItem[] = puntajes
-      .filter((p) => preguntados.includes(p.item as PuntajeItem["item"]))
-      .map((p) => ({
-        item: p.item as PuntajeItem["item"],
-        estrellas: p.estrellas,
-        comentario: p.comentario ?? null,
-      }));
-    await guardarPuntajes(caso.id, aGuardar);
-  }
+  // Lo que se le preguntó a ESTE caso. En Posventa se mide por ítems y en Ventas
+  // con una nota sola: no es un capricho de pantalla, es la misma diferencia que
+  // ya existe en la encuesta por WhatsApp, y guardar Ventas por ítems ensuciaría
+  // los promedios por ítem con datos de otro circuito.
+  //
+  // Del filtro por `preguntados` sale lo que no corresponde: la pantalla ya no
+  // muestra el lavado cuando al auto no lo lavaron, pero el pedido se puede
+  // armar a mano, y un puntaje de lavado inventado entra al promedio del área
+  // sin que después nadie lo pueda distinguir de uno real.
+  const preguntados = itemsPreguntados(caso.tuvoLavado);
+  const porItems: PuntajeItem[] =
+    caso.area === AreaTrabajo.POSVENTA && puntajes?.length
+      ? puntajes
+          .filter((p) => preguntados.includes(p.item as PuntajeItem["item"]))
+          .map((p) => ({
+            item: p.item as PuntajeItem["item"],
+            estrellas: p.estrellas,
+            comentario: p.comentario ?? null,
+          }))
+      : [];
+
+  // LA NOTA QUE DEFINE EL CASO. En Posventa es el ítem GENERAL, igual que en la
+  // encuesta por WhatsApp; en Ventas es la única nota que se carga. Se acepta
+  // estrellasGeneral como respaldo porque la pantalla cae a una sola estrella
+  // cuando todavía no cargó el catálogo de ítems de la marca.
+  const general = porItems.find((p) => p.item === ITEM_QUE_DEFINE_EL_CASO)?.estrellas ?? null;
+  const estrellas = general ?? estrellasGeneral ?? null;
 
   await prisma.caso.update({
     where: { id: caso.id },
@@ -157,9 +168,6 @@ export async function cargarResultadoLlamada(req: Request, res: Response) {
       // hablar y ahora sí, dejar el "no atendió" viejo colgado haría pensar que
       // el caso sigue trabado.
       llamadaMotivo: null,
-      ...(estrellasGeneral !== undefined && estrellasGeneral !== null
-        ? { estrellas: estrellasGeneral }
-        : {}),
     },
   });
 
@@ -167,15 +175,111 @@ export async function cargarResultadoLlamada(req: Request, res: Response) {
   // conversación junto con todo lo demás, en vez de esconderse en un campo que
   // nadie mira: para quien lee el caso, lo que el cliente dijo por teléfono vale
   // igual que lo que escribió por WhatsApp.
+  //
+  // Nace YA ANALIZADO: lo que dijo por teléfono lo acaba de cargar una persona,
+  // no hay nada que la IA tenga que interpretar. Sin esto quedaba esperando y se
+  // colaba en el próximo análisis del caso, mezclado con el mensaje nuevo del
+  // cliente.
+  let mensajeId: string | null = null;
   if (comentario?.trim()) {
-    await prisma.whatsappMessage.create({
+    const mensaje = await prisma.whatsappMessage.create({
       data: {
         casoId: caso.id,
-        direction: "ENTRANTE",
+        direction: MessageDirection.ENTRANTE,
         content: `[Llamada telefónica] ${comentario.trim()}`,
         status: "recibido",
+        analizadoEn: new Date(),
       },
     });
+    mensajeId = mensaje.id;
+  }
+
+  // LA CALIFICACIÓN TIENE QUE VALER LO MISMO QUE UNA POR WHATSAPP.
+  //
+  // Un caso rescatado por teléfono cuenta igual que uno que contestó solo: si la
+  // nota no queda registrada como una clasificación del caso, ese cliente no
+  // aparece en ningún tablero, no entra en el promedio del asesor y no abre RQR
+  // aunque haya dicho que la pasó mal. Por eso se crea el mismo análisis que
+  // crea la IA, marcado como que lo cargó una persona.
+  if (estrellas !== null) {
+    const derivado = derivarDeEstrellas(estrellas);
+    const requiereRQR = aplicarReglaRQR(derivado.semaforo, derivado.severidad);
+    const resumen = comentario?.trim()
+      ? `Respuesta por teléfono (${estrellas} de 5): ${comentario.trim()}`
+      : `Respuesta por teléfono: ${estrellas} de 5.`;
+
+    // Invariante del sistema: un solo análisis principal por caso. El que estaba
+    // (si lo había) pasa a seguimiento, o el caso contaría dos veces en los
+    // reportes.
+    const [, analisis] = await prisma.$transaction([
+      prisma.sentimentAnalysis.updateMany({
+        where: { casoId: caso.id, esSeguimiento: false },
+        data: { esSeguimiento: true },
+      }),
+      prisma.sentimentAnalysis.create({
+        data: {
+          casoId: caso.id,
+          messageId: mensajeId,
+          semaforo: derivado.semaforo,
+          severidad: derivado.severidad,
+          estrellas,
+          // La cargó una persona que habló con el cliente: no hay nada que
+          // interpretar ni margen de error de lectura.
+          confianza: 1,
+          resumenIA: resumen,
+          respuestaCrudaIA: {
+            motivo: "llamada-telefonica",
+            estrellas,
+            comentario: comentario?.trim() ?? null,
+            cargadoPor: req.usuario!.email,
+          },
+          requiereRQR,
+          esLlamada: true,
+          esSeguimiento: false,
+          mensajesAnalizados: mensajeId ? 1 : 0,
+        },
+      }),
+    ]);
+
+    if (porItems.length) await guardarPuntajes(caso.id, porItems, analisis.id);
+
+    if (requiereRQR) {
+      const completo = await prisma.caso.findUnique({ where: { id: caso.id } });
+      if (completo) {
+        const { rqr, accion } = await crearRqrAutomatico({
+          caso: completo,
+          analisis,
+          textoCliente: comentario?.trim() || resumen,
+        });
+        await crearAviso({
+          tipo: TipoAviso.RQR_ABIERTO,
+          area: caso.area,
+          casoId: caso.id,
+          rqrId: rqr.id,
+          titulo:
+            accion === "creado"
+              ? `${rqr.numeroRQR} — se abrió un RQR de ${completo.nombrePropietario} (por teléfono)`
+              : `${rqr.numeroRQR} — ${completo.nombrePropietario} volvió a reclamar (por teléfono)`,
+          detalle: `${resumen} (asesor: ${completo.asesor}, sucursal: ${completo.sucursal})`,
+        });
+      }
+    } else if (derivado.semaforo === Semaforo.AMARILLO) {
+      // Amarillo sin RQR no existe hoy en Volkswagen (todo lo que no es 5 abre
+      // RQR), pero el aviso queda por si mañana cambia la regla: un amarillo que
+      // no abre reclamo igual conviene que alguien lo mire.
+      await crearAviso({
+        tipo: TipoAviso.AMARILLO_SIN_RQR,
+        area: caso.area,
+        casoId: caso.id,
+        titulo: `${caso.nombrePropietario} quedó en amarillo (respondió por teléfono)`,
+        detalle: resumen,
+      });
+    }
+  } else if (porItems.length) {
+    // Cargó ítems sueltos pero no la satisfacción general: se guardan igual, sin
+    // análisis. Perder lo que el cliente dijo por no tener la nota que manda
+    // sería peor que guardarlo incompleto.
+    await guardarPuntajes(caso.id, porItems);
   }
 
   auditar(req, {

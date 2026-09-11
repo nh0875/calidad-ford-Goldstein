@@ -57,8 +57,17 @@ function haceHoras(horas: number): Date {
  * Es DETERMINÍSTICO por caso: si la barrida corre dos veces seguidas (o dos
  * procesos la corren a la vez), BullMQ descarta el segundo add en vez de encolar
  * dos envíos. Es el candado más barato contra el mensaje duplicado.
+ *
+ * EL PRECIO DE ESE CANDADO: BullMQ descarta un add cuyo jobId ya existe, sin
+ * avisar y sin error, y los envíos fallidos se conservan a propósito
+ * (removeOnFail: false). O sea que un caso cuyo segundo contacto falló una vez
+ * queda con ese job en Redis para siempre, y todas las barridas siguientes lo
+ * saltean calladas. Por eso la barrida ahora mira si ya hay un job y lo informa
+ * (ver encolarSegundosContactos) en vez de dar por hecho que encoló.
+ *
+ * Se exporta para que el diagnóstico pueda mirar el mismo job desde afuera.
  */
-function jobIdSegundoContacto(casoId: string): string {
+export function jobIdSegundoContacto(casoId: string): string {
   return `segundo-contacto:${casoId}`;
 }
 
@@ -66,6 +75,13 @@ export interface ResultadoBarrida {
   encolados: number;
   /** Casos que cumplían el tiempo pero no se pudieron encolar. */
   omitidos: number;
+  /**
+   * Casos que cumplían el tiempo pero YA tenían un envío en Redis (normalmente
+   * uno que falló y quedó guardado). No se encolan de nuevo —el candado contra
+   * el mensaje duplicado está antes que la comodidad— pero se cuentan, porque si
+   * no un caso se queda esperando para siempre sin que nada lo diga.
+   */
+  yaEnCola: number;
 }
 
 /**
@@ -78,7 +94,7 @@ export interface ResultadoBarrida {
  * esperando y sale solo cuando abre la ventana; no hay que hacer nada especial.
  */
 export async function encolarSegundosContactos(): Promise<ResultadoBarrida> {
-  if (!marca.segundoContacto) return { encolados: 0, omitidos: 0 };
+  if (!marca.segundoContacto) return { encolados: 0, omitidos: 0, yaEnCola: 0 };
 
   const corte = haceHoras(HORAS_PARA_SEGUNDO_CONTACTO);
 
@@ -106,8 +122,23 @@ export async function encolarSegundosContactos(): Promise<ResultadoBarrida> {
 
   let encolados = 0;
   let omitidos = 0;
+  let yaEnCola = 0;
   for (const caso of candidatos) {
     try {
+      // ¿Ya hay algo en Redis para este caso? Un add con un jobId existente se
+      // descarta sin error, así que sin esto la barrida contaría como encolado
+      // algo que nunca va a salir.
+      const previo = await whatsappQueue.getJob(jobIdSegundoContacto(caso.id));
+      if (previo) {
+        const estado = await previo.getState().catch(() => "desconocido");
+        yaEnCola++;
+        console.warn(
+          `[segundo-contacto] el caso ${caso.id} ya tiene un envío en Redis (${estado}): no se vuelve a encolar.` +
+            (previo.failedReason ? ` Falló con: ${previo.failedReason.slice(0, 200)}` : "")
+        );
+        continue;
+      }
+
       await whatsappQueue.add(
         "segundo-contacto",
         { casoId: caso.id, plantilla: "segundo_contacto" as const },
@@ -129,7 +160,7 @@ export async function encolarSegundosContactos(): Promise<ResultadoBarrida> {
     }
   }
 
-  return { encolados, omitidos };
+  return { encolados, omitidos, yaEnCola };
 }
 
 /**
