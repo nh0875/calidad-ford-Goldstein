@@ -114,6 +114,8 @@ interface Hilo {
  * mostrar: es para entender el vacío, no un dato de todos los días.
  */
 interface Diagnostico {
+  /** Clientes de fidelización de su provincia que todavía no recibieron nada. */
+  fidelSinMensajes: number;
   casosConMensajes: number;
   clientesFidelizacionConMensajes: number;
   ocultosPorRol: number;
@@ -212,16 +214,29 @@ function VacioExplicado({ diagnostico }: { diagnostico: Diagnostico | null }) {
     return <p className="p-4 text-center text-xs text-ink-muted">No hay conversaciones para mostrar.</p>;
   }
 
-  const { ocultosPorProvincia, ocultosPorRol, tuProvincia, provinciasDeLoOculto, hayFiltrosPuestos } = diagnostico;
+  const { ocultosPorProvincia, ocultosPorRol, tuProvincia, provinciasDeLoOculto, hayFiltrosPuestos, fidelSinMensajes } =
+    diagnostico;
   const total = diagnostico.casosConMensajes + diagnostico.clientesFidelizacionConMensajes;
 
   return (
     <div className="space-y-2 p-4 text-center text-xs text-ink-muted">
       <p className="font-medium text-ink">No hay conversaciones para mostrar.</p>
 
-      {total === 0 && (
+      {total === 0 && fidelSinMensajes === 0 && (
         <p>
           Todavía no se mandó ningún WhatsApp: esta pantalla lista las conversaciones que ya empezaron.
+        </p>
+      )}
+
+      {/* El vacío más común, y el único con una acción clara: los clientes están
+          cargados pero nadie les mandó nada todavía. Se ven en "Clientes de
+          fidelización" y no acá, porque esto lista CONVERSACIONES y sin mensaje
+          no hay conversación. */}
+      {fidelSinMensajes > 0 && (
+        <p className="rounded-md bg-accent-light/40 px-3 py-2 text-left text-accent-dark">
+          Tenés <strong>{fidelSinMensajes}</strong> cliente(s) de fidelización en tu provincia a los que{" "}
+          <strong>todavía no se les mandó el recordatorio</strong>. Acá solo aparecen las conversaciones ya
+          empezadas: el envío se hace desde la pantalla de Fidelización.
         </p>
       )}
 

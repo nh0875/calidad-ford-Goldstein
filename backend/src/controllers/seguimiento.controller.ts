@@ -404,9 +404,29 @@ export async function listarConversaciones(req: Request, res: Response) {
   //  Cuando no hay NADA que mostrar se manda el conteo de lo que quedó afuera y
   //  por qué, y la pantalla lo explica. No se manda nunca con datos: es
   //  información para entender el vacío, no para la operación de todos los días.
+  // Los clientes de fidelizacion de SU provincia a los que todavia no se les
+  // mando nada. Es la respuesta accionable al vacio mas comun: la persona los ve
+  // en "Clientes de fidelizacion" y no los encuentra en Seguimiento, porque
+  // Seguimiento lista CONVERSACIONES y sin mensaje no hay conversacion.
+  //
+  // Se consulta solo con la lista vacia: es una consulta extra y no tiene sentido
+  // pagarla cuando ya hay algo que mostrar.
+  let fidelSinMensajes = 0;
+  if (lista.length === 0) {
+    const sinMensajes = await prisma.clienteFidelizacion.findMany({
+      where: { eliminadoEn: null, mensajes: { none: {} } },
+      select: { sucursal: true, upload: { select: { sucursal: true } } },
+    });
+    fidelSinMensajes = sinMensajes.filter((c) =>
+      mismaProvincia(req.usuario!.sucursal, sucursalDeCargaFidelizacion(c))
+    ).length;
+  }
+
   const diagnostico =
     lista.length === 0
       ? {
+          // Cargados y visibles para esta persona, pero SIN ningun mensaje todavia.
+          fidelSinMensajes,
           // Lo que existe en la base con al menos un mensaje, ANTES de filtrar.
           casosConMensajes: casos.length,
           clientesFidelizacionConMensajes: fidels.length,
