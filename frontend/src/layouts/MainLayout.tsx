@@ -94,7 +94,11 @@ export default function MainLayout() {
   const [pendientesRevision, setPendientesRevision] = useState(0);
   useEffect(() => {
     // El puesto de Fidelizacion no trabaja refuerzos: pedirlo seria un 403 seguro.
-    if (!esSoloFidelizacion(usuario)) {
+    // Y en las marcas sin la pantalla de refuerzos de Ford el endpoint no existe:
+    // pedirlo daba un 404 en cada cambio de pantalla. Nadie lo veía porque el
+    // catch lo tapa, pero llenaba la consola de errores rojos falsos y el día que
+    // hubo un error de verdad hubo que buscarlo entre ellos.
+    if (!esSoloFidelizacion(usuario) && getMarca().modulos.refuerzo) {
       apiGet<{ pendientes: number }>("/api/refuerzos/mias/pendientes")
         .then((r) => setPendientesRefuerzo(r.pendientes))
         .catch(() => {});
