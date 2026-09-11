@@ -2,6 +2,7 @@ import { AreaTrabajo, EstadoContacto, EstadoRQR, Prisma, Semaforo } from "@prism
 import { porcentaje as porcentajeDe, promedio as promedioDe } from "./redondeo";
 import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
+import { FALTA_CLASIFICAR } from "./causa-raiz.service";
 import { claveAgrupacionAsesor, claveNormalizada } from "./normalizacion.service";
 
 // Filtros comunes a todos los reportes (misma semántica en sentimiento,
@@ -342,7 +343,7 @@ export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
       },
       semaforo: r.sentimentAnalysis?.semaforo ?? null,
       severidad: r.sentimentAnalysis?.severidad ?? null,
-      categoria: r.causaRaiz ?? "(sin categoría)",
+      categoria: r.causaRaiz ?? FALTA_CLASIFICAR,
       rqr: { id: r.id, numeroRQR: r.numeroRQR, estado: r.estado },
       resumenIA: r.sentimentAnalysis?.resumenIA ?? null,
       textoCliente: r.sentimentAnalysis?.message?.content ?? null,
@@ -353,7 +354,7 @@ export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
       caso: a.caso,
       semaforo: a.semaforo,
       severidad: a.severidad,
-      categoria: a.categoriaCausaRaiz ?? "(sin categoría)",
+      categoria: a.categoriaCausaRaiz ?? FALTA_CLASIFICAR,
       rqr: null,
       resumenIA: a.resumenIA,
       textoCliente: a.message?.content ?? null,
@@ -383,7 +384,7 @@ export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
 
   const cierrePorCategoriaMapa = new Map<string, number[]>();
   for (const r of cerrados) {
-    const k = r.causaRaiz ?? "(sin categoría)";
+    const k = r.causaRaiz ?? FALTA_CLASIFICAR;
     cierrePorCategoriaMapa.set(k, [...(cierrePorCategoriaMapa.get(k) ?? []), diasCierre(r)]);
   }
 

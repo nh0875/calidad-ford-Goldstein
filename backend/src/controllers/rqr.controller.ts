@@ -200,7 +200,10 @@ const createSchema = z
     areaAfectada: z.string().trim().min(1).optional(),
     asesor: z.string().trim().min(1, "Indicá el asesor del reclamo."),
     descripcionReclamo: z.string().trim().min(1, "La descripción del reclamo no puede estar vacía."),
-    causaRaiz: zCausaRaiz.optional(),
+    // OBLIGATORIA. Un RQR sin causa raíz no suma a ningún lado: el reporte de
+    // causas es lo único que dice dónde está fallando el proceso, y un RQR que
+    // no entra ahí es trabajo de Calidad que no se convierte en información.
+    causaRaiz: zCausaRaiz,
     tratamientoBitacora: z.string().trim().min(1).optional(),
     observaciones: z.string().trim().min(1).optional(),
     area: z.nativeEnum(AreaTrabajo).optional(), // solo para RQR manual sin caso
@@ -417,7 +420,11 @@ const patchSchema = z
     tratamientoDadoPor: z.string().trim().nullable().optional(),
     observaciones: z.string().trim().nullable().optional(),
     responsableCierre: z.string().trim().nullable().optional(),
-    causaRaiz: z.string().trim().nullable().optional(),
+    // Se puede CAMBIAR pero no vaciar, y solo por una de la lista de la marca.
+    // Antes acá entraba cualquier texto —ni siquiera se validaba contra la
+    // lista—, así que un pedido armado a mano dejaba en la base una causa que
+    // ninguna pantalla podía mostrar ni filtrar.
+    causaRaiz: zCausaRaiz.optional(),
     // Campos de Volkswagen: se pueden corregir después de creado el RQR.
     ...camposVW,
     // Se completa sola al pasar a CERRADO, pero Calidad puede corregirla
@@ -476,6 +483,22 @@ export async function patchRqr(req: Request, res: Response) {
 
   const seCierra = cambios.estado === EstadoRQR.CERRADO && existente.estado !== EstadoRQR.CERRADO;
   const seReabre = cambios.estado && cambios.estado !== EstadoRQR.CERRADO && existente.fechaCierre;
+
+  // NO SE CIERRA UN RQR SIN CAUSA RAÍZ.
+  //
+  // Es el único momento en que el sistema puede exigirla de verdad. Al abrirlo
+  // puede no saberse todavía —la IA no siempre la identifica, y los que quedaron
+  // de la lista anterior arrancan vacíos—, pero cerrar es decir "esto ya lo
+  // entendimos y lo resolvimos". Un RQR cerrado sin causa no entra en el reporte
+  // de causas, y ese reporte es lo único que dice dónde está fallando el
+  // proceso: se pierde justo el trabajo que más costó.
+  if (seCierra && !(cambios.causaRaiz ?? existente.causaRaiz)) {
+    return res.status(400).json({
+      message:
+        "Antes de cerrar el RQR hay que indicar la causa raíz. Es lo que después aparece en el reporte de causas: " +
+        "sin eso, el reclamo queda resuelto pero no deja ninguna enseñanza.",
+    });
+  }
 
   // Prioridad: fecha indicada a mano > automática al cerrar > limpieza al reabrir
   const fechaCierre =

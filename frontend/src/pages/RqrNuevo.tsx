@@ -146,7 +146,7 @@ export default function RqrNuevo() {
         areaAfectada: areaAfectada.trim() || undefined,
         asesor: asesor.trim(),
         descripcionReclamo: descripcion.trim(),
-        causaRaiz: causaRaiz || undefined,
+        causaRaiz,
         tratamientoBitacora: bitacora.trim() || undefined,
         observaciones: observaciones.trim() || undefined,
         // Campos de Volkswagen: se mandan solo si la marca los usa.
@@ -465,9 +465,13 @@ export default function RqrNuevo() {
           </Campo>
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <Campo etiqueta="Causa raíz (si ya se conoce)">
+          {/* Obligatoria: un RQR sin causa raíz no entra en el reporte de
+              causas, que es lo único que dice dónde está fallando el proceso. */}
+          <Campo etiqueta="Causa raíz *">
             <Select value={causaRaiz} onChange={(e) => setCausaRaiz(e.target.value)}>
-              <option value="">(sin categoría)</option>
+              <option value="" disabled>
+                Elegí la causa raíz…
+              </option>
               {causasRaiz().map((c) => (
                 <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>
               ))}
@@ -494,6 +498,7 @@ export default function RqrNuevo() {
             guardando ||
             !descripcion.trim() ||
             !asesor.trim() ||
+            !causaRaiz ||
             // Hay que saber de quién es: un caso, un nombre a mano, o la
             // constancia de que el cliente es anónimo.
             (!sinCaso && !anonimo && !casoElegido) ||

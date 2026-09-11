@@ -17,6 +17,20 @@ import { z } from "zod";
 import { causasRaizValidas, esCausaRaizValida, marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 
+/**
+ * Cómo se nombra un RQR al que todavía le falta la causa raíz.
+ *
+ * NO es una categoría: es una tarea pendiente. Se llama así y no "(sin
+ * categoría)" porque eso último se leía como una clasificación más —una opción
+ * válida donde dejar el RQR— y un RQR sin causa no sirve para nada: no entra en
+ * el reporte de causas, que es lo único que dice dónde está fallando el proceso.
+ *
+ * Aparece solo en dos lugares: los RQR viejos que quedaron sin causa al cambiar
+ * la lista, y los que abre la IA cuando no logra identificarla. En los dos casos
+ * hay que completarla a mano, y el sistema no deja cerrarlos así.
+ */
+export const FALTA_CLASIFICAR = "Falta clasificar";
+
 /** Causa raíz válida en ESTA marca. */
 export const zCausaRaiz = z
   .string()

@@ -164,7 +164,11 @@ export default function RqrDetalle() {
         solucionPropuesta: form.solucionPropuesta || null,
         tratamientoDadoPor: form.tratamientoDadoPor || null,
         tratamientoDadoPor2: form.tratamientoDadoPor2 || null,
-        causaRaiz: form.causaRaiz || null,
+        // Si todavía no tiene causa NO se manda el campo, en vez de mandar null.
+        // Así un RQR viejo sin clasificar se puede seguir trabajando —agregar
+        // bitácora, escribir la solución— sin que el guardado se trabe. La causa
+        // se exige donde importa: no se puede CERRAR sin ella.
+        ...(form.causaRaiz ? { causaRaiz: form.causaRaiz } : {}),
         estado: form.estado,
         responsableCierre: form.responsableCierre || null,
         observaciones: form.observaciones || null,
@@ -353,9 +357,15 @@ export default function RqrDetalle() {
       <Seccion titulo="2. Descripción del reclamo">
         <Textarea value={form.descripcionReclamo} onChange={(e) => set("descripcionReclamo")(e.target.value)} rows={6} />
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
-          <Campo etiqueta="Causa raíz (sugerida por IA, editable)">
+          {/* La opción vacía queda DESHABILITADA, no borrada: los RQR que
+              todavía no tienen causa —los viejos, y los que la IA no pudo
+              identificar— tienen que poder mostrarse como lo que son. Se puede
+              ver, no elegir: una vez puesta, no se vuelve a sacar. */}
+          <Campo etiqueta="Causa raíz *" hint="Obligatoria: sin esto el RQR no se puede cerrar.">
             <Select value={form.causaRaiz} onChange={(e) => set("causaRaiz")(e.target.value)}>
-              <option value="">(sin categoría)</option>
+              <option value="" disabled>
+                Falta clasificar — elegí una
+              </option>
               {causasRaiz().map((c) => (
                 <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>
               ))}

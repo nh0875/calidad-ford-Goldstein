@@ -350,7 +350,8 @@ TONO / PALABRAS QUE BAJAN EL PUNTAJE:
 - Queja de precio percibido como excesivo o injusto → 3 o menos; con indignación → 1. (La categoría de causa raíz elegila de la lista de abajo: no inventes una de precio si no está.)
 - Que digan que NO le hicieron algo que correspondía y le cobraron igual → 1 o 2.
 
-CATEGORÍAS DE CAUSA RAÍZ (usá exclusivamente una de estas, o null si son 5 estrellas o no hay causa identificable):
+CATEGORÍAS DE CAUSA RAÍZ (usá exclusivamente una de estas):
+Con 5 estrellas va null. Si NO son 5 estrellas, elegí SIEMPRE una: ese caso abre un reclamo formal, y un reclamo sin causa no entra en el reporte de causas y queda esperando a que alguien lo complete a mano. Si dudás entre dos, quedate con la que mejor explique por qué el cliente quedó disconforme.
 ${bloqueCausasRaiz()}
 
 LAS 5 ESTRELLAS SE GANAN, NO SE REGALAN (regla dura, la más importante):

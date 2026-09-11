@@ -20,8 +20,27 @@ export function causasRaiz(): Array<{ codigo: string; etiqueta: string }> {
  * hay que reclasificarlo" y esconderlo detrás de un nombre lindo haría que nadie
  * lo note.
  */
+/**
+ * Cómo se nombra un RQR al que todavía le falta la causa. Tiene que decir lo
+ * mismo que FALTA_CLASIFICAR en el backend (causa-raiz.service.ts), que es con
+ * lo que se rotula ese grupo en los reportes.
+ */
+export const FALTA_CLASIFICAR = "Falta clasificar";
+
+/**
+ * Cómo se llama en pantalla.
+ *
+ * Sin causa NO se dice "(sin categoría)": eso se leía como una clasificación
+ * más, un lugar válido donde dejar el RQR. Es una tarea pendiente, y el nombre
+ * lo tiene que decir.
+ *
+ * Si el código no está en la lista de la marca se muestra tal cual. Pasa con lo
+ * que quedó de una lista anterior: es feo a propósito, porque significa "esto
+ * hay que reclasificarlo" y esconderlo detrás de un nombre lindo haría que nadie
+ * lo note.
+ */
 export function etiquetaCategoria(categoria: string | null): string {
-  if (!categoria) return "(sin categoría)";
+  if (!categoria) return FALTA_CLASIFICAR;
   return causasRaiz().find((c) => c.codigo === categoria)?.etiqueta ?? categoria;
 }
 

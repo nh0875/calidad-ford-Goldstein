@@ -11,6 +11,7 @@ import {
 import { marca } from "../config/marca";
 import { porcentaje, promedio } from "./redondeo";
 import { prisma } from "../config/prisma";
+import { FALTA_CLASIFICAR } from "./causa-raiz.service";
 import { FiltrosReporte, reporteCausaRaiz, reporteSentimiento } from "./reporte.service";
 import { nombreClienteRqr } from "./rqr.service";
 
@@ -135,7 +136,8 @@ export async function dashboardResumen(f: FiltrosReporte) {
 
   // Top 3 categorías de causa raíz del período
   const topCategorias = causaRaiz.porCategoria
-    .filter((c) => c.categoria !== "(sin categoría)")
+    // Los que están sin clasificar no son una causa: no pueden entrar al top 3.
+    .filter((c) => c.categoria !== FALTA_CLASIFICAR)
     .slice(0, 3);
 
   // RQR abiertos AHORA (estado, no período) — los manuales sin caso solo
