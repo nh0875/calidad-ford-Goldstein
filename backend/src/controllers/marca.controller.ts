@@ -42,6 +42,10 @@ export function infoMarca(_req: Request, res: Response) {
     // vez de dejar escribirlas: un typo rompe en silencio la visibilidad por
     // provincia y no deja ninguna pista de por qué.
     sucursales: marca.sucursales,
+    // Las causas raíz con las que se clasifica un RQR. Van por marca porque cada
+    // área de Calidad nombra distinto por qué falló algo; la pantalla arma el
+    // desplegable con esto y no con una copia suya, que se desincronizaría.
+    causasRaiz: marca.causasRaiz.map((c) => ({ codigo: c.codigo, etiqueta: c.etiqueta })),
     // Los 5 ítems que se miden en Posventa. Van acá para que la pantalla arme
     // sus columnas y sus etiquetas sin una consulta aparte: son fijos y chicos.
     posventa: marca.posventaPorItems

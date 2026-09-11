@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { reporteCausaRaiz, reporteSentimiento } from "../services/reporte.service";
 import { excelReporteCausaRaiz, excelReporteSentimiento } from "../services/exportacion.service";
-import { CATEGORIAS_CAUSA_RAIZ } from "../services/sentiment.service";
+import { zCausaRaiz } from "../services/causa-raiz.service";
 import { areaEfectiva, parsearAreaQuery, provinciaPermitida } from "../services/area.service";
 
 // Filtros compartidos por ambas pantallas de reportes (misma semántica que /api/casos)
@@ -24,7 +24,7 @@ const filtrosBaseSchema = z.object({
 });
 
 const filtrosCausaRaizSchema = filtrosBaseSchema.extend({
-  categoria: z.enum(CATEGORIAS_CAUSA_RAIZ).optional(),
+  categoria: zCausaRaiz.optional(),
   incluirAmarilloSinRqr: z
     .enum(["true", "false"])
     .default("true")

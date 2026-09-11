@@ -35,6 +35,12 @@ export interface InfoMarca {
    * silencio la visibilidad por provincia.
    */
   sucursales: string[];
+  /**
+   * Las causas raíz con las que se clasifica un RQR, en el orden en que se
+   * ofrecen. Lista CERRADA y propia de cada marca: cada área de Calidad nombra
+   * distinto por qué falló algo.
+   */
+  causasRaiz: Array<{ codigo: string; etiqueta: string }>;
   // Los 5 ítems que mide la encuesta de Posventa. Vacío en las marcas que no la usan.
   posventa: {
     porItems: boolean;
@@ -64,6 +70,9 @@ const POR_DEFECTO: InfoMarca = {
   estrellasSinRqr: null,
   modulos: { fidelizacion: true, refuerzo: true, encuestaFabrica: false, desempenoPosventa: false, segundoContacto: false },
   sucursales: ["Mendoza", "San Juan"],
+  // Vacío a propósito: hasta que responda /api/marca no se sabe cuáles son, y
+  // mostrar las de la otra marca sería peor que no mostrar ninguna.
+  causasRaiz: [],
   posventa: { porItems: false, items: [] },
   rqr: { porSubareas: false, clienteAnonimo: false, areas: [], origenes: [] },
 };

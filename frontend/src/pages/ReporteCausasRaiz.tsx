@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, ChevronRight, FileDown, SearchX } from "lucide-react";
 import { apiDescargarArchivo, apiGet } from "../lib/api";
-import { CATEGORIAS_CAUSA_RAIZ, etiquetaCategoria, fechaCorta } from "../lib/categorias";
+import { causasRaiz, etiquetaCategoria, fechaCorta } from "../lib/categorias";
 import { BarraFiltros, CampoFiltro, FILTROS_VACIOS, FiltroSelect, FiltrosComunes, filtrosAQuery, useOpcionesCasos } from "../components/filtros";
 import { getUsuario, veTodasLasAreas } from "../lib/auth";
 import { BarrasCategorias } from "../components/graficos";
@@ -109,7 +109,7 @@ export default function ReporteCausasRaiz() {
         <FiltroSelect
           etiqueta="Categoría"
           valor={categoria}
-          opciones={CATEGORIAS_CAUSA_RAIZ.map((c) => ({ value: c, label: etiquetaCategoria(c) }))}
+          opciones={causasRaiz().map((c) => ({ value: c.codigo, label: c.etiqueta }))}
           onChange={setCategoria}
         />
         <CampoFiltro etiqueta="Amarillos sin RQR">

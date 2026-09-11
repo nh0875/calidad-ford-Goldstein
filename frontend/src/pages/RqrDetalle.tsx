@@ -7,7 +7,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, FileDown, Trash2 } from "lucide-react";
 import { apiDelete, apiDescargarArchivo, apiGet, apiPatchJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
-import { CATEGORIAS_CAUSA_RAIZ, etiquetaCategoria, fechaCorta } from "../lib/categorias";
+import { causasRaiz, fechaCorta } from "../lib/categorias";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge, PuntoSemaforo } from "../components/ui/Badge";
@@ -356,8 +356,8 @@ export default function RqrDetalle() {
           <Campo etiqueta="Causa raíz (sugerida por IA, editable)">
             <Select value={form.causaRaiz} onChange={(e) => set("causaRaiz")(e.target.value)}>
               <option value="">(sin categoría)</option>
-              {CATEGORIAS_CAUSA_RAIZ.map((c) => (
-                <option key={c} value={c}>{etiquetaCategoria(c)}</option>
+              {causasRaiz().map((c) => (
+                <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>
               ))}
             </Select>
           </Campo>

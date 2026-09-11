@@ -2,7 +2,8 @@ import { Request, Response } from "express";
 import { AreaTrabajo, Prisma, Semaforo, TipoAviso } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
-import { CATEGORIAS_CAUSA_RAIZ, derivarDeEstrellas } from "../services/sentiment.service";
+import { derivarDeEstrellas } from "../services/sentiment.service";
+import { zCausaRaiz } from "../services/causa-raiz.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { apagarAvisosCaso } from "../services/aviso.service";
 import { parsearAreaQuery, puedeAcceder, puedeVer, whereArea, whereVisible } from "../services/area.service";
@@ -36,7 +37,7 @@ const listQuerySchema = z.object({
   semaforo: z.nativeEnum(Semaforo).optional(),
   sucursal: z.string().trim().min(1).optional(),
   asesor: z.string().trim().min(1).optional(),
-  categoriaCausaRaiz: z.enum(CATEGORIAS_CAUSA_RAIZ).optional(),
+  categoriaCausaRaiz: zCausaRaiz.optional(),
   requiereRevisionManual: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
@@ -160,7 +161,7 @@ const patchSchema = z
     // y la severidad se recalculan a partir del puntaje: son la misma opinión
     // en dos escalas y no pueden quedar contradiciéndose.
     estrellas: z.number().int().min(1).max(5).nullable().optional(),
-    categoriaCausaRaiz: z.enum(CATEGORIAS_CAUSA_RAIZ).nullable().optional(),
+    categoriaCausaRaiz: zCausaRaiz.nullable().optional(),
     requiereRevisionManual: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {

@@ -12,6 +12,23 @@
 // defecto FORD, así que el sistema que YA está en producción no cambia en nada
 // aunque no se defina la variable.
 
+/**
+ * Una causa raíz de las que se pueden elegir en un RQR.
+ *
+ * El `codigo` es lo que se guarda en la base y NO se toca nunca más: si se
+ * renombra, los RQR viejos quedan apuntando a algo que ya no existe y su causa
+ * desaparece de los reportes sin que nadie se entere. Lo que se puede cambiar
+ * libremente es la `etiqueta` (lo que se ve) y la `descripcion` (lo que lee la
+ * IA para elegir).
+ */
+export interface CausaRaiz {
+  codigo: string;
+  /** Cómo se llama en pantalla y en los reportes. */
+  etiqueta: string;
+  /** Cuándo corresponde. Es lo que va al prompt: cuanto más concreta, mejor elige. */
+  descripcion: string;
+}
+
 /** Cómo se mide la satisfacción del cliente en esta marca. */
 export type EscalaSatisfaccion =
   | "SEMAFORO" // Ford: VERDE / AMARILLO / ROJO + severidad
@@ -118,6 +135,21 @@ export interface PerfilMarca {
    * los usuarios es "todas las provincias").
    */
   sucursales: string[];
+  /**
+   * Las causas raíz con las que se clasifica un RQR.
+   *
+   * SON DISTINTAS EN CADA MARCA a propósito. Cada área de Calidad tiene su
+   * propia forma de nombrar por qué falló algo, y una lista genérica termina
+   * siendo un cajón de "OTRO": si la categoría no es la que usan para hablar
+   * entre ellos, nadie la elige bien y el reporte de causas no sirve para
+   * decidir nada.
+   *
+   * Es una lista CERRADA: la eligen de un desplegable y el servidor rechaza
+   * cualquier otra cosa. Sin eso, un valor escrito a mano (o quedado de una
+   * lista anterior) aparece en los reportes como una categoría más y no se puede
+   * ni filtrar ni corregir desde ninguna pantalla.
+   */
+  causasRaiz: CausaRaiz[];
   /** Color institucional para los títulos de los documentos que se exportan. */
   colorDocumento: string;
   /** Nombre del archivo del logo dentro de backend/assets (ver su README). */
@@ -139,6 +171,17 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     avisoPosibleDuplicado: false,
     segundoContacto: false,
     sucursales: ["Mendoza", "San Juan"],
+    // Las de siempre en Ford. No se tocan: los RQR ya cargados están
+    // clasificados con estas, y cambiarlas les borraría la causa a todos.
+    causasRaiz: [
+      { codigo: "DEMORA_SERVICIO", etiqueta: "Demora en el servicio", descripcion: "demoras en la entrega o en los turnos." },
+      { codigo: "MAL_TRATO_PERSONAL", etiqueta: "Mal trato del personal", descripcion: "trato descortés o mala atención de una persona." },
+      { codigo: "PRECIO_FACTURACION", etiqueta: "Precio / facturación", descripcion: "quejas por precios, cobros o facturación." },
+      { codigo: "CALIDAD_TRABAJO", etiqueta: "Calidad del trabajo", descripcion: "el trabajo quedó mal hecho o el problema persiste." },
+      { codigo: "FALTA_COMUNICACION", etiqueta: "Falta de comunicación", descripcion: "no avisaron, no informaron el estado, no devolvieron llamados." },
+      { codigo: "REPUESTOS", etiqueta: "Repuestos", descripcion: "faltantes o demoras de repuestos." },
+      { codigo: "OTRO", etiqueta: "Otro", descripcion: "causa identificable que no encaja en las anteriores." },
+    ],
     colorDocumento: "003478", // azul Ford
     logoArchivo: "logo-ford.png",
   },
@@ -159,6 +202,28 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     avisoPosibleDuplicado: true,
     segundoContacto: true,
     sucursales: ["Mendoza", "San Juan"],
+    // La lista que pidió Calidad de Volkswagen en septiembre de 2026, en su
+    // orden. Reemplaza por completo a la anterior (demora, mal trato, precio,
+    // calidad, comunicación, repuestos, otro): los RQR que estaban clasificados
+    // con aquellas quedaron SIN causa, para que se vuelvan a clasificar con
+    // estas (ver services/causa-raiz.service.ts).
+    //
+    // Mira el PROCESO, no el síntoma: casi todas nombran algo que la agencia
+    // hizo o dejó de hacer. La última es la excepción y es importante que esté:
+    // el cliente quedó disconforme pero no hubo desvío, y sin esa opción esos
+    // casos se clasificaban como una falla que no existió.
+    causasRaiz: [
+      { codigo: "FALTA_INFORMACION", etiqueta: "Falta de información", descripcion: "no se le informó algo que correspondía: no le avisaron, no le explicaron, no le devolvieron el llamado." },
+      { codigo: "INFORMACION_INCORRECTA", etiqueta: "Información incorrecta", descripcion: "se le dijo algo que no era: un precio, un plazo o un diagnóstico que después no coincidió." },
+      { codigo: "ASESORAMIENTO_INSUFICIENTE", etiqueta: "Asesoramiento insuficiente", descripcion: "se lo atendió sin asesorarlo: no le explicaron qué le convenía, ni las opciones, ni por qué." },
+      { codigo: "FALTA_SEGUIMIENTO", etiqueta: "Falta de seguimiento", descripcion: "nadie retomó el caso después: quedó sin respuesta, sin cierre o tuvo que insistir él." },
+      { codigo: "FALTA_COORDINACION", etiqueta: "Falta de coordinación", descripcion: "las áreas o las personas no se pusieron de acuerdo: lo mandaron de un lado a otro, repitió el trámite, nadie se hizo cargo." },
+      { codigo: "DEMORA_INCUMPLIMIENTO_PLAZO", etiqueta: "Demora / incumplimiento de plazo", descripcion: "tardó más de lo prometido o no se cumplió la fecha acordada." },
+      { codigo: "ERROR_ADMINISTRATIVO", etiqueta: "Error administrativo / documental", descripcion: "un error de papeles, de facturación, de carga de datos o de documentación." },
+      { codigo: "ERROR_TECNICO", etiqueta: "Error técnico / reparación no efectiva", descripcion: "el trabajo quedó mal hecho, el problema volvió o no se resolvió." },
+      { codigo: "TRATO_INADECUADO", etiqueta: "Trato inadecuado", descripcion: "trato descortés, desatento o poco respetuoso de una persona." },
+      { codigo: "EXPECTATIVA_NO_ALINEADA", etiqueta: "Expectativa no alineada / sin desvío", descripcion: "el cliente esperaba otra cosa pero la agencia no hizo nada mal: no hubo desvío del servicio. Usala solo cuando de verdad no haya una falla atribuible." },
+    ],
     colorDocumento: "001E50", // azul Volkswagen
     logoArchivo: "logo-volkswagen.png",
   },
@@ -245,4 +310,19 @@ export function sucursalCanonica(raw: unknown): string | null {
 export function mensajeSucursalInvalida(): string {
   const validas = sucursalesValidas();
   return `La sucursal tiene que ser una de: ${validas.slice(0, -1).join(", ")} o ${validas.at(-1)}.`;
+}
+
+/** Los códigos de causa raíz válidos en esta marca. */
+export function causasRaizValidas(): string[] {
+  return marca.causasRaiz.map((c) => c.codigo);
+}
+
+/** ¿Este código es una causa raíz de esta marca? */
+export function esCausaRaizValida(valor: unknown): boolean {
+  return typeof valor === "string" && causasRaizValidas().includes(valor);
+}
+
+/** Cómo se llama en pantalla, o el código crudo si es de una lista anterior. */
+export function etiquetaCausaRaiz(codigo: string): string {
+  return marca.causasRaiz.find((c) => c.codigo === codigo)?.etiqueta ?? codigo;
 }

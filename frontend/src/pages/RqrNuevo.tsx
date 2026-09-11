@@ -8,7 +8,7 @@ import { ArrowLeft } from "lucide-react";
 import { apiGet, apiPostJson } from "../lib/api";
 import { getUsuario, veTodasLasAreas } from "../lib/auth";
 import { AREAS, etiquetaArea } from "../lib/area";
-import { CATEGORIAS_CAUSA_RAIZ, etiquetaCategoria, fechaCorta } from "../lib/categorias";
+import { causasRaiz, fechaCorta } from "../lib/categorias";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
@@ -468,8 +468,8 @@ export default function RqrNuevo() {
           <Campo etiqueta="Causa raíz (si ya se conoce)">
             <Select value={causaRaiz} onChange={(e) => setCausaRaiz(e.target.value)}>
               <option value="">(sin categoría)</option>
-              {CATEGORIAS_CAUSA_RAIZ.map((c) => (
-                <option key={c} value={c}>{etiquetaCategoria(c)}</option>
+              {causasRaiz().map((c) => (
+                <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>
               ))}
             </Select>
           </Campo>

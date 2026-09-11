@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Semaforo, Severidad } from "@prisma/client";
 import { z } from "zod";
 import { env } from "../config/env";
-import { marca, usaEstrellas } from "../config/marca";
+import { esCausaRaizValida, marca, usaEstrellas } from "../config/marca";
 import { tieneEmojiNegativo } from "./analisis.service";
 import { ITEMS_POSVENTA, ItemPosventa } from "../config/posventa-vw";
 import { PuntajeItem } from "./encuesta-posventa.service";
@@ -67,17 +67,33 @@ export function aplicarBarreraDeConfianza(
   };
 }
 
-// ---------- Categorías de causa raíz (lista cerrada, editable acá) ----------
+// ---------- Categorías de causa raíz ----------
+//
+// Ya no viven acá: cada marca tiene la suya, en config/marca.ts. Calidad de Ford
+// y Calidad de Volkswagen nombran distinto por qué falló algo, y con una lista
+// común la mitad de los RQR terminaban en "OTRO".
+//
+// Lo que queda acá es cómo se le explican a la IA.
 
-export const CATEGORIAS_CAUSA_RAIZ = [
-  "DEMORA_SERVICIO",
-  "MAL_TRATO_PERSONAL",
-  "PRECIO_FACTURACION",
-  "CALIDAD_TRABAJO",
-  "FALTA_COMUNICACION",
-  "REPUESTOS",
-  "OTRO",
-] as const;
+/** El bloque de causas raíz del prompt, armado desde el perfil de la marca. */
+function bloqueCausasRaiz(): string {
+  return marca.causasRaiz.map((c) => `- ${c.codigo}: ${c.descripcion}`).join("\n");
+}
+
+/**
+ * La causa que devolvió el modelo, si existe en esta marca; si no, null.
+ *
+ * No se rechaza la respuesta entera por una causa que no reconocemos: el
+ * semáforo, el resumen y la severidad son útiles igual, y tirarlos dejaría el
+ * caso sin clasificar por un detalle que una persona corrige en dos clics. Un
+ * null acá es "la IA no la supo ubicar", que es exactamente lo que pasó.
+ */
+function causaRaizReconocida(valor: string | null | undefined): string | null {
+  if (!valor) return null;
+  if (esCausaRaizValida(valor)) return valor;
+  console.warn(`[analisis-sentimiento] la IA devolvió una causa raíz que no existe en ${marca.nombre}: "${valor}"`);
+  return null;
+}
 
 // ---------- Tipos ----------
 
@@ -171,7 +187,9 @@ const esquemaRespuestaIA = z.object({
   // Puede venir null/omitido: el parseo aplica un default defensivo por semáforo
   severidad: z.enum(["LEVE", "MODERADA", "GRAVE"]).nullish(),
   confianza: z.number().min(0).max(1),
-  categoriaCausaRaiz: z.enum(CATEGORIAS_CAUSA_RAIZ).nullable(),
+  // String suelto y no una lista cerrada: si el modelo inventa una categoría, se
+  // descarta ESA (ver causaRaizReconocida) en vez de perder todo el análisis.
+  categoriaCausaRaiz: z.string().nullable(),
   resumen: z.string().min(1),
   // El modelo ya no decide el RQR (lo hace la regla en código); si lo manda igual, se ignora
   requiereRQR: z.boolean().nullish(),
@@ -188,7 +206,7 @@ const esquemaRespuestaEstrellas = z.object({
   // forzar uno ensucia el promedio de la marca.
   estrellas: z.number().int().min(1).max(5).nullable(),
   confianza: z.number().min(0).max(1),
-  categoriaCausaRaiz: z.enum(CATEGORIAS_CAUSA_RAIZ).nullable(),
+  categoriaCausaRaiz: z.string().nullable(),
   resumen: z.string().min(1),
   requiereRevisionManual: z.boolean(),
 });
@@ -204,7 +222,8 @@ function parsearJsonSeguro(texto: string): RespuestaIA | null {
   try {
     const objeto = JSON.parse(limpio);
     const validado = esquemaRespuestaIA.safeParse(objeto);
-    return validado.success ? validado.data : null;
+    if (!validado.success) return null;
+    return { ...validado.data, categoriaCausaRaiz: causaRaizReconocida(validado.data.categoriaCausaRaiz) };
   } catch {
     return null;
   }
@@ -217,7 +236,8 @@ function parsearJsonEstrellas(texto: string): RespuestaEstrellasIA | null {
     .replace(/\s*```$/, "");
   try {
     const validado = esquemaRespuestaEstrellas.safeParse(JSON.parse(limpio));
-    return validado.success ? validado.data : null;
+    if (!validado.success) return null;
+    return { ...validado.data, categoriaCausaRaiz: causaRaizReconocida(validado.data.categoriaCausaRaiz) };
   } catch {
     return null;
   }
@@ -259,13 +279,7 @@ TONO / PALABRAS QUE ELEVAN LA GRAVEDAD:
 - Que digan que NO le hicieron algo que correspondía y le cobraron igual → ROJO o AMARILLO GRAVE (según el enojo).
 
 CATEGORÍAS DE CAUSA RAÍZ (usá exclusivamente una de estas, o null si el semáforo es VERDE o no hay causa identificable):
-- DEMORA_SERVICIO: demoras en la entrega o en los turnos.
-- MAL_TRATO_PERSONAL: trato descortés o mala atención de una persona.
-- PRECIO_FACTURACION: quejas por precios, cobros o facturación.
-- CALIDAD_TRABAJO: el trabajo quedó mal hecho o el problema persiste.
-- FALTA_COMUNICACION: no avisaron, no informaron el estado, no devolvieron llamados.
-- REPUESTOS: faltantes o demoras de repuestos.
-- OTRO: causa identificable que no encaja en las anteriores.
+${bloqueCausasRaiz()}
 
 SEVERIDAD DEL MALESTAR (campo "severidad": "LEVE" | "MODERADA" | "GRAVE"):
 Mide qué tan grave es el malestar del cliente, INDEPENDIENTE de qué tan seguro estás de la clasificación. Es distinto de "confianza": podés estar 100% seguro de que algo es AMARILLO y aun así ser un malestar LEVE.
@@ -333,17 +347,11 @@ Cuando el mensaje mezcla cosas buenas y malas, GANA LA QUEJA. Calidad busca dete
 
 TONO / PALABRAS QUE BAJAN EL PUNTAJE:
 - "un robo", "una estafa", "un abuso", "una vergüenza", "me estafaron", "chorros" → indignación → 1.
-- Queja de precio percibido como excesivo o injusto → 3 o menos (categoría PRECIO_FACTURACION); con indignación → 1.
+- Queja de precio percibido como excesivo o injusto → 3 o menos; con indignación → 1. (La categoría de causa raíz elegila de la lista de abajo: no inventes una de precio si no está.)
 - Que digan que NO le hicieron algo que correspondía y le cobraron igual → 1 o 2.
 
 CATEGORÍAS DE CAUSA RAÍZ (usá exclusivamente una de estas, o null si son 5 estrellas o no hay causa identificable):
-- DEMORA_SERVICIO: demoras en la entrega o en los turnos.
-- MAL_TRATO_PERSONAL: trato descortés o mala atención de una persona.
-- PRECIO_FACTURACION: quejas por precios, cobros o facturación.
-- CALIDAD_TRABAJO: el trabajo quedó mal hecho o el problema persiste.
-- FALTA_COMUNICACION: no avisaron, no informaron el estado, no devolvieron llamados.
-- REPUESTOS: faltantes o demoras de repuestos.
-- OTRO: causa identificable que no encaja en las anteriores.
+${bloqueCausasRaiz()}
 
 LAS 5 ESTRELLAS SE GANAN, NO SE REGALAN (regla dura, la más importante):
 5 estrellas significa que el cliente DIJO ALGO EXPLÍCITAMENTE BUENO sobre el servicio, la atención o el trabajo. Si no lo dijo, NO son 5, por más amable que suene el mensaje.
@@ -367,13 +375,13 @@ Cliente: "Excelente atención, el auto quedó impecable. Muchas gracias!"
 Salida: {"estrellas":5,"confianza":0.97,"categoriaCausaRaiz":null,"resumen":"Cliente muy conforme con la atención y el trabajo.","requiereRevisionManual":false}
 
 Cliente: "Todo bien, pero tardaron más de lo que me habían dicho."
-Salida: {"estrellas":4,"confianza":0.85,"categoriaCausaRaiz":"DEMORA_SERVICIO","resumen":"Conforme en general, con una objeción por demora respecto a lo prometido.","requiereRevisionManual":false}
+Salida: {"estrellas":4,"confianza":0.85,"categoriaCausaRaiz":"DEMORA_INCUMPLIMIENTO_PLAZO","resumen":"Conforme en general, con una objeción por demora respecto a lo prometido.","requiereRevisionManual":false}
 
 Cliente: "Me parece un robo que cobren casi $500.000 y ni siquiera cambiaron el filtro de aire. Igual Eugenia de recepción, 10 puntos."
-Salida: {"estrellas":1,"confianza":0.9,"categoriaCausaRaiz":"PRECIO_FACTURACION","resumen":"Indignado por el precio (lo llama un robo) y porque no le habrían cambiado un filtro que esperaba. Elogia a la recepcionista, pero la queja de precio define el caso.","requiereRevisionManual":false}
+Salida: {"estrellas":1,"confianza":0.9,"categoriaCausaRaiz":"INFORMACION_INCORRECTA","resumen":"Indignado por el precio (lo llama un robo) y porque esperaba que el filtro estuviera incluido y no se lo cambiaron. Elogia a la recepcionista, pero la queja define el caso.","requiereRevisionManual":false}
 
 Cliente: "Un desastre. Llevé el auto por un ruido y me lo devolvieron igual, no lo solucionó nadie."
-Salida: {"estrellas":1,"confianza":0.95,"categoriaCausaRaiz":"CALIDAD_TRABAJO","resumen":"Problema sin resolver: llevó el auto por un ruido y se lo devolvieron igual.","requiereRevisionManual":false}
+Salida: {"estrellas":1,"confianza":0.95,"categoriaCausaRaiz":"ERROR_TECNICO","resumen":"Problema sin resolver: llevó el auto por un ruido y se lo devolvieron igual.","requiereRevisionManual":false}
 
 Cliente: "Buen día"
 Salida: {"estrellas":null,"confianza":0.2,"categoriaCausaRaiz":null,"resumen":"El cliente solo saludó, todavía no dio una opinión sobre el servicio.","requiereRevisionManual":true}
@@ -696,6 +704,17 @@ async function analizarConIA(
 // ---------- Modo mock (ANALISIS_MODO_MOCK=true) ----------
 // Clasificación por palabras clave para probar todo el flujo sin gastar API.
 
+/**
+ * La primera de estas causas que exista en la marca actual, o null.
+ *
+ * El modo simulado tiene que andar en las dos marcas, y desde que cada una tiene
+ * su propia lista un código fijo acá quedaba inventado en la otra: el análisis
+ * salía con una causa que ninguna pantalla podía mostrar ni filtrar.
+ */
+function causaMock(...codigos: string[]): string | null {
+  return codigos.find((c) => esCausaRaizValida(c)) ?? null;
+}
+
 function analizarMock(texto: string): ResultadoAnalisis {
   const t = texto.toLowerCase();
 
@@ -725,12 +744,13 @@ function analizarMock(texto: string): ResultadoAnalisis {
 
   // Negativo claro -> ROJO (severidad GRAVE)
   if (/(pésim|pesim|queja|reclamo|desastre|nunca más|mal trato|sin resolver|sucio|roto)/.test(t)) {
-    let categoria = "CALIDAD_TRABAJO";
-    if (/(cobr|precio|factur|caro)/.test(t)) categoria = "PRECIO_FACTURACION";
-    else if (/(trato|atendieron mal|mala atención)/.test(t)) categoria = "MAL_TRATO_PERSONAL";
-    else if (/(demora|tard|esper)/.test(t)) categoria = "DEMORA_SERVICIO";
-    else if (/(repuesto)/.test(t)) categoria = "REPUESTOS";
-    else if (/(no me avisaron|no informaron|no me llamaron)/.test(t)) categoria = "FALTA_COMUNICACION";
+    let categoria = causaMock("CALIDAD_TRABAJO", "ERROR_TECNICO");
+    if (/(cobr|precio|factur|caro)/.test(t)) categoria = causaMock("PRECIO_FACTURACION", "INFORMACION_INCORRECTA");
+    else if (/(trato|atendieron mal|mala atención)/.test(t)) categoria = causaMock("MAL_TRATO_PERSONAL", "TRATO_INADECUADO");
+    else if (/(demora|tard|esper)/.test(t)) categoria = causaMock("DEMORA_SERVICIO", "DEMORA_INCUMPLIMIENTO_PLAZO");
+    else if (/(repuesto)/.test(t)) categoria = causaMock("REPUESTOS");
+    else if (/(no me avisaron|no informaron|no me llamaron)/.test(t))
+      categoria = causaMock("FALTA_COMUNICACION", "FALTA_INFORMACION");
     return armar(Semaforo.ROJO, Severidad.GRAVE, 0.9, categoria, "Cliente claramente insatisfecho, corresponde reclamo formal.");
   }
 
@@ -741,7 +761,7 @@ function analizarMock(texto: string): ResultadoAnalisis {
       Semaforo.AMARILLO,
       marcada ? Severidad.MODERADA : Severidad.LEVE,
       marcada ? 0.8 : 0.5,
-      "DEMORA_SERVICIO",
+      causaMock("DEMORA_SERVICIO", "DEMORA_INCUMPLIMIENTO_PLAZO"),
       marcada
         ? "Objeción clara por demoras aunque el servicio se completó."
         : "Satisfacción parcial con una objeción menor por tiempos."

@@ -5,6 +5,7 @@ import { startWorkers } from "./jobs/workers";
 import { modoAnalisisActivo } from "./services/sentiment.service";
 import { seedAdmin } from "./scripts/seedAdmin";
 import { detenerLatido, iniciarLatido } from "./services/latido.service";
+import { limpiarCausasRaizFueraDeLista } from "./services/causa-raiz.service";
 
 const app = createApp();
 
@@ -31,6 +32,12 @@ registrarJobsRepetibles()
   .catch((err) => console.error("No se pudo registrar el cron de mantenimiento:", err));
 
 seedAdmin().catch((err) => console.error("[seed] Error creando el admin inicial:", err));
+
+// Deja sin causa raíz lo que haya quedado clasificado con una lista anterior.
+// Corre siempre y normalmente no hace nada: ver el porqué en su propio archivo.
+limpiarCausasRaizFueraDeLista().catch((err) =>
+  console.error("[causa-raiz] no se pudieron limpiar las causas viejas:", err)
+);
 
 // Latido: deja constancia de que el sistema esta vivo, y al arrancar mide cuanto
 // estuvo caido. Importa porque los mensajes entrantes de WhatsApp llegan SOLO

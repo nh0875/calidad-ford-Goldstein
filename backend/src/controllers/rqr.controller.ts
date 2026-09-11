@@ -24,7 +24,7 @@ import {
   whereVisible,
 } from "../services/area.service";
 import { importarFormulariosRqr } from "../services/rqr-import.service";
-import { CATEGORIAS_CAUSA_RAIZ } from "../services/sentiment.service";
+import { zCausaRaiz } from "../services/causa-raiz.service";
 import { wordRqr } from "../services/exportacion.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 
@@ -36,7 +36,7 @@ const listQuerySchema = z.object({
   estado: z.nativeEnum(EstadoRQR).optional(),
   sucursal: z.string().trim().min(1).optional(),
   asesor: z.string().trim().min(1).optional(),
-  categoria: z.enum(CATEGORIAS_CAUSA_RAIZ).optional(),
+  categoria: zCausaRaiz.optional(),
   fechaDesde: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha 'desde' tiene que tener el formato AAAA-MM-DD.")
@@ -200,7 +200,7 @@ const createSchema = z
     areaAfectada: z.string().trim().min(1).optional(),
     asesor: z.string().trim().min(1, "Indicá el asesor del reclamo."),
     descripcionReclamo: z.string().trim().min(1, "La descripción del reclamo no puede estar vacía."),
-    causaRaiz: z.enum(CATEGORIAS_CAUSA_RAIZ).optional(),
+    causaRaiz: zCausaRaiz.optional(),
     tratamientoBitacora: z.string().trim().min(1).optional(),
     observaciones: z.string().trim().min(1).optional(),
     area: z.nativeEnum(AreaTrabajo).optional(), // solo para RQR manual sin caso

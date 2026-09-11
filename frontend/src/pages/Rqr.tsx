@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { FilePlus2, FileUp, SearchX } from "lucide-react";
 import { apiGet, apiPostForm } from "../lib/api";
-import { CATEGORIAS_CAUSA_RAIZ, etiquetaCategoria, fechaCorta } from "../lib/categorias";
+import { causasRaiz, etiquetaCategoria, fechaCorta } from "../lib/categorias";
 import { BarraFiltros, FILTROS_VACIOS, FiltroSelect, FiltrosComunes, filtrosAQuery, useOpcionesCasos } from "../components/filtros";
 import { getUsuario, veTodasLasAreas } from "../lib/auth";
 import { etiquetaArea, tonoArea } from "../lib/area";
@@ -117,7 +117,7 @@ export default function Rqr() {
         <FiltroSelect
           etiqueta="Categoría"
           valor={categoria}
-          opciones={CATEGORIAS_CAUSA_RAIZ.map((c) => ({ value: c, label: etiquetaCategoria(c) }))}
+          opciones={causasRaiz().map((c) => ({ value: c.codigo, label: c.etiqueta }))}
           onChange={(v) => {
             setCategoria(v);
             setPage(1);
