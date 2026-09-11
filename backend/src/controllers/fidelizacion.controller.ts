@@ -142,9 +142,19 @@ export async function subirFidelizacion(req: Request, res: Response) {
       numeroServicio: c.numeroServicio,
       comentarioAsesor: c.comentarioAsesor,
       fechaEntrega: c.fechaEntrega,
-      // La planilla de ventas trae la provincia por fila, y es la que gobierna
-      // quién ve la conversación en Seguimiento; si no vino, queda la de la carga.
-      sucursal: c.provincia ?? sucursal,
+      // LA SUCURSAL DE LA CARGA, siempre, aunque la planilla de ventas traiga una
+      // provincia por fila.
+      //
+      // Antes ganaba la de la fila, y eso producía clientes cuya sucursal decía
+      // una cosa y cuya carga decía otra. Como distintas partes del sistema leían
+      // una u otra, el mismo cliente aparecía en una pantalla y desaparecía en la
+      // de al lado: una carga de 104 clientes rotulada "San Juan", con los 104
+      // mensajes enviados, que el usuario de San Juan no veía en Seguimiento.
+      //
+      // La regla es la misma que rige para los Casos desde siempre: un Excel que
+      // sube San Juan es trabajo de San Juan, aunque adentro venga un cliente que
+      // vive en Mendoza. Quien lo tiene que llamar es quien lo atendió.
+      sucursal,
       // Las filas con motivo (sin teléfono, teléfono repetido) NO se envían.
       estado: c.motivoOmision ? EstadoFidelizacion.OMITIDO : EstadoFidelizacion.PENDIENTE,
       error: c.motivoOmision,
