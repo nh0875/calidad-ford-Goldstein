@@ -8,7 +8,7 @@ import { redisConnection } from "../config/redis";
 import { marcarNoRespondidos } from "../services/mantenimiento.service";
 import { encolarSegundosContactos, marcarLlamadasPendientes } from "../services/segundo-contacto.service";
 import { crearRqrAutomatico } from "../services/rqr.service";
-import { ITEM_QUE_DEFINE_EL_CASO, etiquetaItem } from "../config/posventa-vw";
+import { ITEM_QUE_DEFINE_EL_CASO, etiquetaItem, itemsPreguntados } from "../config/posventa-vw";
 import { PuntajeItem, guardarPuntajes, usaEncuestaPorItems } from "../services/encuesta-posventa.service";
 import {
   CONFIANZA_MINIMA_POSITIVO,
@@ -383,7 +383,11 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
   } else if (usaEncuestaPorItems(caso.area) && caso.encuestaItemsEnviadaEn) {
     // ENCUESTA DE POSVENTA POR ÍTEMS: al cliente se le mandaron las 5 preguntas,
     // así que su respuesta se lee ítem por ítem y no como una opinión suelta.
-    const items = await analizarItemsPosventa(texto);
+    // Los ítems que se le preguntaron A ESTE CASO: si al auto no le hicieron
+    // lavado, la pregunta del lavado nunca salió y su respuesta trae 4 números,
+    // no 5. Leerla contra los 5 correría el último puntaje un lugar.
+    const itemsDelCaso = itemsPreguntados(caso.tuvoLavado);
+    const items = await analizarItemsPosventa(texto, itemsDelCaso);
     if (!items) {
       // No se pudo leer: NO se inventan puntajes. Un puntaje inventado ensucia el
       // promedio del área y después nadie lo puede distinguir de uno real.
@@ -401,7 +405,7 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
     } else {
       puntajesPosventa = items.puntajes;
       // El ítem GENERAL es el que define el caso: es el único que abre RQR. Los
-      // otros 4 se miden y salen en el reporte de desempeño, pero no abren un
+      // otros se miden y salen en el reporte de desempeño, pero no abren un
       // reclamo formal por su cuenta — con 5 ítems es casi seguro que alguno no
       // sea 5, y abrir RQR por cada uno inundaría a Calidad de reclamos que en
       // realidad son "el lavado estuvo flojo" en una visita por lo demás buena.
@@ -509,7 +513,9 @@ async function procesarAnalisisSentimiento(job: Job<DatosAnalisis>) {
   // rastrear de qué respuesta salió cada uno.
   if (puntajesPosventa) {
     const n = await guardarPuntajes(casoId, puntajesPosventa, analisis.id);
-    console.log(`[analisis-sentimiento] caso ${caso.numeroOrden}: ${n} de 5 ítems con puntaje`);
+    console.log(
+      `[analisis-sentimiento] caso ${caso.numeroOrden}: ${n} de ${puntajesPosventa.length} ítems con puntaje`
+    );
   }
 
   await marcarAnalizados(idsTanda);

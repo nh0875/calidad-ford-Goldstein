@@ -34,6 +34,9 @@ interface Caso {
   sucursal: string;
   area: string;
   estadoContacto: string;
+  // ¿Le lavaron el auto en esta visita? false = no, y entonces no se le
+  // preguntó por el lavado ni se puede cargar a mano. null = no se sabe.
+  tuvoLavado: boolean | null;
   whatsappOptOut: boolean;
   suprimido: boolean;
   ultimoErrorEnvio: string | null;
@@ -865,7 +868,11 @@ export default function Casos() {
                         <PanelLlamada
                           casoId={c.id}
                           area={c.area}
-                          puntajesPosventa={marcaInfo.posventa.items}
+                          puntajesPosventa={
+                            c.tuvoLavado === false
+                              ? marcaInfo.posventa.items.filter((i) => i.item !== "LAVADO")
+                              : marcaInfo.posventa.items
+                          }
                           onListo={async () => {
                             setLlamadaAbierta(null);
                             await cargarCasos();

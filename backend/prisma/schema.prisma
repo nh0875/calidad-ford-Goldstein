@@ -300,6 +300,20 @@ model Caso {
   // saber que el próximo mensaje del cliente las está contestando, y para no
   // mandárselas dos veces si vuelve a apretar el botón.
   encuestaItemsEnviadaEn DateTime?
+  // ¿A este auto le hicieron lavado en esta visita? (Volkswagen)
+  //
+  // Viene del Excel de Contacto Posventa: la columna "Tipo de visita" trae una
+  // letra y un número, y el número es el que importa (1 = se lavó, 0 = no).
+  //
+  // Decide UNA cosa concreta: si al cliente se le pregunta o no cómo le
+  // entregaron el auto de limpieza. Preguntarle por un lavado que no le hicieron
+  // es la clase de detalle que le dice al cliente que el mensaje es automático y
+  // que nadie miró su caso.
+  //
+  // null = no se sabe (archivos viejos, o la fila vino sin número). Se comporta
+  // como antes: se le pregunta por el lavado. Es a propósito: perder la pregunta
+  // por un dato que faltó sería perder información de todos los casos.
+  tuvoLavado             Boolean?
   // El cliente apretó el botón "Quiero participar por Llamada": pidió que lo
   // llamen en vez de contestar por WhatsApp. Queda pendiente de que alguien de
   // Calidad lo llame, y se resalta en Seguimiento.

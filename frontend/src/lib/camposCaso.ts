@@ -19,6 +19,7 @@ export const CAMPOS_CASO: Array<{ value: string; label: string }> = [
   { value: "fechaSalida", label: "Fecha de salida" },
   { value: "diasEnServicio", label: "Días en servicio" },
   { value: "estado", label: "Estado (S / NC / INT / RQR)" },
+  { value: "lavado", label: "¿Se lavó el auto? (SI / NO)" },
   { value: "satisfaccionConcesionario", label: "Satisfacción con el concesionario (1-5)" },
   { value: "satisfaccionServicio", label: "¿Servicio realizado satisfactoriamente? (1-5)" },
   { value: "satisfaccionFord", label: "Satisfacción con Ford (1-5)" },

@@ -1,0 +1,16 @@
+-- ¿A este auto le hicieron lavado en esta visita?
+--
+-- El Excel de Contacto Posventa de Volkswagen trae una columna "Tipo de visita"
+-- que, a partir de ahora, viene con una letra y un número. La letra dice cómo se
+-- facturó esa línea de la orden; el número dice si al auto se le hizo lavado
+-- (1) o no (0).
+--
+-- Sirve para una sola cosa, pero concreta: si al auto no lo lavaron, al cliente
+-- no se le manda la pregunta de cómo le entregaron el auto de limpieza. Son 4
+-- preguntas en vez de 5. Preguntar por un lavado que no existió es lo que le
+-- avisa al cliente que del otro lado no lo miró nadie.
+--
+-- Se permite NULL y significa "no se sabe": los casos que ya están cargados y
+-- los archivos que vengan sin el número. Esos siguen comportándose igual que
+-- hasta hoy, con las 5 preguntas.
+ALTER TABLE "Caso" ADD COLUMN IF NOT EXISTS "tuvoLavado" BOOLEAN;

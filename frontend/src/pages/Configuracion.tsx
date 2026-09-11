@@ -58,6 +58,12 @@ const K = {
   FIDEL_RESPUESTA: "fidelizacion.respuestaBotonAsesor",
   FIDEL_ENVIAR: "fidelizacion.enviarRespuestaBotonAsesor",
   FIDEL_BOTON_TEXTO: "fidelizacion.textoBotonAsesor",
+  // Encuesta de Posventa por ítems: el mensaje con las preguntas que se manda
+  // cuando el cliente aprieta "Quiero participar por Whatsapp". Son DOS textos
+  // porque hay dos situaciones: al auto lo lavaron (5 preguntas) o no (4, sin la
+  // pregunta de cómo se lo entregaron de limpieza).
+  POSVENTA_PREGUNTAS: "posventa.preguntas",
+  POSVENTA_PREGUNTAS_SIN_LAVADO: "posventa.preguntasSinLavado",
 };
 
 // Cliente de ejemplo para la vista previa (mismos reemplazos que el backend)
@@ -106,6 +112,12 @@ export default function Configuracion() {
         [K.FIDEL_RESPUESTA]: cfg[K.FIDEL_RESPUESTA],
         [K.FIDEL_ENVIAR]: cfg[K.FIDEL_ENVIAR],
         [K.FIDEL_BOTON_TEXTO]: cfg[K.FIDEL_BOTON_TEXTO],
+        ...(getMarca().posventa.porItems
+          ? {
+              [K.POSVENTA_PREGUNTAS]: cfg[K.POSVENTA_PREGUNTAS],
+              [K.POSVENTA_PREGUNTAS_SIN_LAVADO]: cfg[K.POSVENTA_PREGUNTAS_SIN_LAVADO],
+            }
+          : {}),
       });
       setMensaje(message);
     } catch (err) {
@@ -247,6 +259,42 @@ export default function Configuracion() {
             </Campo>
           </div>
         </div>
+
+        {/* ENCUESTA DE POSVENTA — las preguntas que contesta el cliente.
+            Solo en las marcas que miden Posventa por ítems (Volkswagen). */}
+        {getMarca().posventa.porItems && (
+          <div className="mb-2 border-t border-gray-100 pt-4">
+            <label className="mb-1 block text-sm font-medium text-ink">
+              Encuesta de Posventa — las preguntas
+            </label>
+            <p className="mb-2 text-xs text-ink-muted">
+              Cuando el cliente toca <strong>“Quiero participar por Whatsapp”</strong>, el sistema le manda este
+              mensaje. Ojo con el orden y la cantidad: el cliente contesta <strong>“5 4 5 3 4”</strong> y cada número se
+              lee por su posición, así que agregar o sacar una pregunta acá cambia a qué ítem va cada puntaje.
+            </p>
+            <Textarea
+              value={cfg[K.POSVENTA_PREGUNTAS] ?? ""}
+              onChange={(e) => set(K.POSVENTA_PREGUNTAS, e.target.value)}
+              rows={9}
+              disabled={!esAdmin}
+            />
+
+            <label className="mb-1 mt-4 block text-sm font-medium text-ink">
+              …y el mismo mensaje cuando al auto NO se lo lavó
+            </label>
+            <p className="mb-2 text-xs text-ink-muted">
+              Este va a los casos que el Excel de fábrica marca sin lavado. Es el de arriba <strong>sin la pregunta del
+              lavado</strong> y con las otras cuatro renumeradas: preguntarle a alguien cómo le entregaron el auto de
+              limpieza cuando nunca se lo lavaron es de las cosas que más delatan que del otro lado no hay nadie.
+            </p>
+            <Textarea
+              value={cfg[K.POSVENTA_PREGUNTAS_SIN_LAVADO] ?? ""}
+              onChange={(e) => set(K.POSVENTA_PREGUNTAS_SIN_LAVADO, e.target.value)}
+              rows={8}
+              disabled={!esAdmin}
+            />
+          </div>
+        )}
 
         {esAdmin && (
           <div className="mt-5 flex justify-end">

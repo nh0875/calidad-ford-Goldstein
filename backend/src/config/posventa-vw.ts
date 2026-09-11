@@ -92,13 +92,36 @@ export function esItemPosventa(valor: unknown): valor is ItemPosventa {
  * "5 4 5 3 4" y se entiende sin ambigüedad. Igual la IA lee la respuesta en
  * prosa, porque muchos contestan "todo bien menos el lavado".
  */
-export function textoPreguntasPorDefecto(): string {
-  const lista = DEFINICION_ITEMS.map((d, i) => `${i + 1}. ${d.pregunta}`).join("\n");
+export function textoPreguntasPorDefecto(items: readonly ItemPosventa[] = ITEMS_POSVENTA): string {
+  const definiciones = DEFINICION_ITEMS.filter((d) => items.includes(d.item));
+  const lista = definiciones.map((d, i) => `${i + 1}. ${d.pregunta}`).join("\n");
+  const ejemplo = definiciones.map(() => "5").join(" ");
   return (
-    "¡Gracias por participar! Son 5 preguntas cortas. " +
+    `¡Gracias por participar! Son ${definiciones.length} preguntas cortas. ` +
     "Puntuá cada una del 1 al 5, donde 5 es lo mejor:\n\n" +
     lista +
-    "\n\nPodés responder así: 5 4 5 3 4\n" +
+    `\n\nPodés responder así: ${ejemplo}\n` +
     "Y si querés contarnos algo, escribilo: nos sirve muchísimo."
   );
+}
+
+/**
+ * Los ítems que se le preguntan a ESTE caso.
+ *
+ * Cuando al auto no le hicieron lavado, la pregunta del lavado no se manda: son
+ * 4 preguntas en vez de 5. Preguntarle a alguien cómo le entregaron el auto de
+ * limpieza cuando nunca se lo lavaron es lo que le avisa al cliente que del otro
+ * lado no lo miró nadie, y encima ensucia la medición del área con respuestas a
+ * una pregunta que no correspondía.
+ *
+ * Todo lo que dependa de "cuántas preguntas se le hicieron" —el texto que se
+ * manda, el parser de "5 4 5 3", el prompt de la IA y lo que se guarda— sale de
+ * ACÁ, para que no puedan quedar diciendo cosas distintas.
+ *
+ * tuvoLavado en null es "no se sabe" (los archivos viejos): se le preguntan los
+ * 5, que es como venía funcionando.
+ */
+export function itemsPreguntados(tuvoLavado: boolean | null | undefined): ItemPosventa[] {
+  if (tuvoLavado === false) return ITEMS_POSVENTA.filter((i) => i !== "LAVADO");
+  return [...ITEMS_POSVENTA];
 }

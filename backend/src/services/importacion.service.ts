@@ -126,6 +126,21 @@ export function mapearEstadoContacto(valor: unknown): EstadoContacto {
   }
 }
 
+// ---------- Mapeo de la columna "Lavado" ----------
+//
+// La escribe el lector del Excel de Volkswagen a partir del número de "Tipo de
+// visita" (1 = se lavó, 0 = no). Vacío o cualquier otra cosa es "no se sabe", y
+// entonces el caso se comporta como siempre: se le pregunta por el lavado.
+//
+// No se intenta adivinar: un "no se sabe" hace una pregunta de más, y un false
+// inventado le saca al área la única medición que tiene del lavado.
+export function mapearLavado(valor: unknown): boolean | null {
+  const v = normalizarTexto(valor).toUpperCase().trim();
+  if (v === "SI" || v === "S" || v === "1" || v === "X") return true;
+  if (v === "NO" || v === "N" || v === "0") return false;
+  return null;
+}
+
 // Resume una lista de órdenes para el mensaje: las primeras y "y N más".
 function resumirOrdenes(ordenes: string[], max = 10): string {
   if (ordenes.length <= max) return ordenes.join(", ");
@@ -630,6 +645,7 @@ async function importarHoja(
           sucursalRaw: params.sucursal,
           area: params.area ?? AreaTrabajo.POSVENTA,
           estadoContacto,
+          tuvoLavado: mapearLavado(valorDe(fila, "lavado")),
           ...(analisisHistorico ? { analisis: { create: analisisHistorico } } : {}),
         },
       });

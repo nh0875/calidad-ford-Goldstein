@@ -109,7 +109,11 @@ export async function excelDesempenoPosventa(f: FiltrosPosventa): Promise<Buffer
       d.asesor,
       d.modelo,
       d.fecha,
-      ...DEFINICION_ITEMS.map((x) => num(d.puntajes[x.item])),
+      // "no aplica" y no un guion: un guion se lee como que el cliente no
+      // contestó el lavado, cuando en realidad nunca se le preguntó.
+      ...DEFINICION_ITEMS.map((x) =>
+        x.item === "LAVADO" && d.sinLavado ? "no aplica" : num(d.puntajes[x.item])
+      ),
     ]);
   }
   detalle.columns.forEach((c, idx) => (c.width = idx === 1 ? 30 : 16));

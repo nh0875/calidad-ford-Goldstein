@@ -21,6 +21,9 @@
 //   filas para 27 órdenes. Si entraran tal cual, al cliente le llegarían dos
 //   WhatsApp por la misma visita. Se agrupan por número de orden.
 //
+//   EL TIPO DE VISITA decide dos cosas: si el caso entra como interno (ver
+//   TIPO_INTERNO) y si al cliente se le pregunta por el lavado (ver huboLavado).
+//
 //   LAS FECHAS SON NÚMEROS de la forma aaaammdd (20260909), no fechas de Excel.
 //
 //   LOS TELÉFONOS VIENEN SIN PAÍS (92613041047). El normalizador argentino ya los
@@ -53,6 +56,76 @@ import { normalizarTexto } from "./excel.service";
  * dos. Si mañana se suma otra razón social propia, se agrega acá.
  */
 const NOMBRES_PROPIOS = ["mario goldstein"];
+
+/**
+ * La letra de "Tipo de visita" que marca una línea INTERNA.
+ *
+ * Una orden aparece una vez por cada tipo de visita que tuvo: la misma visita
+ * puede traer una línea por garantía (G), una que paga el cliente (C) y una
+ * interna (I). Las líneas I no cuentan para la encuesta, y una orden en la que
+ * TODAS las líneas son I no recibe encuesta: entra como INTERNO.
+ *
+ * OJO, ESTO NO ES LO MISMO QUE "auto de la agencia". Los autos propios los saca
+ * la regla de NOMBRES_PROPIOS, por el nombre del titular. En el archivo del
+ * 09-09 había ocho órdenes que venían solo con I y eran de clientes reales —una
+ * pérdida de aceite, un tren delantero que vibraba, varios services
+ * bonificados—, y con esta regla esos ocho no reciben la encuesta. Se hizo así
+ * porque el dueño lo pidió expresamente con esos ocho casos a la vista
+ * (11-09-2026). Si algún día se nota que faltan respuestas de clientes que sí
+ * pasaron por el taller, empezar por acá.
+ */
+const TIPO_INTERNO = "I";
+
+/**
+ * El tipo de visita de una fila, ya separado en sus dos partes.
+ *
+ * Hasta septiembre de 2026 la columna traía solo la letra. A partir de los
+ * archivos nuevos viene además un dígito: 1 = al auto se le hizo lavado, 0 = no.
+ * El sistema usa eso para una sola cosa, pero que se nota: al cliente al que no
+ * le lavaron el auto no se le pregunta cómo se lo entregaron de limpieza.
+ */
+interface TipoVisita {
+  /** La letra sola, en mayúscula. "" si la celda no traía letra. */
+  letra: string;
+  /** El dígito que la acompaña, o null si no vino. */
+  numero: number | null;
+  /** El valor tal como vino, para dejarlo en el comentario del caso. */
+  crudo: string;
+}
+
+/**
+ * Separa "I1" en letra y número.
+ *
+ * Se leen las letras por un lado y los dígitos por el otro en vez de exigir un
+ * formato exacto, así aguanta "I1", "I 1", "1I" o "I-1" sin tener que adivinar
+ * cuál de esas formas va a mandar fábrica. Si vienen dos o más dígitos no es lo
+ * que esperamos y se toma como "sin número": es preferible preguntar de más que
+ * inventar un dato sobre el auto de un cliente.
+ */
+function parsearTipoVisita(crudo: string): TipoVisita {
+  const letra = crudo.replace(/[^A-Za-z]/g, "").toUpperCase();
+  const digitos = crudo.replace(/[^0-9]/g, "");
+  return { letra, numero: digitos.length === 1 ? Number(digitos) : null, crudo: crudo.trim() };
+}
+
+/**
+ * ¿Hubo lavado en esta visita?
+ *
+ * Se mira solo lo que NO es interno: las líneas I no cuentan para la encuesta,
+ * así que tampoco para esto. Si las líneas que quedan se contradicen (una dice 1
+ * y otra 0) gana el 1: el lavado es del auto, no de la línea de facturación, y
+ * ante la duda conviene preguntar —el cliente siempre puede contestar que se lo
+ * entregaron sucio, y eso es justo lo que hay que enterarse—.
+ *
+ * null = no se sabe (los archivos viejos, que vienen con la letra sola). Se
+ * comporta como siempre y se pregunta por el lavado: perder la pregunta por un
+ * dato que faltó sería perder información de todos los casos.
+ */
+function huboLavado(tipos: TipoVisita[]): boolean | null {
+  const relevantes = tipos.filter((t) => t.letra !== TIPO_INTERNO && t.numero !== null);
+  if (relevantes.length === 0) return null;
+  return relevantes.some((t) => t.numero === 1);
+}
 
 /** Las columnas del export de VW, por su título. */
 const COL = {
@@ -151,6 +224,9 @@ const SALIDA = [
   "E-Mail Propietario",
   "Comentario del Asesor",
   "Estado",
+  // Sale del número de "Tipo de visita". Vacío = no se sabe, y entonces se le
+  // pregunta por el lavado igual que siempre.
+  "Lavado",
 ] as const;
 
 export interface ResumenConversion {
@@ -160,6 +236,10 @@ export interface ResumenConversion {
   repetidasUnidas: number;
   /** Autos de la concesionaria: entran como INTERNO y no reciben WhatsApp. */
   internos: number;
+  /** De esos, los que son internos por tipo de visita (todas sus líneas en I). */
+  internosPorTipoVisita: number;
+  /** Casos a los que NO se les va a preguntar por el lavado. */
+  sinLavado: number;
   /** Códigos de concesionario encontrados (para avisar si vienen mezclados). */
   concesionarios: string[];
 }
@@ -191,7 +271,7 @@ export function convertirContactoPosventaVW(
 
   // Una entrada por ORDEN: las repetidas se juntan y sus tipos de visita se
   // acumulan, que es la única información que las distingue.
-  const porOrden = new Map<string, { fila: unknown[]; tipos: string[] }>();
+  const porOrden = new Map<string, { fila: unknown[]; tipos: TipoVisita[] }>();
   let filasLeidas = 0;
   let repetidasUnidas = 0;
   const concesionarios = new Set<string>();
@@ -210,17 +290,20 @@ export function convertirContactoPosventaVW(
     // Si no vino la orden se usa el VIN como clave, para no perder la fila ni
     // fusionar por error dos autos distintos.
     const clave = orden || `vin:${vin}`;
-    const tipo = txt(fila, "tipoVisita");
+    const crudoTipo = txt(fila, "tipoVisita");
+    const tipo = crudoTipo ? parsearTipoVisita(crudoTipo) : null;
     const previa = porOrden.get(clave);
     if (previa) {
       repetidasUnidas++;
-      if (tipo && !previa.tipos.includes(tipo)) previa.tipos.push(tipo);
+      if (tipo && !previa.tipos.some((t) => t.crudo === tipo.crudo)) previa.tipos.push(tipo);
     } else {
       porOrden.set(clave, { fila, tipos: tipo ? [tipo] : [] });
     }
   }
 
   let internos = 0;
+  let internosPorTipoVisita = 0;
+  let sinLavado = 0;
   const cuerpo: string[][] = [];
 
   for (const { fila, tipos } of porOrden.values()) {
@@ -228,7 +311,18 @@ export function convertirContactoPosventaVW(
     // social entera viene en Apellido y Nombre queda vacío.
     const nombreCliente = [txt(fila, "apellido"), txt(fila, "nombre")].filter(Boolean).join(" ").trim();
     const propio = esVehiculoPropio(nombreCliente);
-    if (propio) internos++;
+
+    // Todas las líneas de la orden son internas: la visita no se encuesta. Una
+    // orden que vino SIN ningún tipo de visita no se toca: con un dato que falta
+    // no se decide dejar a un cliente afuera.
+    const soloInternas = tipos.length > 0 && tipos.every((t) => t.letra === TIPO_INTERNO);
+    const interno = propio || soloInternas;
+    if (interno) internos++;
+    if (soloInternas && !propio) internosPorTipoVisita++;
+
+    // A un caso interno no se le manda nada, así que el lavado no aplica.
+    const lavado = interno ? null : huboLavado(tipos);
+    if (lavado === false) sinLavado++;
 
     const asesor = [txt(fila, "apellidoAsesor"), txt(fila, "nombreAsesor")].filter(Boolean).join(" ").trim();
 
@@ -238,7 +332,7 @@ export function convertirContactoPosventaVW(
     const respaldo = telefonoUtil(en(fila, "telPrivado")) || telefonoUtil(en(fila, "telLaboral"));
 
     const motivo = txt(fila, "motivo");
-    const comentario = [motivo, tipos.length > 0 ? `(Tipo de visita: ${tipos.join(", ")})` : ""]
+    const comentario = [motivo, tipos.length > 0 ? `(Tipo de visita: ${tipos.map((t) => t.crudo).join(", ")})` : ""]
       .filter(Boolean)
       .join(" ");
 
@@ -259,7 +353,8 @@ export function convertirContactoPosventaVW(
       comentario,
       // "INT" es lo que el importador lee como INTERNO. Se reutiliza el circuito
       // que ya existe en vez de agregar una regla nueva en otro lado.
-      propio ? "INT" : "",
+      interno ? "INT" : "",
+      lavado === null ? "" : lavado ? "SI" : "NO",
     ]);
   }
 
@@ -274,6 +369,8 @@ export function convertirContactoPosventaVW(
       casos: cuerpo.length,
       repetidasUnidas,
       internos,
+      internosPorTipoVisita,
+      sinLavado,
       concesionarios: [...concesionarios].sort(),
     },
   };

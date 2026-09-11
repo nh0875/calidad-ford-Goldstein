@@ -1,7 +1,14 @@
 // Lectura de la respuesta a la encuesta de Posventa por ítems.
 //
-// El cliente contestó las 5 preguntas en un mensaje. Puede haberlo hecho de
-// muchas formas:
+// El cliente contestó las preguntas en un mensaje. Son 5, o 4 cuando al auto no
+// le hicieron lavado y por eso no se le preguntó por la limpieza de entrega (ver
+// itemsPreguntados en config/posventa-vw.ts). TODO lo de este archivo trabaja
+// sobre la lista de ítems que se le preguntaron A ESE CASO, no sobre el catálogo
+// completo: si se leyera siempre de a 5, un cliente al que se le hicieron 4
+// preguntas y contesta "5 4 5 4" quedaría con el último puntaje corrido de lugar
+// —su satisfacción general pasaría a contarse como el lavado que nunca hubo—.
+//
+// Puede haber contestado de muchas formas:
 //
 //   "5 4 5 3 4"
 //   "5,4,5,3,4 el lavado dejo que desear"
@@ -24,16 +31,24 @@ import { PuntajeItem } from "./encuesta-posventa.service";
 // ---------------------------------------------------------------------------
 
 /**
- * Intenta leer 5 puntajes de una lista de números.
+ * Intenta leer los puntajes de una lista de números.
+ *
+ * `items` son los ítems que se le preguntaron a ESE caso, en orden: son 5, o 4
+ * si no hubo lavado. La cantidad importa dos veces —cuántos números se esperan y
+ * a qué ítem corresponde cada posición—, y por eso no se usa el catálogo fijo.
  *
  * Devuelve null si el mensaje no es claramente una lista: ante la duda es mejor
  * mandarlo a la IA que inventar puntajes con números que estaban hablando de
  * otra cosa ("me atendieron a las 5 y esperé 40 minutos").
  */
-export function leerPuntajesDeLista(texto: string): PuntajeItem[] | null {
+export function leerPuntajesDeLista(
+  texto: string,
+  items: readonly ItemPosventa[] = ITEMS_POSVENTA
+): PuntajeItem[] | null {
   const limpio = texto.trim();
   if (!limpio) return null;
-  const N = ITEMS_POSVENTA.length;
+  const N = items.length;
+  if (N === 0) return null;
 
   let valores: number[] | null = null;
   let finUltimo = 0;
@@ -53,12 +68,13 @@ export function leerPuntajesDeLista(texto: string): PuntajeItem[] | null {
     const tokens = [...limpio.matchAll(/\d+/g)];
 
     // b1) Todo pegado: "54534".
-    if (tokens.length === 1 && /^[1-5]{5}$/.test(tokens[0][0])) {
+    if (tokens.length === 1 && new RegExp(`^[1-5]{${N}}$`).test(tokens[0][0])) {
       valores = tokens[0][0].split("").map(Number);
       finUltimo = (tokens[0].index ?? 0) + N;
     } else {
-      // b2) Cinco números de un dígito, separados por lo que sea (espacio, coma,
-      //     guion, barra). Se exige que NO haya otros números en el medio.
+      // b2) Un número de un dígito por pregunta, separados por lo que sea
+      //     (espacio, coma, guion, barra). Se exige que NO haya otros números
+      //     en el medio.
       const deUnDigito = tokens.filter((t) => /^[1-5]$/.test(t[0]));
       if (deUnDigito.length === N && tokens.length === N) {
         valores = deUnDigito.map((t) => Number(t[0]));
@@ -78,7 +94,7 @@ export function leerPuntajesDeLista(texto: string): PuntajeItem[] | null {
 
   const comentario = limpio.slice(finUltimo).replace(/^[\s,.;:)\]-]+/, "").trim() || null;
 
-  return ITEMS_POSVENTA.map((item, i) => ({
+  return items.map((item, i) => ({
     item: item as ItemPosventa,
     estrellas: valores![i],
     // Un comentario suelto se cuelga del ítem GENERAL: no se sabe de cuál habla.
@@ -103,39 +119,30 @@ export const esquemaItemsIA = z.object({
   resumen: z.string().min(1),
 });
 
-export function promptItemsPosventa(): string {
-  const lista = DEFINICION_ITEMS.map(
-    (d) => `- ${d.item}: ${d.etiqueta}. ${d.descripcion} (se le preguntó: "${d.pregunta}")`
-  ).join("\n");
+/**
+ * Los ejemplos del prompt.
+ *
+ * Van escritos a mano y por separado para cada variante en vez de generarse
+ * recortando el de 5: son prosa, y un ejemplo armado por recorte quedaría
+ * diciendo "el lavado es lo más flojo" en el caso donde no hubo lavado, que es
+ * justo lo que el modelo NO tiene que hacer.
+ */
+function ejemplosDelPrompt(sinLavado: boolean): string {
+  if (sinLavado) {
+    return `Cliente: "5 4 5 4"
+Salida: {"puntajes":[{"item":"TRATO","estrellas":5,"comentario":null},{"item":"ORGANIZACION","estrellas":4,"comentario":null},{"item":"CALIDAD_REPARACION","estrellas":5,"comentario":null},{"item":"GENERAL","estrellas":4,"comentario":null}],"confianza":0.95,"resumen":"Conforme; la organización es lo más flojo."}
 
-  return `Sos el analista de calidad de una concesionaria ${marca.nombre}. A un cliente que pasó por el taller se le hicieron 5 preguntas y contestó en UN mensaje. Tu trabajo es sacar el puntaje de CADA ítem por separado.
+Cliente: "Me atendieron de diez y el auto quedó impecable, pero me hicieron esperar dos horas de más"
+Salida: {"puntajes":[{"item":"TRATO","estrellas":5,"comentario":"Me atendieron de diez"},{"item":"ORGANIZACION","estrellas":2,"comentario":"me hicieron esperar dos horas de más"},{"item":"CALIDAD_REPARACION","estrellas":5,"comentario":"el auto quedó impecable"},{"item":"GENERAL","estrellas":4,"comentario":null}],"confianza":0.9,"resumen":"Muy conforme con la atención y la reparación; perdió dos horas esperando."}
 
-LOS 5 ÍTEMS:
-${lista}
+Cliente: "Todo bien, gracias"
+Salida: {"puntajes":[{"item":"TRATO","estrellas":null,"comentario":null},{"item":"ORGANIZACION","estrellas":null,"comentario":null},{"item":"CALIDAD_REPARACION","estrellas":null,"comentario":null},{"item":"GENERAL","estrellas":4,"comentario":"Todo bien"}],"confianza":0.5,"resumen":"Dice que todo bien, sin detalle de ningún ítem en particular."}
 
-CÓMO PUNTUAR (1 a 5, donde 5 es lo mejor):
-- 5: conforme, sin ninguna objeción sobre ESE ítem.
-- 4: conforme con una objeción menor, mencionada al pasar.
-- 3: satisfacción parcial o una molestia concreta.
-- 2: insatisfecho, reclamo claro.
-- 1: muy insatisfecho, indignación o problema sin resolver.
+Cliente: "un desastre, tuve que volver tres veces por lo mismo"
+Salida: {"puntajes":[{"item":"TRATO","estrellas":null,"comentario":null},{"item":"ORGANIZACION","estrellas":2,"comentario":"tuve que volver tres veces"},{"item":"CALIDAD_REPARACION","estrellas":1,"comentario":"tuve que volver tres veces por lo mismo"},{"item":"GENERAL","estrellas":1,"comentario":"un desastre"}],"confianza":0.9,"resumen":"Problema sin resolver: volvió tres veces por lo mismo."}`;
+  }
 
-REGLA MÁS IMPORTANTE — CADA ÍTEM SE PUNTÚA SOLO:
-Un cliente puede estar encantado con la atención y furioso con el lavado. NO promedies ni contagies: si dice "me atendieron de diez pero me entregaron el auto sucio", TRATO va 5 y LAVADO va 1 o 2. El sentido de medir por ítem es justamente poder ver eso.
-
-SI NO DIJO NADA DE UN ÍTEM, PONÉ null:
-No lo completes por parecido ni por el clima general del mensaje. "Todo bien" NO alcanza para puntuar el lavado si no lo mencionó: eso va null. Un null es información honesta ("nadie nos contó del lavado"); un 5 inventado ensucia el promedio del área y hace que un problema real quede tapado.
-La ÚNICA excepción es GENERAL: si el cliente da una impresión general clara ("todo excelente", "un desastre"), eso SÍ es la satisfacción general.
-
-SI CONTESTÓ CON NÚMEROS:
-Vienen en el orden de la lista de arriba. "5 4 5 3 4" = TRATO 5, ORGANIZACION 4, CALIDAD_REPARACION 5, LAVADO 3, GENERAL 4.
-
-COMENTARIO POR ÍTEM:
-Si el cliente dijo algo puntual de un ítem, copiá la parte que corresponde en "comentario" (corto, con sus palabras). Si no dijo nada de ese ítem, null. Es lo que convierte un "3" en algo accionable.
-
-EJEMPLOS:
-
-Cliente: "5 4 5 3 4"
+  return `Cliente: "5 4 5 3 4"
 Salida: {"puntajes":[{"item":"TRATO","estrellas":5,"comentario":null},{"item":"ORGANIZACION","estrellas":4,"comentario":null},{"item":"CALIDAD_REPARACION","estrellas":5,"comentario":null},{"item":"LAVADO","estrellas":3,"comentario":null},{"item":"GENERAL","estrellas":4,"comentario":null}],"confianza":0.95,"resumen":"Conforme en general; el lavado es lo más flojo."}
 
 Cliente: "Me atendieron de diez y el auto quedó impecable, pero me lo entregaron sucio por dentro"
@@ -145,17 +152,68 @@ Cliente: "Todo bien, gracias"
 Salida: {"puntajes":[{"item":"TRATO","estrellas":null,"comentario":null},{"item":"ORGANIZACION","estrellas":null,"comentario":null},{"item":"CALIDAD_REPARACION","estrellas":null,"comentario":null},{"item":"LAVADO","estrellas":null,"comentario":null},{"item":"GENERAL","estrellas":4,"comentario":"Todo bien"}],"confianza":0.5,"resumen":"Dice que todo bien, sin detalle de ningún ítem en particular."}
 
 Cliente: "un desastre, tuve que volver tres veces por lo mismo"
-Salida: {"puntajes":[{"item":"TRATO","estrellas":null,"comentario":null},{"item":"ORGANIZACION","estrellas":2,"comentario":"tuve que volver tres veces"},{"item":"CALIDAD_REPARACION","estrellas":1,"comentario":"tuve que volver tres veces por lo mismo"},{"item":"LAVADO","estrellas":null,"comentario":null},{"item":"GENERAL","estrellas":1,"comentario":"un desastre"}],"confianza":0.9,"resumen":"Problema sin resolver: volvió tres veces por lo mismo."}
-
-Respondé ÚNICAMENTE con un objeto JSON válido con esta forma exacta, sin texto adicional antes ni después:
-{"puntajes":[{"item":"TRATO"|"ORGANIZACION"|"CALIDAD_REPARACION"|"LAVADO"|"GENERAL","estrellas":1|2|3|4|5|null,"comentario":string|null}],"confianza":number,"resumen":string}`;
+Salida: {"puntajes":[{"item":"TRATO","estrellas":null,"comentario":null},{"item":"ORGANIZACION","estrellas":2,"comentario":"tuve que volver tres veces"},{"item":"CALIDAD_REPARACION","estrellas":1,"comentario":"tuve que volver tres veces por lo mismo"},{"item":"LAVADO","estrellas":null,"comentario":null},{"item":"GENERAL","estrellas":1,"comentario":"un desastre"}],"confianza":0.9,"resumen":"Problema sin resolver: volvió tres veces por lo mismo."}`;
 }
 
-/** Completa los ítems que el modelo no haya devuelto, en el orden del catálogo. */
+export function promptItemsPosventa(items: readonly ItemPosventa[] = ITEMS_POSVENTA): string {
+  const definiciones = DEFINICION_ITEMS.filter((d) => items.includes(d.item));
+  const lista = definiciones.map(
+    (d) => `- ${d.item}: ${d.etiqueta}. ${d.descripcion} (se le preguntó: "${d.pregunta}")`
+  ).join("\n");
+  const sinLavado = !items.includes("LAVADO");
+  const N = definiciones.length;
+
+  return `Sos el analista de calidad de una concesionaria ${marca.nombre}. A un cliente que pasó por el taller se le hicieron ${N} preguntas y contestó en UN mensaje. Tu trabajo es sacar el puntaje de CADA ítem por separado.
+
+LOS ${N} ÍTEMS:
+${lista}${
+    sinLavado
+      ? `
+
+OJO: a este cliente NO se le preguntó por el lavado, porque en esta visita al auto no se lo lavaron. NO devuelvas el ítem LAVADO ni aunque el cliente hable de la limpieza por su cuenta; si menciona algo de eso, va en el comentario de GENERAL.`
+      : ""
+  }
+
+CÓMO PUNTUAR (1 a 5, donde 5 es lo mejor):
+- 5: conforme, sin ninguna objeción sobre ESE ítem.
+- 4: conforme con una objeción menor, mencionada al pasar.
+- 3: satisfacción parcial o una molestia concreta.
+- 2: insatisfecho, reclamo claro.
+- 1: muy insatisfecho, indignación o problema sin resolver.
+
+REGLA MÁS IMPORTANTE — CADA ÍTEM SE PUNTÚA SOLO:
+Un cliente puede estar encantado con la atención y furioso con la espera. NO promedies ni contagies: si dice "me atendieron de diez pero me tuvieron el auto tres días de más", TRATO va 5 y ORGANIZACION va 1 o 2. El sentido de medir por ítem es justamente poder ver eso.
+
+SI NO DIJO NADA DE UN ÍTEM, PONÉ null:
+No lo completes por parecido ni por el clima general del mensaje. "Todo bien" NO alcanza para puntuar la reparación si no la mencionó: eso va null. Un null es información honesta ("nadie nos contó del lavado"); un 5 inventado ensucia el promedio del área y hace que un problema real quede tapado.
+La ÚNICA excepción es GENERAL: si el cliente da una impresión general clara ("todo excelente", "un desastre"), eso SÍ es la satisfacción general.
+
+SI CONTESTÓ CON NÚMEROS:
+Vienen en el orden de la lista de arriba, y son ${N}: el primero es ${definiciones[0]?.item}, el último es ${definiciones[N - 1]?.item}.
+
+COMENTARIO POR ÍTEM:
+Si el cliente dijo algo puntual de un ítem, copiá la parte que corresponde en "comentario" (corto, con sus palabras). Si no dijo nada de ese ítem, null. Es lo que convierte un "3" en algo accionable.
+
+EJEMPLOS:
+
+${ejemplosDelPrompt(sinLavado)}
+
+Respondé ÚNICAMENTE con un objeto JSON válido con esta forma exacta, sin texto adicional antes ni después:
+{"puntajes":[{"item":${definiciones.map((d) => `"${d.item}"`).join("|")},"estrellas":1|2|3|4|5|null,"comentario":string|null}],"confianza":number,"resumen":string}`;
+}
+
+/**
+ * Completa los ítems que el modelo no haya devuelto, en el orden del catálogo.
+ *
+ * Se recorren los ítems QUE SE PREGUNTARON: si el modelo devuelve igual un
+ * LAVADO en un caso donde no hubo lavado, acá se cae. Guardarlo sería inventar
+ * la medición de un lavado que no existió.
+ */
 export function normalizarPuntajes(
-  crudos: Array<{ item: string; estrellas: number | null; comentario: string | null }>
+  crudos: Array<{ item: string; estrellas: number | null; comentario: string | null }>,
+  items: readonly ItemPosventa[] = ITEMS_POSVENTA
 ): PuntajeItem[] {
-  return ITEMS_POSVENTA.map((item) => {
+  return items.map((item) => {
     const encontrado = crudos.find((c) => c.item === item);
     return {
       item: item as ItemPosventa,

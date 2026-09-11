@@ -3,7 +3,7 @@ import { prisma } from "../config/prisma";
 import { env } from "../config/env";
 import { cifradoDisponible, cifrar, descifrar } from "./cripto.service";
 import { marca } from "../config/marca";
-import { textoPreguntasPorDefecto } from "../config/posventa-vw";
+import { itemsPreguntados, textoPreguntasPorDefecto } from "../config/posventa-vw";
 
 // Configuración editable (clave→valor en la tabla Configuracion). Parte A guarda
 // acá los textos de los mensajes automáticos y sus toggles, editables desde
@@ -26,6 +26,12 @@ export const CLAVES_CONFIG = {
   POSVENTA_TEXTO_BOTON_WHATSAPP: "posventa.textoBotonWhatsapp",
   POSVENTA_TEXTO_BOTON_LLAMADA: "posventa.textoBotonLlamada",
   POSVENTA_PREGUNTAS: "posventa.preguntas",
+  // El mismo mensaje, pero para los autos a los que NO les hicieron lavado: sin
+  // la pregunta del lavado y con las otras cuatro renumeradas. Son dos textos y
+  // no uno con un recorte automático porque Calidad los edita a mano: si se
+  // recortara "la pregunta 4" de un texto editado, cualquier reescritura del
+  // mensaje lo rompería en silencio.
+  POSVENTA_PREGUNTAS_SIN_LAVADO: "posventa.preguntasSinLavado",
   POSVENTA_ENVIAR_PREGUNTAS: "posventa.enviarPreguntas",
 } as const;
 
@@ -49,6 +55,7 @@ export const DEFAULTS_CONFIG: Record<string, string> = {
   [CLAVES_CONFIG.POSVENTA_TEXTO_BOTON_WHATSAPP]: "Quiero participar por Whatsapp",
   [CLAVES_CONFIG.POSVENTA_TEXTO_BOTON_LLAMADA]: "Quiero participar por Llamada",
   [CLAVES_CONFIG.POSVENTA_PREGUNTAS]: textoPreguntasPorDefecto(),
+  [CLAVES_CONFIG.POSVENTA_PREGUNTAS_SIN_LAVADO]: textoPreguntasPorDefecto(itemsPreguntados(false)),
   [CLAVES_CONFIG.POSVENTA_ENVIAR_PREGUNTAS]: "true",
 };
 

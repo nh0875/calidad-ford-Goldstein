@@ -22,7 +22,7 @@ import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { puedeVer } from "../services/area.service";
 import { encolarSegundoContactoManual } from "../services/segundo-contacto.service";
-import { ITEMS_POSVENTA } from "../config/posventa-vw";
+import { ITEMS_POSVENTA, itemsPreguntados } from "../config/posventa-vw";
 import { PuntajeItem, guardarPuntajes } from "../services/encuesta-posventa.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { parseConvId } from "./seguimiento.controller";
@@ -34,6 +34,9 @@ const SELECT_CASO = {
   estadoContacto: true,
   segundoContactoEn: true,
   nombrePropietario: true,
+  // Decide qué ítems se pueden cargar: si al auto no lo lavaron, el lavado no
+  // se le preguntó y tampoco se puede cargar a mano.
+  tuvoLavado: true,
 } as const;
 
 /** Busca el caso y corta si la persona no lo puede tocar. */
@@ -131,11 +134,18 @@ export async function cargarResultadoLlamada(req: Request, res: Response) {
   // guardar Ventas por ítems ensuciaría los promedios por ítem con datos que no
   // corresponden a ese circuito.
   if (caso.area === AreaTrabajo.POSVENTA && puntajes?.length) {
-    const aGuardar: PuntajeItem[] = puntajes.map((p) => ({
-      item: p.item as PuntajeItem["item"],
-      estrellas: p.estrellas,
-      comentario: p.comentario ?? null,
-    }));
+    // Se descarta lo que no se le preguntó a este caso. La pantalla ya no
+    // muestra el lavado cuando al auto no lo lavaron, pero el pedido se puede
+    // armar a mano, y un puntaje de lavado inventado entra al promedio del área
+    // sin que después nadie lo pueda distinguir de uno real.
+    const preguntados = itemsPreguntados(caso.tuvoLavado);
+    const aGuardar: PuntajeItem[] = puntajes
+      .filter((p) => preguntados.includes(p.item as PuntajeItem["item"]))
+      .map((p) => ({
+        item: p.item as PuntajeItem["item"],
+        estrellas: p.estrellas,
+        comentario: p.comentario ?? null,
+      }));
     await guardarPuntajes(caso.id, aGuardar);
   }
 

@@ -23,6 +23,9 @@ export const CAMPOS_CASO = [
   "fechaSalida",
   "diasEnServicio",
   "estado",
+  // Si al auto le hicieron lavado en esta visita (Volkswagen). Decide si al
+  // cliente se le pregunta cómo se lo entregaron de limpieza.
+  "lavado",
   "satisfaccionConcesionario",
   "satisfaccionServicio",
   "satisfaccionFord",
@@ -268,6 +271,9 @@ const ALIAS_CAMPOS: Array<{ patrones: string[]; campo: CampoCaso }> = [
   { patrones: ["fecha salida", "fecha de salida"], campo: "fechaSalida" },
   { patrones: ["dias en servicio"], campo: "diasEnServicio" },
   { patrones: ["estado"], campo: "estado" },
+  // Coincidencia EXACTA (patrón de 6 caracteres): la pone el lector del Excel de
+  // Volkswagen, que ya tradujo el número de "Tipo de visita" a SI / NO.
+  { patrones: ["lavado"], campo: "lavado" },
   { patrones: ["satisfaccion con el concesionario"], campo: "satisfaccionConcesionario" },
   { patrones: ["servicio fue realizado"], campo: "satisfaccionServicio" },
   { patrones: ["satisfaccion con ford"], campo: "satisfaccionFord" },

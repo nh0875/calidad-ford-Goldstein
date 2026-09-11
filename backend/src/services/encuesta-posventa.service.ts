@@ -10,7 +10,7 @@
 import { AreaTrabajo, EstadoContacto, MessageDirection } from "@prisma/client";
 import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
-import { DEFINICION_ITEMS, ItemPosventa } from "../config/posventa-vw";
+import { DEFINICION_ITEMS, ItemPosventa, itemsPreguntados } from "../config/posventa-vw";
 import { CLAVES_CONFIG, obtenerValor } from "./configuracion.service";
 import { estaSuprimido, telefonosSuprimidos } from "./supresion.service";
 import { WhatsappApiError, sendTextMessage } from "./whatsapp.service";
@@ -129,7 +129,14 @@ export async function enviarPreguntasPosventa(
   const telefono = caso.whatsapp?.trim() || caso.celular?.trim() || "";
   if (!telefono.startsWith("+")) return { enviado: false, motivo: "sin teléfono válido" };
 
-  const texto = (await obtenerValor(CLAVES_CONFIG.POSVENTA_PREGUNTAS)).trim();
+  // Dos textos, según le hayan lavado el auto o no. El de 4 preguntas existe
+  // para no preguntarle a alguien cómo le entregaron el auto de limpieza cuando
+  // nunca se lo lavaron: es de las cosas que más delatan que del otro lado no
+  // hay nadie mirando. tuvoLavado en null es "no se sabe" y va con las 5, que es
+  // como venía funcionando.
+  const sinLavado = caso.tuvoLavado === false;
+  const clave = sinLavado ? CLAVES_CONFIG.POSVENTA_PREGUNTAS_SIN_LAVADO : CLAVES_CONFIG.POSVENTA_PREGUNTAS;
+  const texto = (await obtenerValor(clave)).trim();
   if (!texto) return { enviado: false, motivo: "el texto de las preguntas está vacío en Configuración" };
 
   let waMessageId: string;
@@ -234,9 +241,20 @@ export async function guardarPuntajes(
   return guardados;
 }
 
-/** Los puntajes de un caso, en el orden del catálogo. */
+/**
+ * Los puntajes de un caso, en el orden del catálogo.
+ *
+ * Los ítems que a ese caso NO se le preguntaron vienen con noAplica en true. Es
+ * distinto de "no lo contestó": un guion en la pantalla se lee como que el
+ * cliente no dijo nada del lavado, cuando en realidad nunca se le preguntó
+ * porque al auto no lo lavaron.
+ */
 export async function puntajesDelCaso(casoId: string) {
-  const filas = await prisma.evaluacionPosventa.findMany({ where: { casoId } });
+  const [filas, caso] = await Promise.all([
+    prisma.evaluacionPosventa.findMany({ where: { casoId } }),
+    prisma.caso.findUnique({ where: { id: casoId }, select: { tuvoLavado: true } }),
+  ]);
+  const preguntados = itemsPreguntados(caso?.tuvoLavado);
   return DEFINICION_ITEMS.map((d) => {
     const fila = filas.find((f) => f.item === d.item);
     return {
@@ -244,6 +262,7 @@ export async function puntajesDelCaso(casoId: string) {
       etiqueta: d.etiqueta,
       estrellas: fila?.estrellas ?? null,
       comentario: fila?.comentario ?? null,
+      noAplica: !preguntados.includes(d.item),
     };
   });
 }

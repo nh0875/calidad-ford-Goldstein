@@ -97,12 +97,15 @@ interface Hilo {
     requiereRevisionManual: boolean;
     resumenIA: string;
   } | null;
-  // Los 5 puntajes de la encuesta de Posventa (null en las marcas que no la usan).
+  // Los puntajes de la encuesta de Posventa (null en las marcas que no la usan).
+  // noAplica = a este caso no se le preguntó ese ítem (hoy: el lavado, cuando al
+  // auto no se lo lavaron). Es distinto de "no lo contestó".
   puntajesPosventa: Array<{
     item: string;
     etiqueta: string;
     estrellas: number | null;
     comentario: string | null;
+    noAplica: boolean;
   }> | null;
   ventana: { abierta: boolean; cierraEn: string | null };
   puedeResponder: { ok: boolean; motivo: string };
@@ -686,7 +689,7 @@ export default function Seguimiento() {
               <PanelLlamada
                 casoId={hilo.caso.id}
                 area={hilo.caso.area}
-                puntajesPosventa={hilo.puntajesPosventa}
+                puntajesPosventa={hilo.puntajesPosventa?.filter((p) => !p.noAplica) ?? null}
                 llamadaMotivo={hilo.caso.llamadaMotivo}
                 onListo={() => cargarHilo(hilo.caso.id)}
               />
@@ -711,9 +714,13 @@ export default function Seguimiento() {
               </div>
             )}
 
-            {/* Los 5 puntajes de la encuesta de Posventa. Es el POR QUÉ del semáforo
+            {/* Los puntajes de la encuesta de Posventa. Es el POR QUÉ del semáforo
                 del caso: sin esto se ve que quedó en 4 estrellas pero no que el
-                lavado fue un 1, que es justo el dato por el que se mide por ítem. */}
+                lavado fue un 1, que es justo el dato por el que se mide por ítem.
+
+                Los ítems que a este caso NO se le preguntaron se muestran igual,
+                diciéndolo. Sacarlos de la lista dejaría a quien mira sin saber si
+                falta porque no se preguntó o porque el cliente no contestó. */}
             {hilo.puntajesPosventa && hilo.puntajesPosventa.some((p) => p.estrellas !== null) && (
               <div className="border-b border-gray-200 bg-gray-50 px-4 py-2">
                 <div className="mb-1 text-[10px] uppercase tracking-wide text-ink-muted">Encuesta de Posventa</div>
@@ -721,7 +728,9 @@ export default function Seguimiento() {
                   {hilo.puntajesPosventa.map((p) => (
                     <span key={p.item} className="text-xs" title={p.comentario ?? undefined}>
                       <span className="text-ink-muted">{p.etiqueta}: </span>
-                      {p.estrellas === null ? (
+                      {p.noAplica ? (
+                        <span className="italic text-ink-muted">no se le preguntó (no hubo lavado)</span>
+                      ) : p.estrellas === null ? (
                         <span className="text-ink-muted">no contestó</span>
                       ) : (
                         <span

@@ -95,6 +95,9 @@ async function evaluacionesFiltradas(f: FiltrosPosventa) {
           modelo: true,
           patente: true,
           fechaProgramacion: true,
+          // Para poder distinguir en el detalle "no contestó el lavado" de "no
+          // se le preguntó porque no se lo lavaron".
+          tuvoLavado: true,
         },
       },
     },
@@ -189,6 +192,8 @@ export interface ReporteDesempenoPosventa {
     modelo: string;
     fecha: string;
     puntajes: Record<string, number | null>;
+    /** A este caso no se le preguntó por el lavado: al auto no se lo lavaron. */
+    sinLavado: boolean;
   }>;
 }
 
@@ -230,6 +235,7 @@ export async function reporteDesempenoPosventa(f: FiltrosPosventa): Promise<Repo
         modelo: c.modelo,
         fecha: fechaCorta(c.fechaProgramacion),
         puntajes,
+        sinLavado: c.tuvoLavado === false,
       };
     })
     .sort((a, b) => a.numeroOrden.localeCompare(b.numeroOrden));

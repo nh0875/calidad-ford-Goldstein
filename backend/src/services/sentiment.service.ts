@@ -4,7 +4,7 @@ import { z } from "zod";
 import { env } from "../config/env";
 import { marca, usaEstrellas } from "../config/marca";
 import { tieneEmojiNegativo } from "./analisis.service";
-import { ITEMS_POSVENTA } from "../config/posventa-vw";
+import { ITEMS_POSVENTA, ItemPosventa } from "../config/posventa-vw";
 import { PuntajeItem } from "./encuesta-posventa.service";
 import { esquemaItemsIA, leerPuntajesDeLista, normalizarPuntajes, promptItemsPosventa } from "./posventa-items.service";
 
@@ -847,28 +847,34 @@ export function esErrorCuota(err: unknown): boolean {
  * Devuelve null si no se pudo leer nada: el caso queda para revisión manual en
  * vez de inventar puntajes, porque un puntaje inventado ensucia el promedio del
  * área y ahí ya nadie lo puede distinguir de uno real.
+ *
+ * `items` son los ítems que se le preguntaron A ESTE CASO: 5, o 4 cuando al auto
+ * no le hicieron lavado. Tiene que ser la misma lista con la que se armó el
+ * mensaje que recibió el cliente, o los números que contestó se leen corridos de
+ * lugar.
  */
 export async function analizarItemsPosventa(
-  texto: string
+  texto: string,
+  items: readonly ItemPosventa[] = ITEMS_POSVENTA
 ): Promise<{ puntajes: PuntajeItem[]; confianza: number; resumen: string; crudo: unknown } | null> {
   // 1) Sin IA, cuando es una lista de números.
-  const deLista = leerPuntajesDeLista(texto);
+  const deLista = leerPuntajesDeLista(texto, items);
   if (deLista) {
     return {
       puntajes: deLista,
       confianza: 1,
-      resumen: "El cliente puntuó los 5 ítems.",
+      resumen: `El cliente puntuó los ${items.length} ítems.`,
       crudo: { motivo: "lista-de-numeros", texto },
     };
   }
 
   // 2) Con IA.
   if (env.analisisModoMock || (!hayIaReal() && env.modoDemo)) {
-    return analizarItemsMock(texto);
+    return analizarItemsMock(texto, items);
   }
   const proveedor = hayIaReal() ? elegirProveedor() : "anthropic";
   const llamarModelo = proveedor === "gemini" ? llamarGemini : llamarAnthropic;
-  const sistema = promptItemsPosventa();
+  const sistema = promptItemsPosventa(items);
 
   let crudo = "";
   try {
@@ -894,7 +900,7 @@ export async function analizarItemsPosventa(
   }
 
   return {
-    puntajes: normalizarPuntajes(validado.data.puntajes),
+    puntajes: normalizarPuntajes(validado.data.puntajes, items),
     confianza: validado.data.confianza,
     resumen: validado.data.resumen,
     crudo,
@@ -902,20 +908,21 @@ export async function analizarItemsPosventa(
 }
 
 /** Modo simulado: puntúa por palabras clave, para probar el circuito sin API. */
-function analizarItemsMock(texto: string) {
+function analizarItemsMock(texto: string, items: readonly ItemPosventa[] = ITEMS_POSVENTA) {
   const t = texto.toLowerCase();
   const malo = /(desastre|pesim|sucio|mal|nunca|queja|tarde|demor)/.test(t);
   const bueno = /(excelente|impecable|perfecto|muy bien|de diez|barbaro)/.test(t);
   const base = malo ? 2 : bueno ? 5 : 4;
   return {
     puntajes: normalizarPuntajes(
-      ITEMS_POSVENTA.map((item) => ({
+      items.map((item) => ({
         item,
-        // El mock solo puntúa el general: inventar los otros 4 daría una idea
-        // falsa de que el circuito por ítems anda cuando en realidad no se probó.
+        // El mock solo puntúa el general: inventar los otros daría una idea falsa
+        // de que el circuito por ítems anda cuando en realidad no se probó.
         estrellas: item === "GENERAL" ? base : null,
         comentario: null,
-      }))
+      })),
+      items
     ),
     confianza: 0.5,
     resumen: `[MOCK] Lectura simulada (${base} estrellas en general).`,
