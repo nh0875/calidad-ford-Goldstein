@@ -810,21 +810,41 @@ export default function Casos() {
                         {/* El 3° contacto es el único estado que pide que alguien
                             levante el teléfono. El botón abre acá mismo el mismo
                             formulario que la pantalla del caso, para poder cargar
-                            varias llamadas seguidas sin entrar y salir de cada una. */}
-                        {marcaInfo.modulos.segundoContacto && c.estadoContacto === "LLAMADA_PENDIENTE" && (
-                          <button
-                            onClick={() => setLlamadaAbierta(llamadaAbierta === c.id ? null : c.id)}
-                            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold transition-colors ${
-                              llamadaAbierta === c.id
-                                ? "bg-red-100 text-red-800"
-                                : "text-red-700 hover:bg-red-50"
-                            }`}
-                            title="Cargar lo que dijo el cliente por teléfono"
-                          >
-                            <Phone className="h-3.5 w-3.5" aria-hidden="true" />
-                            {llamadaAbierta === c.id ? "Cerrar" : "Cargar llamada"}
-                          </button>
-                        )}
+                            varias llamadas seguidas sin entrar y salir de cada una.
+                            Sobre un caso YA cerrado por teléfono, el mismo botón
+                            sirve para corregir lo que se cargó: la nota se tipea
+                            apurado mientras se habla y equivocarse es normal. */}
+                        {marcaInfo.modulos.segundoContacto &&
+                          ["LLAMADA_PENDIENTE", "RESPONDIO_LLAMADA", "NO_RESPONDE_CONTACTOS"].includes(
+                            c.estadoContacto
+                          ) && (
+                            <button
+                              onClick={() => setLlamadaAbierta(llamadaAbierta === c.id ? null : c.id)}
+                              className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold transition-colors ${
+                                c.estadoContacto === "RESPONDIO_LLAMADA"
+                                  ? llamadaAbierta === c.id
+                                    ? "bg-gray-200 text-ink"
+                                    : "text-ink-muted hover:bg-gray-100"
+                                  : llamadaAbierta === c.id
+                                    ? "bg-red-100 text-red-800"
+                                    : "text-red-700 hover:bg-red-50"
+                              }`}
+                              title={
+                                c.estadoContacto === "RESPONDIO_LLAMADA"
+                                  ? "Corregir la calificación o el comentario de la llamada"
+                                  : c.estadoContacto === "NO_RESPONDE_CONTACTOS"
+                                    ? "Si al final lo pudiste hablar, cargá acá lo que dijo"
+                                    : "Cargar lo que dijo el cliente por teléfono"
+                              }
+                            >
+                              <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                              {llamadaAbierta === c.id
+                                ? "Cerrar"
+                                : c.estadoContacto === "RESPONDIO_LLAMADA"
+                                  ? "Editar llamada"
+                                  : "Cargar llamada"}
+                            </button>
+                          )}
                         {/* Editar datos del caso (corregir cargas erróneas). */}
                         <button
                           onClick={() => setCasoEditar(c)}
@@ -868,6 +888,7 @@ export default function Casos() {
                         <PanelLlamada
                           casoId={c.id}
                           area={c.area}
+                          estado={c.estadoContacto}
                           puntajesPosventa={
                             c.tuvoLavado === false
                               ? marcaInfo.posventa.items.filter((i) => i.item !== "LAVADO")

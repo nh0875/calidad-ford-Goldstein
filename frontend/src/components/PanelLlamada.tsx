@@ -11,10 +11,16 @@
 // La calificación NO es obligatoria. Un cliente puede atender, decir que está
 // todo bien y cortar sin dar un número: eso es una respuesta igual, y perderla
 // por no tener puntaje sería peor que guardarla incompleta.
+//
+// TAMBIÉN SIRVE PARA CORREGIR. Esto se tipea apurado, mientras se habla por
+// teléfono, así que equivocarse es normal. El panel se abre pidiendo lo que ya
+// está cargado: si abriera en blanco, corregir una estrella obligaría a
+// acordarse y volver a escribir todo el resto, y lo que no se vuelva a cargar
+// se borra.
 
-import { useState } from "react";
-import { Check, Phone, PhoneOff, Star } from "lucide-react";
-import { ApiError, apiPostJson } from "../lib/api";
+import { useCallback, useEffect, useState } from "react";
+import { AlertTriangle, Check, Phone, PhoneOff, Star } from "lucide-react";
+import { ApiError, apiGet, apiPostJson } from "../lib/api";
 
 export interface ItemPuntaje {
   item: string;
@@ -63,12 +69,22 @@ function Estrellas({ valor, onElegir }: { valor: number | null; onElegir: (n: nu
 export function PanelLlamada({
   casoId,
   area,
+  estado,
   puntajesPosventa,
   llamadaMotivo,
   onListo,
 }: {
   casoId: string;
   area: string;
+  /**
+   * En qué estado está el caso. Decide qué dice el panel, que no es lo mismo en
+   * los tres casos donde aparece:
+   *   LLAMADA_PENDIENTE     — hay que llamarlo: es una tarea urgente.
+   *   RESPONDIO_LLAMADA     — ya se cargó y esto es una corrección.
+   *   NO_RESPONDE_CONTACTOS — se lo había dado por inalcanzable, y si al final
+   *                           se lo pudo hablar el caso se reabre.
+   */
+  estado: string;
   puntajesPosventa: ItemPuntaje[] | null;
   llamadaMotivo?: string | null;
   onListo: () => Promise<void> | void;
@@ -85,6 +101,47 @@ export function PanelLlamada({
   const [falla, setFalla] = useState<string | null>(null);
   const [motivo, setMotivo] = useState("");
   const [mostrarMotivo, setMostrarMotivo] = useState(false);
+  // ¿Este caso ya se cerró por llamada y lo que se está haciendo es corregirlo?
+  const corrigiendo = estado === "RESPONDIO_LLAMADA";
+  // Urgente = todavía hay que levantar el teléfono. Los otros dos estados no lo
+  // son: uno ya se resolvió y el otro ya se dio por cerrado.
+  const urgente = estado === "LLAMADA_PENDIENTE";
+  const [rqrAbierto, setRqrAbierto] = useState<string | null>(null);
+  const [cargando, setCargando] = useState(true);
+
+  // Lo que ya estaba cargado. Se pide siempre: en un caso que todavía no se
+  // atendió vuelve vacío y el formulario queda en blanco, que es lo mismo que
+  // antes, y así no hay dos caminos distintos según cómo se haya abierto.
+  const traerLoCargado = useCallback(async () => {
+    setCargando(true);
+    try {
+      const { data } = await apiGet<{
+        data: {
+          estrellasGeneral: number | null;
+          comentario: string;
+          puntajes: Array<{ item: string; estrellas: number | null }>;
+          rqrAbierto: string | null;
+        };
+      }>(`/api/seguimiento/${encodeURIComponent(casoId)}/llamada`);
+      setRqrAbierto(data.rqrAbierto);
+      setGeneral(data.estrellasGeneral);
+      setComentario(data.comentario);
+      setPorItem(
+        Object.fromEntries(
+          data.puntajes.filter((x) => x.estrellas !== null).map((x) => [x.item, x.estrellas as number])
+        )
+      );
+    } catch {
+      // Que no se pueda leer lo anterior no tiene por qué impedir cargar: el
+      // formulario queda en blanco y se avisa recién si falla el guardado.
+    } finally {
+      setCargando(false);
+    }
+  }, [casoId]);
+
+  useEffect(() => {
+    traerLoCargado();
+  }, [traerLoCargado]);
 
   async function guardar() {
     setGuardando(true);
@@ -128,23 +185,46 @@ export function PanelLlamada({
     }
   }
 
+  // Un caso ya cerrado no es una urgencia: se pinta en gris, no en rojo. El rojo
+  // es para lo único que pide que alguien levante el teléfono ahora.
+  const tono = urgente
+    ? { borde: "border-red-200", fondo: "bg-red-50", texto: "text-red-900" }
+    : { borde: "border-gray-200", fondo: "bg-gray-50", texto: "text-ink" };
+
   return (
-    <div className="border-b border-red-200 bg-red-50 px-4 py-3">
-      <p className="flex items-center gap-2 text-sm font-semibold text-red-900">
+    <div className={`border-b ${tono.borde} ${tono.fondo} px-4 py-3`}>
+      <p className={`flex items-center gap-2 text-sm font-semibold ${tono.texto}`}>
         <Phone className="h-4 w-4 shrink-0" />
-        Hay que llamar a este cliente: no contestó ninguno de los dos WhatsApp.
+        {corrigiendo
+          ? "Este caso se cerró por teléfono. Podés corregir lo que se cargó."
+          : urgente
+            ? "Hay que llamar a este cliente: no contestó ninguno de los dos WhatsApp."
+            : "Este caso se cerró como “No responde contactos”. Si al final lo pudiste hablar, cargá acá lo que dijo."}
       </p>
 
-      {llamadaMotivo && (
-        <p className="mt-1 text-xs text-red-800">
+      {llamadaMotivo && !corrigiendo && (
+        <p className={`mt-1 text-xs ${urgente ? "text-red-800" : "text-ink-muted"}`}>
           Último intento: <span className="italic">{llamadaMotivo}</span>
         </p>
       )}
 
-      <div className="mt-3 rounded-lg border border-red-200 bg-white p-3 shadow-sm">
+      <div className={`mt-3 rounded-lg border ${tono.borde} bg-white p-3 shadow-sm`}>
         <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
           Lo que dijo por teléfono
         </div>
+
+        {/* Cambiar la nota de un caso que ya abrió un reclamo formal no cierra
+            ese reclamo: puede haber alguien trabajándolo. Se avisa acá, antes de
+            tocar nada, porque después el cartel llega tarde. */}
+        {corrigiendo && rqrAbierto && (
+          <p className="mt-2 flex items-start gap-1.5 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Este caso tiene el <strong>{rqrAbierto}</strong> abierto. Si cambiás la calificación, el RQR no se cierra
+              solo: revisalo desde la pantalla de RQR.
+            </span>
+          </p>
+        )}
 
         {porItems ? (
           <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
@@ -188,14 +268,14 @@ export function PanelLlamada({
             className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all duration-150 hover:bg-accent-dark hover:shadow disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Check className="h-3.5 w-3.5" />
-            Guardar lo que dijo
+            {corrigiendo ? "Guardar los cambios" : "Guardar lo que dijo"}
           </button>
 
           {/* "No se pudo hablar" CIERRA el caso como "No responde contactos":
               se agotaron los tres intentos. Por eso el motivo es obligatorio —
               número equivocado, no atiende nunca y se negó a contestar son tres
               cosas distintas, y sin escribirlas quedan todas en la misma bolsa. */}
-          {mostrarMotivo ? (
+          {!urgente ? null : mostrarMotivo ? (
             <div className="flex flex-1 flex-wrap items-center gap-2">
               <input
                 value={motivo}
@@ -232,6 +312,7 @@ export function PanelLlamada({
           )}
         </div>
 
+        {cargando && <p className="mt-2 text-xs text-ink-muted">Buscando lo que ya estaba cargado…</p>}
         {falla && <p className="mt-2 text-xs text-red-700">{falla}</p>}
       </div>
     </div>

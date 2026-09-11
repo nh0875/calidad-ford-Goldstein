@@ -4,6 +4,7 @@ import {
   cargarResultadoLlamada,
   mandarSegundoContacto,
   marcarLlamadaFallida,
+  verResultadoLlamada,
 } from "../controllers/llamada.controller";
 import {
   contarPendientesSeguimiento,
@@ -28,6 +29,10 @@ router.post("/:casoId/reenviar-plantilla", asyncHandler(reenviarPlantilla));
 // porque la bandera de marca esta apagada). Van aca y no en /casos porque la
 // pantalla desde donde se usan es la del seguimiento del caso.
 router.post("/:casoId/segundo-contacto", asyncHandler(mandarSegundoContacto));
+// El GET va ANTES del POST solo por prolijidad: son métodos distintos y no
+// compiten. Devuelve lo que ya se cargó, para poder corregirlo sin tipear todo
+// de nuevo.
+router.get("/:casoId/llamada", asyncHandler(verResultadoLlamada));
 router.post("/:casoId/llamada", asyncHandler(cargarResultadoLlamada));
 router.post("/:casoId/llamada-fallida", asyncHandler(marcarLlamadaFallida));
 

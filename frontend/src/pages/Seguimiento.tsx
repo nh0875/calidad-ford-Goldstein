@@ -311,6 +311,9 @@ export default function Seguimiento() {
   const [aviso, setAviso] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [clasificando, setClasificando] = useState(false);
+  // El panel de la llamada abierto sobre un caso YA cerrado por teléfono, para
+  // corregir la calificación o el comentario.
+  const [editandoLlamada, setEditandoLlamada] = useState(false);
   const finRef = useRef<HTMLDivElement>(null);
 
   const cargarLista = useCallback(async () => {
@@ -353,6 +356,9 @@ export default function Seguimiento() {
 
   // Hilo seleccionado: carga + refresco cada 12 s.
   useEffect(() => {
+    // Cambiar de caso cierra el panel de corrección: si quedara abierto,
+    // aparecería con los datos de un cliente sobre la conversación de otro.
+    setEditandoLlamada(false);
     if (!seleccionadoId) {
       setHilo(null);
       return;
@@ -685,15 +691,39 @@ export default function Seguimiento() {
             {/* El circuito de insistencia dejó este caso para llamar. Va ARRIBA
                 de todo lo demás: es lo único de esta pantalla que pide que
                 alguien levante el teléfono ahora. */}
-            {hilo.caso.estadoContacto === "LLAMADA_PENDIENTE" && (
+            {(hilo.caso.estadoContacto === "LLAMADA_PENDIENTE" || editandoLlamada) && (
               <PanelLlamada
                 casoId={hilo.caso.id}
                 area={hilo.caso.area}
+                estado={hilo.caso.estadoContacto}
                 puntajesPosventa={hilo.puntajesPosventa?.filter((p) => !p.noAplica) ?? null}
                 llamadaMotivo={hilo.caso.llamadaMotivo}
-                onListo={() => cargarHilo(hilo.caso.id)}
+                onListo={async () => {
+                  setEditandoLlamada(false);
+                  await cargarHilo(hilo.caso.id);
+                }}
               />
             )}
+
+            {/* Ya se cerró por teléfono: se puede corregir. No se abre solo
+                —sería ruido en un caso ya resuelto— pero tiene que estar a mano,
+                porque lo que se corrige acá entra en el promedio del asesor y
+                puede haber abierto un RQR. */}
+            {["RESPONDIO_LLAMADA", "NO_RESPONDE_CONTACTOS"].includes(hilo.caso.estadoContacto) &&
+              !editandoLlamada && (
+                <div className="border-b border-gray-200 bg-gray-50 px-4 py-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditandoLlamada(true)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-muted transition-colors hover:text-accent-dark hover:underline"
+                  >
+                    <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                    {hilo.caso.estadoContacto === "RESPONDIO_LLAMADA"
+                      ? "Corregir lo que se cargó de la llamada"
+                      : "Lo pude hablar: cargar lo que dijo"}
+                  </button>
+                </div>
+              )}
 
             {hilo.caso.quiereLlamado && (
               <div className="border-b border-amber-200 bg-amber-50 px-4 py-2">

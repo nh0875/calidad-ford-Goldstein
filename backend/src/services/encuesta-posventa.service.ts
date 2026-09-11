@@ -206,18 +206,31 @@ export interface PuntajeItem {
 export async function guardarPuntajes(
   casoId: string,
   puntajes: PuntajeItem[],
-  analisisId?: string
+  analisisId?: string,
+  opciones?: {
+    /**
+     * Lo está corrigiendo UNA PERSONA desde un formulario, no la IA leyendo un
+     * mensaje. Entonces lo que manda vale tal cual, incluso para BORRAR: si
+     * alguien puso 3 estrellas por error y las saca, tienen que desaparecer.
+     *
+     * Sin esto la corrección no se podía hacer, porque el modo normal nunca pisa
+     * con null (ver el comentario del update, que existe por una razón distinta
+     * y también válida).
+     */
+    sobrescribir?: boolean;
+  }
 ): Promise<number> {
   let guardados = 0;
   for (const p of puntajes) {
     const estrellas = p.estrellas !== null && p.estrellas >= 1 && p.estrellas <= 5 ? p.estrellas : null;
+    const comentario = p.comentario?.trim() || null;
     await prisma.evaluacionPosventa.upsert({
       where: { casoId_item: { casoId, item: p.item } },
       create: {
         casoId,
         item: p.item,
         estrellas,
-        comentario: p.comentario?.trim() || null,
+        comentario,
         analisisId: analisisId ?? null,
       },
       // OJO: el update NO pisa con null.
@@ -231,10 +244,12 @@ export async function guardarPuntajes(
       //
       // Ahora un mensaje posterior solo puede COMPLETAR o CORREGIR lo que
       // menciona; lo que no menciona queda como estaba.
-      update: {
-        ...(estrellas !== null ? { estrellas, analisisId: analisisId ?? null } : {}),
-        ...(p.comentario?.trim() ? { comentario: p.comentario.trim() } : {}),
-      },
+      update: opciones?.sobrescribir
+        ? { estrellas, comentario, analisisId: analisisId ?? null }
+        : {
+            ...(estrellas !== null ? { estrellas, analisisId: analisisId ?? null } : {}),
+            ...(comentario ? { comentario } : {}),
+          },
     });
     if (estrellas !== null) guardados++;
   }
