@@ -13,6 +13,7 @@ import { FileUp, Gift, Send, Trash2, Users } from "lucide-react";
 import { apiDelete, apiGet, apiPatchJson, apiPostForm, apiPostJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
 import { Card } from "../components/ui/Card";
+import { SelectorSucursal } from "../components/ui/SelectorSucursal";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
@@ -241,17 +242,10 @@ export default function Fidelizacion() {
   // asignado a San Juan no ve lo que quedó rotulado como Mendoza. Cuando al
   // subir el Excel se elige la sucursal equivocada, esa gente le queda invisible
   // a quien corresponde, y sin esto había que corregirlo por base de datos.
-  async function cambiarSucursalCarga(upload: DetalleCarga["upload"]) {
-    const propuesta = window.prompt(
-      `¿A qué sucursal pertenece "${upload.filename}"?
-
-` +
-        "Esto decide quién ve a estos clientes en Seguimiento: solo los usuarios de esa " +
-        "sucursal (y los que no tienen ninguna asignada).",
-      upload.sucursal
-    );
-    if (propuesta === null) return;
-    const limpia = propuesta.trim();
+  // La sucursal llega ya elegida de un desplegable: antes esto era un
+  // window.prompt y ahí se escribía a mano, que es exactamente lo que hay que
+  // evitar en el campo del que dependen las reglas de visibilidad.
+  async function cambiarSucursalCarga(upload: DetalleCarga["upload"], limpia: string) {
     if (!limpia || limpia === upload.sucursal) return;
 
     setError(null);
@@ -345,13 +339,11 @@ export default function Fidelizacion() {
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-xs font-medium text-ink-muted">Sucursal (opcional)</span>
-              <input
-                value={sucursal}
-                onChange={(e) => setSucursal(e.target.value)}
-                placeholder="General"
-                className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-accent focus:outline-none"
-              />
+              <span className="mb-1 block text-xs font-medium text-ink-muted">Sucursal</span>
+              {/* Decide QUIEN VE a estos clientes: por eso es una lista cerrada y
+                  no un campo de texto. Una sucursal mal escrita los deja
+                  invisibles para la gente que corresponde, sin ningun error. */}
+              <SelectorSucursal valor={sucursal} onCambiar={setSucursal} extra="general" />
             </label>
           </div>
           {hojas.length > 1 && (
@@ -500,9 +492,10 @@ function DetalleClientes({
   puedeEnviar: boolean;
   onEnviar: () => void;
   onCerrar: () => void;
-  cambiarSucursal: (upload: DetalleCarga["upload"]) => void;
+  cambiarSucursal: (upload: DetalleCarga["upload"], sucursal: string) => void;
 }) {
   const { upload, clientes } = detalle;
+  const [editandoSucursal, setEditandoSucursal] = useState(false);
   const esVentas = upload.origen === "VENTAS";
   // "Por enviar" = pendientes + los que quedaron en error (se reintentan).
   const porEnviar = clientes.filter((c) => c.estado === "PENDIENTE" || c.estado === "ERROR").length;
@@ -524,14 +517,29 @@ function DetalleClientes({
               QUIÉN VE a estos clientes en Seguimiento. Si al subir el Excel se
               eligió la equivocada, esa gente le queda invisible a quien
               corresponde, y hasta ahora la única salida era tocar la base. */}
-          <button
-            type="button"
-            onClick={() => cambiarSucursal(upload)}
-            title="Corregir a qué sucursal pertenece esta carga (decide quién ve a estos clientes)"
-            className="rounded px-1.5 py-0.5 text-ink-muted underline decoration-dotted underline-offset-2 transition-colors hover:bg-gray-100 hover:text-accent-dark"
-          >
-            {upload.sucursal}
-          </button>
+          {editandoSucursal ? (
+            <span className="inline-flex flex-col align-middle">
+              <SelectorSucursal
+                valor={upload.sucursal}
+                extra="general"
+                autoFocus
+                className="!py-1 !text-xs"
+                onCambiar={(v) => {
+                  setEditandoSucursal(false);
+                  cambiarSucursal(upload, v);
+                }}
+              />
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditandoSucursal(true)}
+              title="Corregir a qué sucursal pertenece esta carga (decide quién ve a estos clientes)"
+              className="rounded px-1.5 py-0.5 text-ink-muted underline decoration-dotted underline-offset-2 transition-colors hover:bg-gray-100 hover:text-accent-dark"
+            >
+              {upload.sucursal}
+            </button>
+          )}
           <div className="mt-1 flex flex-wrap gap-1.5">
             <Badge tono={esVentas ? "morado" : "azul"} className="cursor-default">
               {LABEL_ORIGEN[upload.origen]}

@@ -1,11 +1,10 @@
 import { Request, Response } from "express";
-import { EstadoFidelizacion, OrigenFidelizacion, Prisma, TipoAlias, TipoUpload, UploadStatus } from "@prisma/client";
+import { EstadoFidelizacion, OrigenFidelizacion, Prisma, TipoUpload, UploadStatus } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { env } from "../config/env";
-import { marca } from "../config/marca";
+import { marca, SUCURSAL_GENERAL } from "../config/marca";
 import { abrirWorkbook, derivarPeriodoDeNombreHoja, hojaVacia } from "../services/excel.service";
-import { aplicarAlias, cargarAliasMap, parsearSucursal } from "../services/normalizacion.service";
 import {
   encolarEnviosFidelizacion,
   motivoBloqueoEnvio,
@@ -18,6 +17,7 @@ import {
   obtenerEstadoPlantillaFidelizacion,
 } from "../services/configuracion.service";
 import { ACCIONES, auditar } from "../services/audit.service";
+import { zSucursal } from "../services/sucursal.service";
 
 // ---------- POST /api/fidelizacion/hojas (que hojas trae el Excel) ----------
 // Existe para las planillas con una hoja POR MES: la pantalla necesita saber que
@@ -48,7 +48,7 @@ export async function hojasDelExcel(req: Request, res: Response) {
 // candidatos en PENDIENTE; el envío se dispara aparte con el botón.
 
 const subirSchema = z.object({
-  sucursal: z.string().trim().min(1, "Indicá la sucursal de la carga.").default("General"),
+  sucursal: zSucursal.default(SUCURSAL_GENERAL),
   // Qué hoja del Excel procesar. Opcional: si no viene, se usa la primera que
   // tenga datos. Hace falta porque hay planillas con una hoja POR MES (la base
   // anual de Posventa de San Juan trae doce), y sin esto solo se podría cargar
@@ -229,7 +229,7 @@ export async function subirFidelizacion(req: Request, res: Response) {
 // pantalla y se listaría bajo otra provincia en la de al lado.
 
 const cargaSucursalSchema = z.object({
-  sucursal: z.string().trim().min(1, "Indicá la sucursal."),
+  sucursal: zSucursal,
 });
 
 export async function editarSucursalCargaFidelizacion(req: Request, res: Response) {
@@ -244,13 +244,11 @@ export async function editarSucursalCargaFidelizacion(req: Request, res: Respons
   });
   if (!upload) return res.status(404).json({ message: "No se encontró esa carga." });
 
-  // La MISMA normalización que usan los casos y los usuarios (Title Case + los
-  // alias que haya cargado el admin). Sin esto, escribir "san juan" a mano acá
-  // no coincidiría con el "San Juan" de un usuario y el problema seguiría igual,
-  // solo que más difícil de ver.
-  const alias = await cargarAliasMap(TipoAlias.SUCURSAL);
-  const norm = aplicarAlias(parsearSucursal(parsed.data.sucursal), alias);
-  const sucursal = norm.nombre || parsed.data.sucursal.trim();
+  // Ya viene escrita como corresponde: el validador la comparó contra la lista
+  // cerrada de la marca y devolvió la forma canónica. Antes esto pasaba por los
+  // alias del admin porque acá se escribía a mano, y "san juan" no coincidía con
+  // el "San Juan" del usuario.
+  const sucursal = parsed.data.sucursal;
 
   const [, clientes] = await prisma.$transaction([
     prisma.excelUpload.update({ where: { id: upload.id }, data: { sucursal } }),

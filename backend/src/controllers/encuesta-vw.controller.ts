@@ -14,6 +14,7 @@ import {
 } from "../services/encuesta-interna-vw.service";
 import { avisarVendedoresVW } from "../services/encuesta-vw-mail.service";
 import { ACCIONES, auditar } from "../services/audit.service";
+import { zSucursal } from "../services/sucursal.service";
 
 // ---------- POST /api/encuesta-vw/preview ----------
 // Se lee el archivo y se muestra lo que se va a hacer ANTES de tocar la base.
@@ -327,7 +328,7 @@ export async function editarVendedorVW(req: Request, res: Response) {
 
 const nuevoVendedorSchema = z.object({
   codigo: z.string().trim().regex(/^\d{7}$/, "El código del vendedor son 7 dígitos (4 de sucursal + 3 del vendedor)."),
-  sucursal: z.string().trim().min(1, "Indicá la sucursal.").max(80),
+  sucursal: zSucursal,
   nombre: z.string().trim().max(120).optional(),
   email: z
     .string()

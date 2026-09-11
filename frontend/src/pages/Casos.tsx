@@ -965,7 +965,6 @@ export default function Casos() {
       {/* Alta manual de un caso */}
       {nuevoCaso && (
         <NuevoCasoModal
-          sucursales={opciones.sucursales}
           asesores={opciones.asesores}
           onCancelar={() => setNuevoCaso(false)}
           onGuardado={(msg) => {
@@ -981,7 +980,6 @@ export default function Casos() {
       {/* Edición de un caso existente (corregir datos mal cargados) */}
       {casoEditar && (
         <NuevoCasoModal
-          sucursales={opciones.sucursales}
           asesores={opciones.asesores}
           caso={casoEditar}
           onCancelar={() => setCasoEditar(null)}

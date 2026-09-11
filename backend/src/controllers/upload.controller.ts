@@ -15,6 +15,7 @@ import {
 } from "../services/excel.service";
 import { importarHojas } from "../services/importacion.service";
 import { ACCIONES, auditar } from "../services/audit.service";
+import { zSucursal } from "../services/sucursal.service";
 
 const FILAS_PREVIEW = 5;
 
@@ -93,10 +94,8 @@ export async function previewUpload(req: Request, res: Response) {
 
 const confirmSchema = z.object({
   fileToken: z.string().uuid("El identificador del archivo no es válido. Volvé a subir el Excel."),
-  sucursal: z
-    .string({ required_error: "Falta indicar la sucursal." })
-    .trim()
-    .min(1, "Falta indicar la sucursal."),
+  // Lista cerrada: ver services/sucursal.service.ts.
+  sucursal: zSucursal,
   anio: z.coerce
     .number({ invalid_type_error: "El año tiene que ser un número, por ejemplo 2026." })
     .int()

@@ -18,6 +18,7 @@ import { claseBoton } from "../components/ui/Button";
 import { Campo, Input, Select } from "../components/ui/Field";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SkeletonBlock } from "../components/ui/Skeleton";
+import { SelectorSucursal } from "../components/ui/SelectorSucursal";
 
 // Los tres estados por los que pasa un cliente. El orden del array es el orden
 // del circuito, y de ahí sale también el orden de la lista en pantalla: primero
@@ -916,7 +917,10 @@ export default function EncuestasFabrica() {
               <Input value={nuevo.codigo} onChange={(e) => setNuevo({ ...nuevo, codigo: e.target.value })} placeholder="1035017" />
             </Campo>
             <Campo etiqueta="Sucursal">
-              <Input value={nuevo.sucursal} onChange={(e) => setNuevo({ ...nuevo, sucursal: e.target.value })} placeholder="MENDOZA" />
+              {/* Lista cerrada. El nombre se guarda en mayúsculas para que quede
+                  igual al de las hojas del Excel de fábrica ("MENDOZA"), que es
+                  con lo que se agrupa a los vendedores en las pantallas. */}
+              <SelectorSucursal valor={nuevo.sucursal} onCambiar={(v) => setNuevo({ ...nuevo, sucursal: v })} />
             </Campo>
             <Campo etiqueta="Nombre">
               <Input value={nuevo.nombre} onChange={(e) => setNuevo({ ...nuevo, nombre: e.target.value })} />

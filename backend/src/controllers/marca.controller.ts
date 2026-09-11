@@ -38,6 +38,10 @@ export function infoMarca(_req: Request, res: Response) {
       // tablero: en las marcas sin circuito esas tres cosas no existen.
       segundoContacto: marca.segundoContacto,
     },
+    // Lista CERRADA de sucursales. La pantalla las ofrece en un desplegable en
+    // vez de dejar escribirlas: un typo rompe en silencio la visibilidad por
+    // provincia y no deja ninguna pista de por qué.
+    sucursales: marca.sucursales,
     // Los 5 ítems que se miden en Posventa. Van acá para que la pantalla arme
     // sus columnas y sus etiquetas sin una consulta aparte: son fijos y chicos.
     posventa: marca.posventaPorItems

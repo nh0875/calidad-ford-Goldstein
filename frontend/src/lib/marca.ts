@@ -29,6 +29,12 @@ export interface InfoMarca {
     // Circuito de insistencia: 2° contacto por WhatsApp y 3° por llamada.
     segundoContacto: boolean;
   };
+  /**
+   * Las sucursales de esta marca. Lista CERRADA: las pantallas las ofrecen en
+   * un desplegable en vez de dejar escribirlas, porque un typo rompe en
+   * silencio la visibilidad por provincia.
+   */
+  sucursales: string[];
   // Los 5 ítems que mide la encuesta de Posventa. Vacío en las marcas que no la usan.
   posventa: {
     porItems: boolean;
@@ -57,6 +63,7 @@ const POR_DEFECTO: InfoMarca = {
   escala: "SEMAFORO",
   estrellasSinRqr: null,
   modulos: { fidelizacion: true, refuerzo: true, encuestaFabrica: false, desempenoPosventa: false, segundoContacto: false },
+  sucursales: ["Mendoza", "San Juan"],
   posventa: { porItems: false, items: [] },
   rqr: { porSubareas: false, clienteAnonimo: false, areas: [], origenes: [] },
 };

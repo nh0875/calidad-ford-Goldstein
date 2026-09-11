@@ -5,6 +5,7 @@ import { CheckCircle2, ClipboardList, FileSpreadsheet, ListChecks, UploadCloud }
 import { apiPostForm, apiPostJson } from "../lib/api";
 import { CAMPOS_CASO } from "../lib/camposCaso";
 import { Card } from "../components/ui/Card";
+import { SelectorSucursal } from "../components/ui/SelectorSucursal";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
@@ -324,7 +325,7 @@ function UploadPosventa({ area = "POSVENTA" }: { area?: "POSVENTA" | "VENTAS" })
         <Card className="max-w-lg" padding="p-6">
           <form onSubmit={subirArchivo} className="space-y-4">
             <Campo etiqueta="Sucursal" hint="La sucursal no viene en el Excel: se aplica a todos los casos de esta carga.">
-              <Input type="text" value={sucursal} onChange={(e) => setSucursal(e.target.value)} placeholder="Ej: San Juan" />
+              <SelectorSucursal valor={sucursal} onCambiar={setSucursal} />
             </Campo>
             <Campo
               etiqueta="Año del archivo"

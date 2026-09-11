@@ -1,4 +1,5 @@
 import { FormEvent, useState } from "react";
+import { SelectorSucursal } from "./ui/SelectorSucursal";
 import { Pencil, UserPlus } from "lucide-react";
 import { apiPatchJson, apiPostJson } from "../lib/api";
 import { getUsuario, veTodasLasAreas } from "../lib/auth";
@@ -32,9 +33,9 @@ export interface CasoEditable {
 }
 
 interface Props {
-  // Valores ya presentes en la base, para no tipear a mano y evitar
-  // "San Juan" / "san juan " como dos sucursales distintas.
-  sucursales: string[];
+  // Asesores ya presentes en la base, para no tipear a mano. La SUCURSAL no sale
+  // de acá: son las de la marca (lista cerrada), porque de ella dependen las
+  // reglas de quién ve cada caso.
   asesores: string[];
   // Si viene un caso, el modal está en modo EDICIÓN; si no, en modo ALTA.
   caso?: CasoEditable | null;
@@ -51,7 +52,7 @@ function hoyISO(): string {
   return `${d.getFullYear()}-${mes}-${dia}`;
 }
 
-export function NuevoCasoModal({ sucursales, asesores, caso, onCancelar, onGuardado }: Props) {
+export function NuevoCasoModal({ asesores, caso, onCancelar, onGuardado }: Props) {
   const usuario = getUsuario();
   const eligeArea = veTodasLasAreas(usuario); // si está restringido, el backend fuerza la suya
   const esEdicion = !!caso;
@@ -63,7 +64,7 @@ export function NuevoCasoModal({ sucursales, asesores, caso, onCancelar, onGuard
     modelo: caso?.modelo ?? "",
     patente: caso?.patente ?? "",
     asesor: caso?.asesor ?? "",
-    sucursal: caso?.sucursal ?? (sucursales.length === 1 ? sucursales[0] : ""),
+    sucursal: caso?.sucursal ?? "",
     fechaProgramacion: caso ? caso.fechaProgramacion.slice(0, 10) : hoyISO(),
     // "S/N" es el placeholder de "sin orden": en el form se muestra vacío.
     numeroOrden: caso && caso.numeroOrden !== "S/N" ? caso.numeroOrden : "",
@@ -72,12 +73,9 @@ export function NuevoCasoModal({ sucursales, asesores, caso, onCancelar, onGuard
     area: caso?.area ?? (usuario && usuario.area !== "AMBAS" ? usuario.area : "POSVENTA"),
     comentarioAsesor: caso?.comentarioAsesor ?? "",
   });
-  // Sucursal y asesor: desplegable con los valores existentes + opción de
-  // escribir uno nuevo. Al editar, si el valor actual no está en la lista, se
-  // arranca en modo "escribir" con el valor cargado para no perderlo.
-  const [sucursalNueva, setSucursalNueva] = useState(
-    sucursales.length === 0 || (esEdicion && !!caso && !sucursales.includes(caso.sucursal))
-  );
+  // Asesor: desplegable con los existentes + opción de escribir uno nuevo. Al
+  // editar, si el valor actual no está en la lista, se arranca en modo
+  // "escribir" con el valor cargado para no perderlo.
   const [asesorNuevo, setAsesorNuevo] = useState(
     asesores.length === 0 || (esEdicion && !!caso && !asesores.includes(caso.asesor))
   );
@@ -252,36 +250,11 @@ export function NuevoCasoModal({ sucursales, asesores, caso, onCancelar, onGuard
             )}
           </Campo>
 
+          {/* Sin la opción de "escribir una sucursal nueva": era la puerta por
+              donde entraban los typos, y una sucursal mal escrita rompe en
+              silencio quién ve el caso. Las opciones salen del perfil de la marca. */}
           <Campo etiqueta="Sucursal *">
-            {sucursalNueva ? (
-              <Input
-                required
-                value={form.sucursal}
-                onChange={(e) => cambiar("sucursal", e.target.value)}
-                placeholder="Ej: San Juan"
-              />
-            ) : (
-              <Select required value={form.sucursal} onChange={(e) => cambiar("sucursal", e.target.value)}>
-                <option value="">Elegí una sucursal…</option>
-                {sucursales.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </Select>
-            )}
-            {sucursales.length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSucursalNueva((v) => !v);
-                  cambiar("sucursal", "");
-                }}
-                className="mt-1 text-xs font-medium text-accent-dark hover:underline"
-              >
-                {sucursalNueva ? "Elegir una de la lista" : "Escribir una sucursal nueva"}
-              </button>
-            )}
+            <SelectorSucursal required valor={form.sucursal} onCambiar={(v) => cambiar("sucursal", v)} />
           </Campo>
 
           <Campo etiqueta="Fecha de la visita *" hint="Define el período al que se imputa el caso">

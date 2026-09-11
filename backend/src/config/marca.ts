@@ -103,6 +103,21 @@ export interface PerfilMarca {
    * Ford sin que nadie lo haya pedido.
    */
   segundoContacto: boolean;
+  /**
+   * Las sucursales REALES de esta marca, en el orden en que se ofrecen.
+   *
+   * Es una lista CERRADA a propósito. Antes la sucursal se escribía a mano y las
+   * opciones salían de lo que ya había en la base, así que un typo hecho una vez
+   * ("San juan", "SAN JUAN ", "Sanjuan") quedaba como opción para siempre y
+   * rompía en silencio las reglas de visibilidad: un usuario asignado a "San
+   * Juan" deja de ver todo lo que quedó cargado como "San juan ", y la pantalla
+   * no da ninguna pista de por qué. Ya pasó, y costó días encontrarlo.
+   *
+   * "General" NO va acá: no es una sucursal sino la ausencia de una, y cada
+   * pantalla decide si ofrecerla y cómo llamarla (en las cargas es "General", en
+   * los usuarios es "todas las provincias").
+   */
+  sucursales: string[];
   /** Color institucional para los títulos de los documentos que se exportan. */
   colorDocumento: string;
   /** Nombre del archivo del logo dentro de backend/assets (ver su README). */
@@ -123,6 +138,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     visibilidadPorProvincia: false,
     avisoPosibleDuplicado: false,
     segundoContacto: false,
+    sucursales: ["Mendoza", "San Juan"],
     colorDocumento: "003478", // azul Ford
     logoArchivo: "logo-ford.png",
   },
@@ -142,6 +158,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     visibilidadPorProvincia: true,
     avisoPosibleDuplicado: true,
     segundoContacto: true,
+    sucursales: ["Mendoza", "San Juan"],
     colorDocumento: "001E50", // azul Volkswagen
     logoArchivo: "logo-volkswagen.png",
   },
@@ -176,4 +193,56 @@ export function estrellasAbrenRqr(estrellas: number | null | undefined): boolean
   const tope = marca.estrellasSinRqr;
   if (tope === null) return false;
   return estrellas < tope;
+}
+
+/**
+ * Lo que se guarda cuando una carga no pertenece a una sucursal en particular.
+ *
+ * OJO CON LO QUE SIGNIFICA: un registro rotulado así NO lo ve nadie que tenga una
+ * provincia asignada, porque "General" no coincide con "Mendoza" ni con "San
+ * Juan". Solo lo ven los usuarios sin provincia (que ven todo). Es correcto, pero
+ * sorprende, así que las pantallas lo avisan al elegirlo.
+ */
+export const SUCURSAL_GENERAL = "General";
+
+/** Todo lo que se acepta como sucursal al guardar: las reales más "General". */
+export function sucursalesValidas(): string[] {
+  return [...marca.sucursales, SUCURSAL_GENERAL];
+}
+
+/**
+ * Devuelve la sucursal ESCRITA COMO CORRESPONDE, o null si no es una de las
+ * válidas.
+ *
+ * Compara sin distinguir mayúsculas, tildes ni espacios de más, así que
+ * "SAN JUAN", "san  juan" y "San Juán" entran todas como "San Juan". Lo que NO
+ * hace es adivinar: "Sanjuan" o "Mendosa" devuelven null y el pedido se rechaza.
+ *
+ * Va acá y no en una pantalla porque el desplegable ordena lo que se ve, pero
+ * cualquiera puede mandar un pedido a mano; esto es lo que realmente cierra la
+ * puerta antes de guardar.
+ */
+export function sucursalCanonica(raw: unknown): string | null {
+  const limpio = String(raw ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // saca tildes
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!limpio) return null;
+  return (
+    sucursalesValidas().find(
+      (s) =>
+        s
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase() === limpio
+    ) ?? null
+  );
+}
+
+/** El mensaje que ve la persona cuando manda una sucursal que no existe. */
+export function mensajeSucursalInvalida(): string {
+  const validas = sucursalesValidas();
+  return `La sucursal tiene que ser una de: ${validas.slice(0, -1).join(", ")} o ${validas.at(-1)}.`;
 }

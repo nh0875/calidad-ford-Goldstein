@@ -5,6 +5,7 @@ import { UserPlus, Users as UsersIcon } from "lucide-react";
 import { apiDelete, apiGet, apiPatchJson, apiPostJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
 import { Card } from "../components/ui/Card";
+import { SelectorSucursal } from "../components/ui/SelectorSucursal";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
@@ -48,14 +49,6 @@ export default function Usuarios() {
   const [areaNueva, setAreaNueva] = useState<AreaUsuario>("AMBAS");
   const [sucursalNueva, setSucursalNueva] = useState(""); // "" = todas las provincias
   const [creando, setCreando] = useState(false);
-
-  // Provincias existentes (de los casos), para el selector de provincia.
-  const [sucursales, setSucursales] = useState<string[]>([]);
-  useEffect(() => {
-    apiGet<{ sucursales: string[] }>("/api/casos/opciones")
-      .then((r) => setSucursales(r.sucursales ?? []))
-      .catch(() => {});
-  }, []);
 
   // Restablecer contraseña (inline por fila)
   const [resetAbierto, setResetAbierto] = useState<string | null>(null);
@@ -260,17 +253,10 @@ export default function Usuarios() {
                 </Select>
               </Campo>
               <Campo etiqueta="Provincia" hint="Dejar vacío = todas. Un refuerzo de otra provincia no se le asigna.">
-                <Input
-                  list="provincias-lista"
-                  value={sucursalNueva}
-                  onChange={(e) => setSucursalNueva(e.target.value)}
-                  placeholder="Todas las provincias"
-                />
-                <datalist id="provincias-lista">
-                  {sucursales.map((s) => (
-                    <option key={s} value={s} />
-                  ))}
-                </datalist>
+                {/* Lista cerrada: si la provincia del usuario no coincide EXACTO
+                    con la de las cargas, deja de ver todo y la pantalla no dice
+                    por que. Escribirla a mano era la forma mas facil de romperlo. */}
+                <SelectorSucursal valor={sucursalNueva} onCambiar={setSucursalNueva} extra="todas" />
               </Campo>
             </>
           )}
@@ -332,22 +318,12 @@ export default function Usuarios() {
                         todas
                       </span>
                     ) : (
-                      <Select
+                      <SelectorSucursal
                         className="min-w-[10rem]"
-                        value={u.sucursal ?? TODAS_PROVINCIAS}
-                        onChange={(e) => cambiarSucursal(u, e.target.value)}
-                      >
-                        <option value={TODAS_PROVINCIAS}>Todas</option>
-                        {/* La provincia actual, aunque no esté en la lista de casos */}
-                        {u.sucursal && !sucursales.includes(u.sucursal) && (
-                          <option value={u.sucursal}>{u.sucursal}</option>
-                        )}
-                        {sucursales.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </Select>
+                        valor={u.sucursal ?? ""}
+                        onCambiar={(v) => cambiarSucursal(u, v || TODAS_PROVINCIAS)}
+                        extra="todas"
+                      />
                     )}
                   </td>
                   <td className="px-4 py-3">

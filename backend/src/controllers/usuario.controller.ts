@@ -1,11 +1,11 @@
 import { Request, Response } from "express";
-import { AreaTrabajo, AreaUsuario, EstadoTareaRefuerzo, RolUsuario, TipoAlias } from "@prisma/client";
+import { AreaTrabajo, AreaUsuario, EstadoTareaRefuerzo, RolUsuario } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { hashPassword, motivoPasswordInvalida } from "../services/auth.service";
 import { ACCIONES, auditar } from "../services/audit.service";
-import { aplicarAlias, cargarAliasMap, parsearSucursal } from "../services/normalizacion.service";
 import { mismaProvincia } from "../services/refuerzo.service";
+import { zSucursalUsuario } from "../services/sucursal.service";
 
 const SELECT_USUARIO = {
   id: true,
@@ -19,15 +19,10 @@ const SELECT_USUARIO = {
   createdAt: true,
 } as const;
 
-// Normaliza la provincia/sucursal del usuario igual que la de los casos (Title
-// Case + alias del ADMIN), para que el reparto matchee. Vacío = null (todas).
-async function normalizarSucursalUsuario(raw?: string | null): Promise<string | null> {
-  const v = (raw ?? "").trim();
-  if (!v) return null;
-  const alias = await cargarAliasMap(TipoAlias.SUCURSAL);
-  const norm = aplicarAlias(parsearSucursal(v), alias);
-  return norm.nombre || v;
-}
+// La provincia del usuario tiene que coincidir EXACTO con la de las cargas: si
+// no, el usuario deja de ver todo y la pantalla no dice por qué. Por eso se
+// valida contra la lista cerrada de la marca (ver services/sucursal.service.ts)
+// en vez de normalizar a mano lo que alguien haya escrito.
 
 // ---------- GET /api/usuarios ----------
 
@@ -49,7 +44,7 @@ const createUsuarioSchema = z.object({
   rol: z.nativeEnum(RolUsuario).default(RolUsuario.CALIDAD),
   area: z.nativeEnum(AreaUsuario).default(AreaUsuario.AMBAS),
   // Provincia que atiende. Vacío = todas (sin restricción de provincia).
-  sucursal: z.string().trim().optional(),
+  sucursal: zSucursalUsuario.optional(),
 });
 
 export async function createUsuario(req: Request, res: Response) {
@@ -75,7 +70,7 @@ export async function createUsuario(req: Request, res: Response) {
   // El ADMIN no está limitado por área ni provincia: siempre AMBAS / todas.
   const esAdminNuevo = parsed.data.rol === RolUsuario.ADMIN;
   const area = esAdminNuevo ? AreaUsuario.AMBAS : parsed.data.area;
-  const sucursal = esAdminNuevo ? null : await normalizarSucursalUsuario(parsed.data.sucursal);
+  const sucursal = esAdminNuevo ? null : parsed.data.sucursal ?? null;
   const usuario = await prisma.usuario.create({
     data: {
       nombre: parsed.data.nombre,
@@ -153,7 +148,7 @@ const patchUsuarioSchema = z
     participaEnRefuerzos: z.boolean().optional(),
     area: z.nativeEnum(AreaUsuario).optional(),
     // Provincia: string ("" = todas) para poder cambiarla o limpiarla.
-    sucursal: z.string().trim().optional(),
+    sucursal: zSucursalUsuario.optional(),
   })
   .refine(
     (v) =>
@@ -181,7 +176,7 @@ export async function patchUsuario(req: Request, res: Response) {
   // El ADMIN no se limita por área/provincia: se ignoran esos cambios sobre un admin.
   const esAdmin = usuario.rol === "ADMIN";
   const nuevaSucursal =
-    !esAdmin && parsed.data.sucursal !== undefined ? await normalizarSucursalUsuario(parsed.data.sucursal) : undefined;
+    !esAdmin && parsed.data.sucursal !== undefined ? parsed.data.sucursal : undefined;
   const nuevaArea = !esAdmin ? parsed.data.area : undefined;
 
   const actualizado = await prisma.usuario.update({

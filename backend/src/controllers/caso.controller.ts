@@ -7,11 +7,11 @@ import { areaEfectiva, areaPermitida, parsearAreaQuery, puedeAcceder, puedeVer, 
 import { ACCIONES, auditar } from "../services/audit.service";
 import { normalizarTelefonoAR } from "../services/telefono.service";
 import { excelCasos } from "../services/exportacion.service";
+import { zSucursal } from "../services/sucursal.service";
 import {
   aplicarAlias,
   cargarAliasMap,
   parsearAsesor,
-  parsearSucursal,
   telefonosNormalizados,
 } from "../services/normalizacion.service";
 
@@ -262,7 +262,7 @@ const crearCasoSchema = z.object({
   modelo: obligatorio("Ingresá el modelo del vehículo."),
   patente: z.string().trim().optional(),
   asesor: obligatorio("Ingresá el asesor."),
-  sucursal: obligatorio("Ingresá la sucursal."),
+  sucursal: zSucursal,
   fechaProgramacion: z
     .string({
       required_error: "Ingresá la fecha de la visita.",
@@ -300,14 +300,12 @@ export async function crearCasoManual(req: Request, res: Response) {
   const fecha = new Date(`${d.fechaProgramacion}T12:00:00`);
   const periodo = d.fechaProgramacion.slice(0, 7); // AAAA-MM
 
-  // Normalización idéntica a la de la importación (asesor/sucursal + alias)
-  const [aliasAsesor, aliasSucursal] = await Promise.all([
-    cargarAliasMap(TipoAlias.ASESOR),
-    cargarAliasMap(TipoAlias.SUCURSAL),
-  ]);
+  // Normalización idéntica a la de la importación para el asesor. La sucursal no
+  // pasa por los alias: ya viene validada contra la lista cerrada de la marca y
+  // escrita como corresponde.
+  const aliasAsesor = await cargarAliasMap(TipoAlias.ASESOR);
   const asesorNorm = aplicarAlias(parsearAsesor(d.asesor), aliasAsesor);
-  const sucursalNorm = aplicarAlias(parsearSucursal(d.sucursal), aliasSucursal);
-  const sucursalFinal = sucursalNorm.nombre || d.sucursal;
+  const sucursalFinal = d.sucursal;
   const numeroOrden = d.numeroOrden || "S/N";
 
   // Número de orden único en todo el sistema: si ya existe un caso activo con esa
@@ -474,14 +472,11 @@ export async function editarCaso(req: Request, res: Response) {
     }
   }
 
-  // Misma normalización que el alta (asesor/sucursal + alias del ADMIN).
-  const [aliasAsesor, aliasSucursal] = await Promise.all([
-    cargarAliasMap(TipoAlias.ASESOR),
-    cargarAliasMap(TipoAlias.SUCURSAL),
-  ]);
+  // Misma normalización que el alta: alias del ADMIN para el asesor, y la
+  // sucursal tal como la validó el esquema contra la lista cerrada de la marca.
+  const aliasAsesor = await cargarAliasMap(TipoAlias.ASESOR);
   const asesorNorm = aplicarAlias(parsearAsesor(d.asesor), aliasAsesor);
-  const sucursalNorm = aplicarAlias(parsearSucursal(d.sucursal), aliasSucursal);
-  const sucursalFinal = sucursalNorm.nombre || d.sucursal;
+  const sucursalFinal = d.sucursal;
 
   let caso;
   try {
