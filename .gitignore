@@ -103,3 +103,6 @@ SISTEMA-EN-SERVIDOR.txt
 # Lo que arma Migrar-A-Servidor.bat: el dump con datos de clientes, las claves
 # y el logo. Viaja al servidor por un canal seguro, nunca al repositorio.
 Migracion/
+
+# Informes de Arreglar-Arranque-Ford.bat: son de UNA maquina y de un momento.
+scripts/windows/arranque-ford-*.txt
