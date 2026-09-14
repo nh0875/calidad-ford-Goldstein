@@ -1,0 +1,59 @@
+# ============================================================================
+#  Caddy: HTTPS y reparto por dominio (servidor OVHcloud)
+# ============================================================================
+#  Un dominio por marca. Caddy pide y renueva solo los certificados de Let's
+#  Encrypt; para eso los dos dominios tienen que apuntar a la IP del servidor y
+#  los puertos 80 y 443 tienen que estar abiertos.
+#
+#  Las variables salen del .env.prod a través de docker-compose.ovh.yml.
+# ============================================================================
+
+{
+	email {$ACME_EMAIL}
+}
+
+(sitio) {
+	encode zstd gzip
+
+	header {
+		# Sin includeSubDomains a propósito: si el dominio de la empresa tiene
+		# otros subdominios que todavía andan por http, esto los rompería.
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# Igual que el nginx del contenedor: los Excel que se suben.
+	request_body {
+		max_size 25MB
+	}
+
+	log {
+		output stdout
+	}
+
+	# SIEMPRE ABIERTO: el webhook (Meta llama desde sus propias IPs, que cambian)
+	# y /api/health (lo consulta el monitor externo). No exponen datos.
+	@publico path /api/webhooks/* /api/health
+	handle @publico {
+		reverse_proxy {args[0]}
+	}
+
+	# El resto del sistema. Si IPS_PERMITIDAS tiene la lista de IPs de las
+	# concesionarias, desde cualquier otro lado se ve un 403; si no, abierto.
+	handle {
+		@afuera not remote_ip {$IPS_PERMITIDAS}
+		respond @afuera "Acceso restringido a la red de la concesionaria." 403
+		reverse_proxy {args[0]}
+	}
+}
+
+{$DOMINIO_FORD} {
+	import sitio web:80
+}
+
+{$DOMINIO_VW} {
+	import sitio web-vw:80
+}

@@ -13,7 +13,11 @@
 //
 // CÓMO SE CORRE, en la PC donde vive el sistema:
 //
-//   docker compose -f docker-compose.prod.yml exec backend npx tsx src/scripts/diagnostico-circuito.ts
+//   docker compose -f docker-compose.prod.yml --env-file .env.prod exec backend node dist/scripts/diagnostico-circuito.js
+//
+// (En el servidor, el backend de Volkswagen es el servicio "backend-vw".) Va con
+// node y dist/ porque la imagen de producción trae el código COMPILADO: src/ no
+// está adentro y npx tsx no lo encontraría.
 //
 // No toca nada: solo lee.
 

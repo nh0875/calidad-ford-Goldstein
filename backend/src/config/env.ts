@@ -53,6 +53,10 @@ export const env = {
     token: process.env.META_WHATSAPP_TOKEN ?? "",
     phoneNumberId: process.env.META_PHONE_NUMBER_ID ?? "",
     webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN ?? "",
+    // App Secret de la app de Meta (Configuración de la app -> Básica). Con esto
+    // el webhook rechaza lo que no venga firmado por Meta (middlewares/firmaMeta.ts).
+    // Vacío = no se verifica, que es como funcionan hoy las PCs.
+    appSecret: process.env.META_APP_SECRET ?? "",
     // Plantilla de contacto POSVENTA (Contacto Posventa). Cada área usa la suya.
     templateName: process.env.META_TEMPLATE_NAME ?? "contacto_posventa",
     templateLang: process.env.META_TEMPLATE_LANG ?? "es_AR",
@@ -118,6 +122,18 @@ export const env = {
   // Tope aparte y holgado para /webhooks: Meta entrega en ráfagas, así que el
   // límite es alto y solo corta un pico anómalo o un loop, sin frenar a Meta.
   rateLimitWebhookPorMinuto: numero(process.env.RATE_LIMIT_WEBHOOK_POR_MINUTO, 600),
+  // Cuántos proxies hay ADELANTE del backend. Define de dónde sale req.ip, que es
+  // la clave del límite por IP y lo que queda en la auditoría.
+  //   1 = el nginx del contenedor web (las PCs).
+  //   2 = Caddy + ese nginx (el servidor).
+  // Si queda en 1 con dos proxies, TODOS los usuarios comparten la IP de Caddy:
+  // entre todos gastan el mismo cupo de requests por minuto y el sistema empieza a
+  // contestar "demasiadas solicitudes" en el horario de más uso.
+  trustProxy: numero(process.env.TRUST_PROXY, 1),
+  // true = el backend NO arranca con un JWT_SECRET débil o de ejemplo. Apagado por
+  // defecto para no dejar fuera de servicio una PC que hoy anda; en el servidor va
+  // prendido.
+  exigirSecretosFuertes: (process.env.EXIGIR_SECRETOS_FUERTES ?? "").trim().toLowerCase() === "true",
   // Archivo JSON de estado del backup, escrito por el contenedor de backup y
   // leído por el endpoint /api/sistema/estado-backup (volumen compartido).
   backupStatusFile: process.env.BACKUP_STATUS_FILE ?? "/var/backup-status/status.json",
@@ -142,4 +158,16 @@ if (!env.jwt.secret) {
   throw new Error(
     "Falta la variable de entorno JWT_SECRET. Generá una cadena aleatoria larga (ej: `openssl rand -hex 32`) y configurala antes de iniciar el backend."
   );
+}
+
+// Un JWT_SECRET corto o copiado de la plantilla deja forjar una sesión de
+// ADMINISTRADOR: el texto de ejemplo está en el repositorio. Con el sistema en
+// internet eso es una puerta abierta, así que en el servidor directamente no se
+// arranca. En las PCs queda como aviso fuerte (ver EXIGIR_SECRETOS_FUERTES).
+if (env.jwt.secret.length < 32 || /CAMBIAR|changeme|secret|password|ejemplo/i.test(env.jwt.secret)) {
+  const mensaje =
+    "JWT_SECRET es débil o es el texto de ejemplo (menos de 32 caracteres o una palabra de plantilla). " +
+    "Generá uno con: openssl rand -hex 32";
+  if (env.exigirSecretosFuertes) throw new Error(mensaje);
+  console.warn(`[seguridad] ${mensaje}`);
 }

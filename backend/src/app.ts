@@ -3,13 +3,14 @@ import cors from "cors";
 import helmet from "helmet";
 import { env } from "./config/env";
 import routes from "./routes";
+import { RequestConCuerpoCrudo } from "./middlewares/firmaMeta";
 
 export function createApp() {
   const app = express();
 
-  // Detrás de nginx: confiar en el primer proxy para que req.ip refleje el
-  // X-Forwarded-For real (necesario para auditoría y rate limiting por IP).
-  app.set("trust proxy", 1);
+  // Cuántos proxies hay adelante (ver TRUST_PROXY en config/env.ts): de eso
+  // depende que req.ip sea el del usuario, que es la clave del límite por IP.
+  app.set("trust proxy", env.trustProxy);
 
   // Cabeceras de seguridad HTTP estándar (X-Frame-Options, X-Content-Type-Options,
   // Referrer-Policy, HSTS, una CSP básica, etc.). La API sirve solo JSON, así que
@@ -50,7 +51,17 @@ export function createApp() {
     })
   );
 
-  app.use(express.json({ limit: "10mb" }));
+  app.use(
+    express.json({
+      limit: "10mb",
+      // El webhook necesita el cuerpo EXACTO como llegó para verificar la firma
+      // de Meta: el JSON ya parseado y vuelto a serializar no da el mismo HMAC.
+      // Se guarda solo ahí, para no duplicar en memoria cada request de la API.
+      verify: (req, _res, buf) => {
+        if (req.url?.startsWith("/api/webhooks")) (req as RequestConCuerpoCrudo).rawBody = buf;
+      },
+    })
+  );
 
   app.use("/api", routes);
 

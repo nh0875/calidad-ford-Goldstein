@@ -24,6 +24,19 @@ $Bucle      = Join-Path $scriptDir "vigilante-bucle.ps1"
 $ProjectDir = Split-Path (Split-Path $scriptDir -Parent) -Parent
 $EnvFile    = Join-Path $ProjectDir ".env.prod"
 
+# SISTEMA MUDADO AL SERVIDOR. Si existe SISTEMA-EN-SERVIDOR.txt (lo crea
+# Migrar-A-Servidor.bat), esta PC NO levanta nada. No es un detalle: con los
+# contenedores arriba, el circuito de insistencia de esta PC seguiria mandando
+# WhatsApp desde una base vieja, y el cliente los recibiria repetidos.
+if (Test-Path (Join-Path $ProjectDir "SISTEMA-EN-SERVIDOR.txt")) {
+    Write-Host ""
+    Write-Host "  El Sistema de Calidad ya no corre en esta PC: se mudo al servidor." -ForegroundColor Yellow
+    Write-Host "  Se entra desde el navegador, con la direccion nueva. Aca no se levanta ni se actualiza nada." -ForegroundColor Yellow
+    Write-Host ""
+    Read-Host "  Enter para cerrar" | Out-Null
+    exit 0
+}
+
 function Leer([string]$clave, [string]$porDefecto = "") {
     if (-not (Test-Path $EnvFile)) { return $porDefecto }
     foreach ($linea in (Get-Content $EnvFile -ErrorAction SilentlyContinue)) {

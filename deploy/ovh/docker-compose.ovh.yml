@@ -1,0 +1,128 @@
+# ============================================================================
+#  Servidor OVHcloud: las dos marcas en un VPS, detrás de Caddy con HTTPS
+# ============================================================================
+#  Este archivo NO se usa solo: se superpone al de producción, que es el mismo que
+#  corren las PCs. Todo lo que es propio del servidor vive acá, así que las PCs no
+#  se enteran de nada aunque se actualicen del mismo repositorio.
+#
+#  No hace falta escribir el comando: lo arma deploy/ovh/calidad.sh
+#     docker compose -p calidad -f docker-compose.prod.yml \
+#       -f deploy/ovh/docker-compose.ovh.yml --env-file .env.prod --profile vw ...
+#
+#  Las rutas relativas se resuelven desde la carpeta del PRIMER archivo (la raíz
+#  del repositorio), por eso el Caddyfile va como ./deploy/ovh/Caddyfile.
+# ============================================================================
+
+services:
+  # La única puerta a internet. Saca y renueva solo los certificados de Let's
+  # Encrypt para los dos dominios, y reparte por nombre: cada marca tiene el suyo.
+  caddy:
+    # Versión fija: un proxy que se actualiza solo es uno que un día amanece roto.
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMINIO_FORD: ${DOMINIO_FORD:?definir DOMINIO_FORD en .env.prod}
+      DOMINIO_VW: ${DOMINIO_VW:?definir DOMINIO_VW en .env.prod}
+      ACME_EMAIL: ${ACME_EMAIL:?definir ACME_EMAIL en .env.prod (Let's Encrypt avisa ahi si un certificado no se renueva)}
+      # Sin lista = cualquiera puede llegar a la pantalla de login. El default va
+      # acá y no en el Caddyfile: una variable vacía dejaría el filtro sin rangos
+      # y Caddy no arrancaría.
+      IPS_PERMITIDAS: ${IPS_PERMITIDAS:-0.0.0.0/0 ::/0}
+    volumes:
+      - ./deploy/ovh/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Los certificados. Si se pierde este volumen se piden de nuevo, pero Let's
+      # Encrypt limita cuántos se pueden pedir por semana: no borrarlo.
+      - caddy_data:/data
+      - caddy_config:/config
+    # default para llegar a "web" (Ford) y red-vw para llegar a "web-vw".
+    networks:
+      - default
+      - red-vw
+    depends_on:
+      - web
+      - web-vw
+
+  # --- Las pantallas: SOLO en 127.0.0.1 --------------------------------------
+  # !override y no la variable HTTP_BIND: Docker abre los puertos publicados por
+  # delante del firewall (UFW no los ve), así que un HTTP_BIND olvidado dejaría el
+  # sistema accesible por la IP del servidor, sin HTTPS. Acá no depende de nadie.
+  web:
+    ports: !override
+      - "127.0.0.1:8081:80"
+  web-vw:
+    ports: !override
+      - "127.0.0.1:8082:80"
+
+  backend:
+    mem_limit: 1536m
+    environment:
+      # Caddy + el nginx del contenedor web = dos proxies. Con 1, todos los
+      # usuarios compartirían la IP de Caddy y el límite por IP los frenaría juntos.
+      TRUST_PROXY: 2
+      # Con el sistema en internet, no se arranca con un JWT_SECRET débil.
+      EXIGIR_SECRETOS_FUERTES: "true"
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      FRONTEND_URL: https://${DOMINIO_FORD}
+
+  backend-vw:
+    mem_limit: 1536m
+    environment:
+      TRUST_PROXY: 2
+      EXIGIR_SECRETOS_FUERTES: "true"
+      META_APP_SECRET: ${VW_META_APP_SECRET:-}
+      FRONTEND_URL: https://${DOMINIO_VW}
+      # CADA MARCA CON SU CLAVE DE CIFRADO. En el compose de producción es una sola
+      # para las dos, pero cada PC tiene la suya y los tokens de Meta guardados en
+      # cada base están cifrados con ESA. Con una sola clave compartida, la marca
+      # que migre segunda no podría leer su token.
+      CONFIG_ENCRYPTION_KEY: ${VW_CONFIG_ENCRYPTION_KEY:?definir VW_CONFIG_ENCRYPTION_KEY en .env.prod (la de la PC de Volkswagen)}
+      # IA y correo: si VW tiene los suyos, se usan; si no, los de Ford. Con una
+      # sola clave de IA para las dos marcas, el cupo gratuito se reparte entre las
+      # dos y los análisis se atrasan.
+      GEMINI_API_KEY: ${VW_GEMINI_API_KEY:-${GEMINI_API_KEY:-}}
+      ANTHROPIC_API_KEY: ${VW_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}
+      AI_PROVIDER: ${VW_AI_PROVIDER:-${AI_PROVIDER:-}}
+      ANALISIS_MAX_POR_MINUTO: ${VW_ANALISIS_MAX_POR_MINUTO:-${ANALISIS_MAX_POR_MINUTO:-8}}
+      MAIL_USUARIO: ${VW_MAIL_USUARIO:-${MAIL_USUARIO:-}}
+      MAIL_PASSWORD: ${VW_MAIL_PASSWORD:-${MAIL_PASSWORD:-}}
+
+  postgres:
+    # 8 GB en el servidor: los topes de la PC (pensados para 3 GB de WSL) le
+    # quedaban chicos a dos marcas.
+    mem_limit: 1536m
+    # Docker da 64 MB de memoria compartida y Postgres la usa en consultas
+    # paralelas; con poca, algunos reportes fallan con "could not resize shared
+    # memory segment".
+    shm_size: 256m
+    command:
+      - postgres
+      - -c
+      - shared_buffers=384MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - max_connections=60
+
+  redis:
+    mem_limit: 256m
+
+  backup:
+    mem_limit: 384m
+    environment:
+      # LAS DOS BASES. Sin esto se respaldaría solo la de Ford.
+      POSTGRES_DBS: "${POSTGRES_DB:-calidad_ford} ${POSTGRES_DB_VW:-calidad_vw}"
+      BACKUP_HEALTHCHECK_URL: ${BACKUP_HEALTHCHECK_URL:-}
+      VERIFY_HEALTHCHECK_URL: ${VERIFY_HEALTHCHECK_URL:-}
+
+volumes:
+  caddy_data:
+  caddy_config:

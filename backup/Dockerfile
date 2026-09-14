@@ -9,8 +9,9 @@
 # --endpoint-url).
 FROM postgres:16-alpine
 
-# aws-cli, jq, bash y coreutils (date/stat) para los scripts
-RUN apk add --no-cache aws-cli jq bash coreutils tzdata
+# aws-cli, jq, bash y coreutils (date/stat) para los scripts. curl, para avisarle
+# al monitor externo cuando el backup o la verificación fallan o no corren.
+RUN apk add --no-cache aws-cli jq bash coreutils tzdata curl
 
 WORKDIR /opt/backup
 COPY status.sh backup.sh verify-backup.sh entrypoint.sh ./

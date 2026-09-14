@@ -10,6 +10,14 @@ echo    Estoy levantando el sistema. Puede tardar 1 a 2 minutos.
 echo    No cierres esta ventana hasta que diga LISTO.
 echo.
 
+if exist "%~dp0SISTEMA-EN-SERVIDOR.txt" (
+  echo    El Sistema de Calidad ya no corre en esta PC: se mudo al servidor.
+  echo    Se entra desde el navegador, con la direccion nueva.
+  echo.
+  pause
+  exit /b 0
+)
+
 REM Corre el "vigilante": arranca Docker si hace falta, levanta los
 REM contenedores y ngrok, y espera a que el sistema responda. La carpeta se
 REM detecta sola desde la ubicacion de este archivo (%~dp0).

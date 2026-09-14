@@ -38,6 +38,11 @@ REM ==================================================================
 REM El .env.prod de ESTA PC manda sobre el dominio y el puerto de arriba: asi el
 REM mismo .bat sirve en las dos maquinas sin editarlo.
 cd /d "%PROJECT_DIR%"
+REM Sistema mudado al servidor (lo marca Migrar-A-Servidor.bat): esta PC no levanta nada.
+if exist "SISTEMA-EN-SERVIDOR.txt" (
+  echo [%date% %time%] El sistema se mudo al servidor: esta PC ya no levanta nada.
+  exit /b 0
+)
 if exist ".env.prod" (
   for /f "usebackq tokens=1,* delims==" %%A in (".env.prod") do (
     if /i "%%A"=="NGROK_DOMAIN" if not "%%B"=="" set "NGROK_DOMAIN=%%B"

@@ -1,0 +1,14 @@
+[Unit]
+Description=Sistema de Calidad - actualizacion nocturna (01:30, hora de Argentina)
+
+[Timer]
+# La zona va escrita acá aunque el servidor ya esté en hora argentina: si alguien
+# le cambia la zona al sistema operativo, esto sigue corriendo a la 01:30 de acá.
+OnCalendar=*-*-* 01:30:00 America/Argentina/Buenos_Aires
+# false A PROPÓSITO: si el servidor estuvo apagado a la 01:30 y prende a las 11,
+# con Persistent=true compilaría en pleno horario de trabajo. Mejor esperar a la
+# noche siguiente.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

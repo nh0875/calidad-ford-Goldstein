@@ -43,6 +43,13 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+
+# SISTEMA MUDADO AL SERVIDOR. Si existe SISTEMA-EN-SERVIDOR.txt (lo crea
+# Migrar-A-Servidor.bat), esta PC NO levanta nada. No es un detalle: con los
+# contenedores arriba, el circuito de insistencia de esta PC seguiria mandando
+# WhatsApp desde una base vieja, y el cliente los recibiria repetidos.
+$ProyectoDelBucle = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+if (Test-Path (Join-Path $ProyectoDelBucle "SISTEMA-EN-SERVIDOR.txt")) { exit 0 }
 $ProgressPreference = "SilentlyContinue"
 
 $Vigilante = Join-Path $PSScriptRoot "vigilante.ps1"

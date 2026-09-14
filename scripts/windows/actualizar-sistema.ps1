@@ -25,6 +25,18 @@ $ProjectDir = if ($PSScriptRoot) { Split-Path (Split-Path $PSScriptRoot -Parent)
 $ComposeFile = "docker-compose.prod.yml"
 $EnvFile = ".env.prod"
 
+# SISTEMA MUDADO AL SERVIDOR. Si existe SISTEMA-EN-SERVIDOR.txt (lo crea
+# Migrar-A-Servidor.bat), esta PC NO levanta nada. No es un detalle: con los
+# contenedores arriba, el circuito de insistencia de esta PC seguiria mandando
+# WhatsApp desde una base vieja, y el cliente los recibiria repetidos.
+if (Test-Path (Join-Path $ProjectDir "SISTEMA-EN-SERVIDOR.txt")) {
+    Write-Host ""
+    Write-Host "  El Sistema de Calidad ya no corre en esta PC: se mudo al servidor." -ForegroundColor Yellow
+    Write-Host "  Se entra desde el navegador, con la direccion nueva. Aca no se levanta ni se actualiza nada." -ForegroundColor Yellow
+    Write-Host ""
+    exit 0
+}
+
 # --- A qué stack le hablamos -------------------------------------------------
 # docker compose bautiza al proyecto con el nombre de la CARPETA. Como cada PC
 # tiene el sistema donde quiere (C:\Calidad\Vanina, Downloads\..., etc.), el

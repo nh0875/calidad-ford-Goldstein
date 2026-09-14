@@ -21,6 +21,12 @@
 $ProjectDir  = if ($PSScriptRoot) { Split-Path (Split-Path $PSScriptRoot -Parent) -Parent } else { "C:\Users\hilli\Downloads\Goldstein\Vanina" }
 $EnvFile     = ".env.prod"
 $ComposeFile = "docker-compose.prod.yml"
+
+# SISTEMA MUDADO AL SERVIDOR. Si existe SISTEMA-EN-SERVIDOR.txt (lo crea
+# Migrar-A-Servidor.bat), esta PC NO levanta nada. No es un detalle: con los
+# contenedores arriba, el circuito de insistencia de esta PC seguiria mandando
+# WhatsApp desde una base vieja, y el cliente los recibiria repetidos.
+if (Test-Path (Join-Path $ProjectDir "SISTEMA-EN-SERVIDOR.txt")) { exit 0 }
 # Docker Desktop: las versiones nuevas se instalan POR USUARIO en
 # %LOCALAPPDATA%\Programs\DockerDesktop; las viejas en Program Files. Se prueba
 # cada candidata y se usa la que exista (asi no importa donde este instalado).

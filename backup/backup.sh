@@ -6,6 +6,15 @@
 #
 # CRÍTICO: un backup que vive solo en el mismo servidor no sirve si el servidor
 # se rompe o si borran el volumen. Por eso la copia offsite.
+#
+# UNA O VARIAS BASES:
+#   - Sin POSTGRES_DBS (las PCs de hoy): respalda POSTGRES_DB, con los nombres de
+#     archivo de siempre (calidad_<fecha>.sql.gz). No cambia nada.
+#   - Con POSTGRES_DBS="calidad_ford calidad_vw" (el servidor, donde las dos
+#     marcas comparten el mismo Postgres): respalda CADA base en su archivo
+#     (<base>_<fecha>.sql.gz). Antes se respaldaba solo POSTGRES_DB, y con las dos
+#     marcas juntas Volkswagen se habría quedado sin backup sin que nada lo dijera.
+#   Si falla una base, las demás se respaldan igual.
 set -uo pipefail
 source /opt/backup/status.sh
 
@@ -18,28 +27,23 @@ BACKUP_DIR="${BACKUP_DIR:-/backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 export PGPASSWORD="$POSTGRES_PASSWORD"
 
-mkdir -p "$BACKUP_DIR"
-ts="$(date +%Y%m%d_%H%M%S)"
-file="$BACKUP_DIR/calidad_${ts}.sql.gz"
+lista="${POSTGRES_DBS:-}"
+lista="${lista//,/ }"
+if [ -n "${lista// /}" ]; then multi=true; else multi=false; lista="$POSTGRES_DB"; fi
 
-echo "[backup] generando $file (db=$POSTGRES_DB host=$POSTGRES_HOST)"
-if ! pg_dump -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" "$POSTGRES_DB" | gzip > "$file"; then
-  echo "[backup] ERROR: pg_dump falló" >&2
-  rm -f "$file"
-  update_status ultimoBackup "$(jq -n --arg m 'pg_dump falló' '{fecha: (now|todate), ok:false, archivo:null, tamanoBytes:0, subidoAOffsite:false, mensaje:$m}')"
-  exit 1
-fi
+# Aviso a un monitor EXTERNO (ej. healthchecks.io). Si el backup deja de correr
+# del todo, el monitor no recibe el ping y avisa por mail: es lo único que detecta
+# "no falla, directamente no corre", que es como estuvo 19 días muerto el
+# respaldo de la PC de Ford sin que nadie se enterara. Vacío = no se avisa.
+avisar_monitor() { # $1 = "" (éxito) o "/fail"
+  [ -n "${BACKUP_HEALTHCHECK_URL:-}" ] || return 0
+  curl -fsS -m 10 --retry 3 -o /dev/null "${BACKUP_HEALTHCHECK_URL}$1" || \
+    echo "[backup] AVISO: no se pudo avisar al monitor externo" >&2
+}
 
-size="$(stat -c%s "$file" 2>/dev/null || echo 0)"
-echo "[backup] dump OK ($size bytes)"
-
-# Rotación local: borra dumps más viejos que RETENTION_DAYS días
-find "$BACKUP_DIR" -name 'calidad_*.sql.gz' -type f -mtime +"$RETENTION_DAYS" -delete 2>/dev/null || true
-
-# Copia offsite a S3-compatible (si está configurado)
-offsite=false
-msg="Backup local OK"
+s3_configurado=false
 if [ -n "${BACKUP_S3_BUCKET:-}" ] && [ -n "${BACKUP_S3_ACCESS_KEY:-}" ]; then
+  s3_configurado=true
   export AWS_ACCESS_KEY_ID="$BACKUP_S3_ACCESS_KEY"
   export AWS_SECRET_ACCESS_KEY="${BACKUP_S3_SECRET_KEY:-}"
   export AWS_DEFAULT_REGION="${BACKUP_S3_REGION:-us-east-1}"
@@ -51,24 +55,81 @@ if [ -n "${BACKUP_S3_BUCKET:-}" ] && [ -n "${BACKUP_S3_ACCESS_KEY:-}" ]; then
   export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
   endpoint=()
   [ -n "${BACKUP_S3_ENDPOINT:-}" ] && endpoint=(--endpoint-url "$BACKUP_S3_ENDPOINT")
-  if aws "${endpoint[@]}" s3 cp "$file" "s3://${BACKUP_S3_BUCKET}/$(basename "$file")"; then
-    offsite=true
-    msg="Backup local + offsite OK"
-    echo "[backup] copia offsite OK → s3://${BACKUP_S3_BUCKET}/$(basename "$file")"
-  else
-    msg="Backup local OK, pero la copia offsite FALLÓ"
-    echo "[backup] ERROR: no se pudo subir a S3" >&2
-  fi
-else
-  msg="Backup local OK (almacenamiento offsite no configurado)"
-  echo "[backup] AVISO: S3 no configurado, solo copia local" >&2
 fi
 
-update_status ultimoBackup "$(jq -n \
-  --arg f "$(basename "$file")" \
-  --arg m "$msg" \
-  --argjson size "$size" \
-  --argjson off "$offsite" \
-  '{fecha: (now|todate), ok:true, archivo:$f, tamanoBytes:$size, subidoAOffsite:$off, mensaje:$m}')"
+mkdir -p "$BACKUP_DIR"
+ts="$(date +%Y%m%d_%H%M%S)"
 
-echo "[backup] listo"
+todo_ok=true
+todo_offsite=true
+archivos=()
+total_bytes=0
+bases_json="[]"
+
+for db in $lista; do
+  if [ "$multi" = true ]; then nombre="${db}_${ts}.sql.gz"; patron="${db}_*.sql.gz"
+  else nombre="calidad_${ts}.sql.gz"; patron="calidad_*.sql.gz"; fi
+  file="$BACKUP_DIR/$nombre"
+
+  echo "[backup] generando $file (db=$db host=$POSTGRES_HOST)"
+  if ! pg_dump -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" "$db" | gzip > "$file"; then
+    echo "[backup] ERROR: pg_dump de $db falló" >&2
+    rm -f "$file"
+    todo_ok=false
+    todo_offsite=false
+    bases_json="$(echo "$bases_json" | jq --arg b "$db" '. + [{base:$b, ok:false, archivo:null, tamanoBytes:0, subidoAOffsite:false}]')"
+    continue
+  fi
+
+  size="$(stat -c%s "$file" 2>/dev/null || echo 0)"
+  echo "[backup] dump de $db OK ($size bytes)"
+  archivos+=("$nombre")
+  total_bytes=$((total_bytes + size))
+
+  # Rotación local: borra dumps de ESTA base más viejos que RETENTION_DAYS días
+  find "$BACKUP_DIR" -name "$patron" -type f -mtime +"$RETENTION_DAYS" -delete 2>/dev/null || true
+
+  subido=false
+  if [ "$s3_configurado" = true ]; then
+    if aws "${endpoint[@]}" s3 cp "$file" "s3://${BACKUP_S3_BUCKET}/$nombre"; then
+      subido=true
+      echo "[backup] copia offsite OK → s3://${BACKUP_S3_BUCKET}/$nombre"
+    else
+      echo "[backup] ERROR: no se pudo subir $nombre a S3" >&2
+    fi
+  fi
+  [ "$subido" = true ] || todo_offsite=false
+
+  bases_json="$(echo "$bases_json" | jq --arg b "$db" --arg f "$nombre" --argjson s "$size" --argjson o "$subido" \
+    '. + [{base:$b, ok:true, archivo:$f, tamanoBytes:$s, subidoAOffsite:$o}]')"
+done
+
+if [ "$todo_ok" != true ]; then
+  msg="FALLÓ el backup de al menos una base (ver detalle por base)"
+elif [ "$s3_configurado" != true ]; then
+  msg="Backup local OK (almacenamiento offsite no configurado)"
+  echo "[backup] AVISO: S3 no configurado, solo copia local" >&2
+elif [ "$todo_offsite" = true ]; then
+  msg="Backup local + offsite OK"
+else
+  msg="Backup local OK, pero la copia offsite FALLÓ"
+fi
+
+# Misma forma de siempre (la tarjeta del tablero no cambia) + "bases" con el
+# detalle de cada una. ok = TODAS las bases respaldadas.
+update_status ultimoBackup "$(jq -n \
+  --arg f "$(IFS=', '; echo "${archivos[*]:-}")" \
+  --arg m "$msg" \
+  --argjson size "$total_bytes" \
+  --argjson ok "$todo_ok" \
+  --argjson off "$( [ "$s3_configurado" = true ] && echo "$todo_offsite" || echo false )" \
+  --argjson bases "$bases_json" \
+  '{fecha: (now|todate), ok:$ok, archivo:(if $f == "" then null else $f end), tamanoBytes:$size, subidoAOffsite:$off, mensaje:$m, bases:$bases}')"
+
+if [ "$todo_ok" = true ]; then
+  avisar_monitor ""
+  echo "[backup] listo"
+else
+  avisar_monitor "/fail"
+  exit 1
+fi

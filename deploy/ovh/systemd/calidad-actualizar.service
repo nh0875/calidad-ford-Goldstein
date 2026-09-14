@@ -1,0 +1,18 @@
+# Sistema de Calidad: actualización nocturna. La dispara calidad-actualizar.timer.
+# Ver deploy/ovh/actualizar.sh. Log:  journalctl -u calidad-actualizar
+[Unit]
+Description=Sistema de Calidad - actualizacion nocturna
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=calidad
+Group=calidad
+WorkingDirectory=/opt/calidad
+ExecStart=/opt/calidad/deploy/ovh/actualizar.sh
+# Compilar las dos marcas y esperar la verificación puede llevar un buen rato.
+TimeoutStartSec=3600
+# Que la compilación no le gane la CPU al sistema si alguien lo está usando.
+Nice=10

@@ -1,3 +1,5 @@
+> **Sin uso desde septiembre de 2026.** El sistema se muda a un VPS de OVHcloud: ver [deploy/ovh/README.md](../ovh/README.md). Esto queda como referencia del plan anterior (servidores de INDEN).
+
 # Despliegue en el servidor (Podman + Portainer + Nginx Proxy Manager)
 
 Guía para **INDEN** para desplegar el Sistema de Calidad respetando la topología

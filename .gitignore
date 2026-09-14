@@ -93,3 +93,13 @@ comparacion-*.txt
 backend/_*.ts
 backend/__*.ts
 backend/src/services/_head_*.ts
+
+# ===== Mudanza al servidor (OVHcloud) =====
+# La marca que deja a una PC retirada sin levantar nada. Ignorada para que un
+# "git stash -u" o "git clean" de los que se usan para destrabar una
+# actualizacion no la borre: sin ella, la PC vieja volveria a levantar el
+# sistema y a mandar WhatsApp desde una base desactualizada.
+SISTEMA-EN-SERVIDOR.txt
+# Lo que arma Migrar-A-Servidor.bat: el dump con datos de clientes, las claves
+# y el logo. Viaja al servidor por un canal seguro, nunca al repositorio.
+Migracion/

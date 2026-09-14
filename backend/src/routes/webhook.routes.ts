@@ -2,6 +2,7 @@ import { Router } from "express";
 import { asyncHandler } from "../middlewares/asyncHandler";
 import { rateLimitWebhook } from "../middlewares/rateLimit";
 import { recibirWebhook, verificarWebhook } from "../controllers/webhook.controller";
+import { verificarFirmaMeta } from "../middlewares/firmaMeta";
 
 const router = Router();
 
@@ -11,6 +12,8 @@ router.get("/whatsapp", asyncHandler(verificarWebhook));
 
 // Notificaciones de Meta: mensajes entrantes y acuses de entrega. Límite
 // holgado propio (no el global): frena un pico anómalo/loop sin cortar a Meta.
-router.post("/whatsapp", rateLimitWebhook, asyncHandler(recibirWebhook));
+// La firma va DESPUÉS del límite: un aluvión de POST falsos se corta antes de
+// gastar CPU calculando HMAC.
+router.post("/whatsapp", rateLimitWebhook, verificarFirmaMeta, asyncHandler(recibirWebhook));
 
 export default router;
