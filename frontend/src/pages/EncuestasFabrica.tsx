@@ -19,6 +19,7 @@ import { Campo, Input, Select } from "../components/ui/Field";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 import { SelectorSucursal } from "../components/ui/SelectorSucursal";
+import { Desplegable } from "../components/ui/Desplegable";
 
 // Los tres estados por los que pasa un cliente. El orden del array es el orden
 // del circuito, y de ahí sale también el orden de la lista en pantalla: primero
@@ -45,6 +46,15 @@ const CLASE_ESTADO: Record<EstadoCliente, string> = {
   RESPONDIO: "bg-green-50 text-green-900 border-green-200 hover:bg-green-100",
 };
 
+// El mismo color, en versión punto, para las opciones del menú. Sin esto el menú
+// es una lista de texto gris y se pierde la referencia de color con la que se
+// venía leyendo la columna.
+const PUNTO_ESTADO: Record<EstadoCliente, string> = {
+  PENDIENTE: "bg-yellow-400",
+  AVISADO: "bg-accent",
+  RESPONDIO: "bg-green-500",
+};
+
 /** Un número del resumen, con su etiqueta al lado. */
 function Dato({ valor, etiqueta, clase }: { valor: number; etiqueta: string; clase: string }) {
   return (
@@ -58,14 +68,17 @@ function Dato({ valor, etiqueta, clase }: { valor: number; etiqueta: string; cla
 /**
  * El estado del cliente, como pastilla que además se puede cambiar.
  *
- * NO usa el <Select> del sistema a propósito. El desplegable nativo de Windows
- * dibuja su propia flecha, con su propio gris y su propia tipografía, y al lado
- * de una celda de tabla se ve como un parche pegado. Con appearance-none se
- * apaga ese dibujo y se pone una flecha nuestra, que hereda el color del estado.
+ * NO usa un <select> nativo a propósito. El <select> se puede maquillar por
+ * fuera —borde, color, tipografía— pero el MENÚ que se abre lo dibuja el sistema
+ * operativo: en Windows es un rectángulo blanco de esquinas rectas, con su
+ * propia tipografía y una barra azul de selección. Al lado de una pastilla
+ * redondeada con el color del estado se veía como un parche pegado, y no hay
+ * forma de animarlo.
  *
- * El <select> real sigue estando abajo, invisible pero funcional: así se conserva
- * el teclado, el lector de pantalla y el desplegable del sistema operativo, que es
- * lo que la gente ya sabe usar. Es maquillaje, no un control inventado de cero.
+ * Desplegable dibuja su propio menú: mismas fuentes y mismos radios que el resto
+ * del sistema, con el color de cada estado repetido en un punto, y conserva lo
+ * que el nativo hacía bien (teclado completo, lector de pantalla, cerrar al
+ * hacer clic afuera).
  */
 function SelectorEstado({
   valor,
@@ -78,27 +91,19 @@ function SelectorEstado({
   deshabilitado?: boolean;
   titulo?: string;
 }) {
-  // Ancho FIJO en el contenedor, no en el select: las tres etiquetas miden
-  // distinto ("Pendiente" / "Avisado" / "Respondió") y sin esto cada pastilla
-  // tendría su propio ancho, con la columna quedando dentada al recorrerla.
+  // Ancho FIJO en el contenedor: las tres etiquetas miden distinto ("Pendiente"
+  // / "Avisado" / "Respondió") y sin esto cada pastilla tendría su propio ancho,
+  // con la columna quedando dentada al recorrerla.
   return (
-    <div className="relative inline-flex w-32">
-      <select
-        value={valor}
-        disabled={deshabilitado}
-        title={titulo}
-        onChange={(e) => onCambiar(e.target.value as EstadoCliente)}
-        className={`w-full cursor-pointer appearance-none rounded-full border py-1 pl-3 pr-7 font-sans text-xs font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-50 ${CLASE_ESTADO[valor]}`}
-      >
-        {ESTADOS.map((e) => (
-          <option key={e} value={e}>
-            {ETIQUETA_ESTADO[e]}
-          </option>
-        ))}
-      </select>
-      {/* pointer-events-none: la flecha es decorativa, el clic tiene que llegar
-          al select que está abajo. */}
-      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 opacity-60" />
+    <div className="inline-flex w-32">
+      <Desplegable
+        valor={valor}
+        opciones={ESTADOS.map((e) => ({ valor: e, etiqueta: ETIQUETA_ESTADO[e], punto: PUNTO_ESTADO[e] }))}
+        onCambiar={onCambiar}
+        deshabilitado={deshabilitado}
+        titulo={titulo}
+        className={CLASE_ESTADO[valor]}
+      />
     </div>
   );
 }
