@@ -20,9 +20,9 @@ const router = Router();
 // Lista de pendientes agrupada por vendedor: la ve cualquiera de Calidad.
 router.get("/", asyncHandler(listarEncuestaVW));
 
-// Carga del Excel de fábrica. Es en dos pasos a propósito: la confirmación
-// cierra pendientes (los que ya no vienen se dan por respondidos), así que
-// primero se muestra el impacto y recién después se toca la base.
+// Carga del Excel de fábrica. Es en dos pasos a propósito: primero se muestra
+// qué trae el archivo y recién después se toca la base. La carga solo agrega
+// clientes; no le cambia el estado a ninguno de los que ya están.
 // CARGAR datos ya no es exclusivo de administradores: Calidad es quien trabaja
 // esta pantalla todos los dias y tener que buscar a un admin para subir un Excel
 // no tenia sentido. El rol FIDELIZACION no llega hasta aca: lo corta antes

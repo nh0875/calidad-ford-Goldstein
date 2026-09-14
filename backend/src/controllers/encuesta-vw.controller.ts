@@ -18,8 +18,8 @@ import { zSucursal } from "../services/sucursal.service";
 
 // ---------- POST /api/encuesta-vw/preview ----------
 // Se lee el archivo y se muestra lo que se va a hacer ANTES de tocar la base.
-// La carga cierra pendientes (los que ya no vienen se dan por respondidos), así
-// que conviene que quien la sube vea el impacto antes de confirmar.
+// La carga solo AGREGA clientes: no le cambia el estado a ninguno de los que ya
+// están (ver importacion-encuesta-vw.service.ts).
 
 export async function previewEncuestaVW(req: Request, res: Response) {
   if (!req.file) {
@@ -80,8 +80,6 @@ export async function previewEncuestaVW(req: Request, res: Response) {
       vendedoresSinAsignar: sinResolver,
       vendedoresDisponibles: vendedores,
       rechazadas: convertido.rechazadas.slice(0, 50),
-      // El archivo interno NO cierra a nadie: ver la nota en la importación.
-      seDarianPorRespondidos: 0,
       avisos: convertido.avisos,
     });
   }
@@ -93,24 +91,6 @@ export async function previewEncuestaVW(req: Request, res: Response) {
       message: "El archivo no tiene ninguna fila que se pueda importar. " + archivo.avisos.join(" "),
     });
   }
-
-  // Cuántos se darían por respondidos si se confirma: los pendientes de estas
-  // sucursales cuyo chasis no viene en el archivo nuevo.
-  // Las MISMAS sucursales que va a cerrar la importación (por hoja, no por fila).
-  const sucursales = archivo.hojas.map((h) => h.codigoSucursal).filter((c): c is string => !!c);
-  // Los MISMOS chasis que va a excluir la importación (aceptados + rechazados),
-  // para que el número que se muestra antes de confirmar sea el que va a pasar.
-  const chasisDelArchivo = [
-    ...archivo.filas.map((f) => f.chasis),
-    ...archivo.rechazadas.map((r) => r.chasis),
-  ].filter(Boolean);
-  const seDarianPorRespondidos = await prisma.encuestaFabricaVW.count({
-    where: {
-      estado: EstadoEncuestaFabrica.PENDIENTE,
-      vendedor: { codigoSucursal: { in: sucursales } },
-      chasis: { notIn: chasisDelArchivo },
-    },
-  });
 
   const porVendedor = new Map<string, { codigo: string; nombre: string | null; sucursal: string; clientes: number }>();
   for (const f of archivo.filas) {
@@ -136,7 +116,6 @@ export async function previewEncuestaVW(req: Request, res: Response) {
       filasVacias: h.filasVacias,
     })),
     totalClientes: archivo.filas.length,
-    seDarianPorRespondidos,
     vendedores: [...porVendedor.values()].sort((a, b) => b.clientes - a.clientes),
     vendedoresSinNombre: archivo.vendedoresSinNombre,
     rechazadas: archivo.rechazadas,
@@ -182,8 +161,9 @@ export async function confirmEncuestaVW(req: Request, res: Response) {
 
   const partes = [
     `${resumen.pendientesNuevos} cliente(s) nuevo(s)`,
-    `${resumen.pendientesQueSiguen} que ya estaban`,
-    `${resumen.marcadosRespondio} dado(s) por respondido(s)`,
+    // "conservan su estado" y no solo "que ya estaban": es justo lo que antes no
+    // pasaba, y quien sube el archivo tiene que poder quedarse tranquilo.
+    `${resumen.pendientesQueSiguen} que ya estaban (conservan su estado)`,
   ];
   if (resumen.vendedoresNuevos) partes.push(`${resumen.vendedoresNuevos} vendedor(es) nuevo(s)`);
   // Se avisa explícitamente: es una decisión del sistema (dos códigos = una

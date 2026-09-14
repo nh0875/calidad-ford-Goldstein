@@ -154,7 +154,6 @@ interface VistaPrevia {
   // NO se puede caer porque falte uno (ya pasó: pantallazo blanco al cargar).
   hojas?: Array<{ nombre: string; sucursal: string; codigoSucursal: string | null; clientes: number; filasVacias: number }>;
   totalClientes: number;
-  seDarianPorRespondidos: number;
   vendedores?: Array<{ codigo: string; nombre: string | null; sucursal: string; clientes: number }>;
   vendedoresSinNombre?: Array<{ codigo: string; sucursal: string; filas: number }>;
   rechazadas?: Array<{ hoja: string; numeroFilaExcel: number; motivo: string }>;
@@ -574,7 +573,7 @@ export default function EncuestasFabrica() {
           <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">
             Antes de confirmar — {previa.filename}
           </h3>
-          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="rounded-md border border-gray-200 p-3">
               <div className="text-2xl font-bold text-navy">{previa.totalClientes}</div>
               <div className="text-xs text-ink-muted">clientes en el archivo</div>
@@ -582,12 +581,6 @@ export default function EncuestasFabrica() {
             <div className="rounded-md border border-gray-200 p-3">
               <div className="text-2xl font-bold text-navy">{(previa.vendedores ?? []).length}</div>
               <div className="text-xs text-ink-muted">vendedores distintos</div>
-            </div>
-            <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
-              <div className="text-2xl font-bold text-amber-700">{previa.seDarianPorRespondidos}</div>
-              <div className="text-xs text-amber-800">
-                se van a dar por respondidos (estaban pendientes y ya no vienen en el archivo)
-              </div>
             </div>
           </div>
 
@@ -898,9 +891,9 @@ export default function EncuestasFabrica() {
                 {guardando ? "Guardando…" : "Agregar a los pendientes"}
               </button>
               <p className="mt-2 text-xs text-ink-muted">
-                Queda en la lista del vendedor igual que los que vienen del Excel de fábrica. La
-                diferencia: la próxima carga NO se lo lleva por delante — a los que vienen del
-                archivo, si dejan de aparecer, se los da por respondidos, y a este no.
+                Queda en la lista del vendedor igual que los que vienen del Excel de fábrica, y
+                como a todos, su estado solo cambia si alguien lo cambia a mano o si se avisa a
+                los vendedores.
               </p>
             </div>
           </div>

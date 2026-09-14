@@ -14,13 +14,23 @@ import { ArchivoEncuestaVW, parsearArchivoEncuestaVW } from "./encuesta-vw.servi
 /**
  * Importa el Excel de encuestas pendientes de fábrica de Volkswagen.
  *
- * La regla de fondo: el archivo es una FOTO de quién debe la encuesta HOY. Si un
- * cliente estaba pendiente y el archivo nuevo no lo trae, es porque contestó.
- * Por eso la importación no solo agrega: también cierra.
+ * LA CARGA AGREGA CLIENTES. NO CAMBIA EL ESTADO DE NINGUNO.
  *
- * Cierra SOLO las sucursales que vienen en el archivo. Si algún día se sube una
- * sola hoja, los pendientes de la otra sucursal no se pueden dar por contestados
- * —el archivo no dice nada de ellos— y tienen que quedar como estaban.
+ * El estado de un cliente lo cambian solo dos cosas, y las dos son decisiones de
+ * una persona:
+ *   1. alguien lo cambia a mano desde la lista, o
+ *   2. alguien aprieta "Avisar a los vendedores" (PENDIENTE → AVISADO).
+ *
+ * Hasta septiembre de 2026 la carga también cerraba: tomaba el archivo como una
+ * foto de quién debe la encuesta HOY, y a todo cliente que ya no venía lo daba
+ * por respondido. En la práctica eso le pasaba por arriba al trabajo de Calidad:
+ * se subía un Excel con clientes nuevos y los pendientes que se estaban
+ * gestionando aparecían como "Respondió" sin que nadie los hubiera tocado. Lo
+ * pidió sacar el dueño (14-09-2026).
+ *
+ * LO QUE ESO IMPLICA, y conviene saberlo antes de volver a tocar esto: la tasa de
+ * respuesta del tablero de Encuestas de fábrica ya no se completa sola. Cuenta
+ * los clientes que alguien marcó como "Respondió" a mano, y nada más.
  */
 
 export interface ResumenImportacionVW {
@@ -30,8 +40,8 @@ export interface ResumenImportacionVW {
   vendedoresActualizados: number;
   vendedoresSinMail: Array<{ codigo: string; nombre: string | null; sucursal: string; pendientes: number }>;
   pendientesNuevos: number;
+  /** Clientes que ya estaban en la lista: se actualizan sus datos, NO su estado. */
   pendientesQueSiguen: number;
-  marcadosRespondio: number;
   filasRechazadas: Array<{ hoja: string; numeroFilaExcel: number; motivo: string }>;
   filasObservadasPorFabrica: number;
   /**
@@ -100,14 +110,6 @@ async function guardar(
   opciones: OpcionesImportacionVW,
   origenFormato: "FABRICA" | "INTERNO"
 ): Promise<ResumenImportacionVW> {
-  // Las sucursales que se van a cerrar salen de las HOJAS del archivo, no de las
-  // filas. Con las filas, UNA sola fila mal cargada —un vendedor de otra
-  // sucursal metido por error en la hoja equivocada— alcanzaba para que el
-  // sistema diera por respondida a TODA esa otra sucursal, que ni siquiera vino
-  // en el archivo. La hoja es lo que dice de qué sucursal habla la foto.
-  const sucursales = archivo.hojas
-    .map((h) => h.codigoSucursal)
-    .filter((c): c is string => !!c);
   const nombresSucursal = [...new Set(archivo.hojas.map((h) => h.nombreSucursal))];
 
   // El período sale de la entrega más reciente: es lo que da el "de cuándo" es
@@ -215,7 +217,6 @@ async function guardar(
     const vendedorId = idPorCodigo.get(f.codigoVendedor)!;
     const datos = {
       dominio: f.dominio,
-      estado: EstadoEncuestaFabrica.PENDIENTE,
       nombreCliente: f.nombreCliente,
       email: f.email,
       fechaEntrega: f.fechaEntrega,
@@ -225,63 +226,40 @@ async function guardar(
       sucursal: archivo.hojas.find((h) => h.nombre === f.hoja)?.nombreSucursal ?? f.codigoSucursal,
       observacionesFabrica: f.observacionesFabrica,
       vistaEnUploadId: upload.id,
-      // Si había vuelto a aparecer después de darla por respondida, se limpia la
-      // fecha: fábrica la volvió a listar, así que sigue debiendo la encuesta.
-      respondioEn: null,
     };
     const existente = await prisma.encuestaFabricaVW.findUnique({ where: { chasis: f.chasis } });
     if (existente) {
+      // Se refrescan los DATOS (el correo corregido, el vendedor reasignado, lo
+      // que observó fábrica) pero NO el estado ni sus fechas.
+      //
+      // Antes esta línea también lo volvía a PENDIENTE, y eso hacía dos daños: un
+      // cliente ya avisado que seguía en el archivo volvía a Pendiente —y al
+      // vendedor le llegaba otra vez en el próximo aviso—, y lo que Calidad había
+      // cambiado a mano se perdía con la carga siguiente.
       await prisma.encuestaFabricaVW.update({ where: { chasis: f.chasis }, data: datos });
       pendientesQueSiguen++;
     } else {
+      // Un cliente NUEVO entra siempre como Pendiente. Esto no es "cambiar un
+      // estado": es el que tiene al nacer.
       await prisma.encuestaFabricaVW.create({
-        data: { ...datos, chasis: f.chasis, origenUploadId: upload.id, origenFormato },
+        data: {
+          ...datos,
+          estado: EstadoEncuestaFabrica.PENDIENTE,
+          chasis: f.chasis,
+          origenUploadId: upload.id,
+          origenFormato,
+        },
       });
       pendientesNuevos++;
     }
   }
 
-  // ---- 3. Los que ya no vienen: contestaron --------------------------------
-  // Acotado a las sucursales del archivo, por lo dicho arriba.
-  // Se excluyen TODOS los chasis que vinieron en el archivo, incluidos los que el
-  // lector rechazó.
-  //
-  // Antes el corte era "no tiene el sello de esta carga", y ese sello solo lo
-  // reciben las filas que pasaron las validaciones. Una fila con el mail mal
-  // escrito, sin nombre o con el código de vendedor cortado ESTÁ en el archivo y
-  // fábrica la sigue listando como pendiente, pero para el importador no existía:
-  // se la daba por respondida, el cliente desaparecía de la lista de su vendedor,
-  // nadie lo llamaba, y la tasa de respuesta subía por alguien que nunca contestó.
-  const chasisDelArchivo = [
-    ...archivo.filas.map((f) => f.chasis),
-    ...archivo.rechazadas.map((r) => r.chasis),
-  ].filter(Boolean);
-
-  const { count: marcadosRespondio } = await prisma.encuestaFabricaVW.updateMany({
-    where: {
-      // Los AVISADO entran igual que los PENDIENTE. Son los que más contestan,
-      // justamente porque el vendedor ya los llamó: si la barrida solo mirara
-      // PENDIENTE, un cliente avisado que después contesta se quedaría en AVISADO
-      // para siempre, contado como si nunca hubiera respondido.
-      estado: { in: [EstadoEncuestaFabrica.PENDIENTE, EstadoEncuestaFabrica.AVISADO] },
-      vendedor: { codigoSucursal: { in: sucursales } },
-      chasis: { notIn: chasisDelArchivo },
-      // Las cargadas a mano NUNCA vienen en el Excel de fábrica, así que esta
-      // barrida las daría por respondidas en la primera importación: el cliente
-      // saldría de la lista de su vendedor sin que nadie lo haya llamado.
-      esManual: false,
-      // Y una carga SOLO puede cerrar a los clientes de su propio archivo. Los dos
-      // formatos alimentan la misma lista, así que sin esto una carga del Excel
-      // interno daría por respondidos, en silencio, a todos los que vinieron de
-      // fábrica: no están en el archivo interno, y nunca lo van a estar.
-      origenFormato,
-    },
-    data: { estado: EstadoEncuestaFabrica.RESPONDIO, respondioEn: new Date() },
-  });
+  // Acá había un tercer paso que daba por respondidos a los que ya no venían en
+  // el archivo. Se sacó a propósito: ver el comentario del principio.
 
   await prisma.excelUpload.update({ where: { id: upload.id }, data: { status: UploadStatus.COMPLETADO } });
 
-  // ---- 4. Qué falta para poder avisar --------------------------------------
+  // ---- 3. Qué falta para poder avisar --------------------------------------
   const sinMail = await prisma.vendedorVW.findMany({
     where: { codigo: { in: [...porCodigo.keys()] }, OR: [{ email: null }, { email: "" }] },
     select: { codigo: true, nombre: true, sucursal: true, _count: { select: { pendientes: true } } },
@@ -296,7 +274,7 @@ async function guardar(
       sucursales: nombresSucursal,
       filas: archivo.filas.length,
       pendientesNuevos,
-      marcadosRespondio,
+      pendientesQueSiguen,
     },
   });
 
@@ -314,7 +292,6 @@ async function guardar(
     pendientesNuevos,
     pendientesQueSiguen,
     vendedoresDeOtraSucursal,
-    marcadosRespondio,
     filasRechazadas: archivo.rechazadas,
     filasObservadasPorFabrica: archivo.filas.filter((f) => f.observacionesFabrica.length > 0).length,
     avisos: archivo.avisos,
