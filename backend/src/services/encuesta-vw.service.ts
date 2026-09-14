@@ -89,6 +89,102 @@ export function parsearFechaVW(valor: unknown): Date | null {
 }
 
 // ---------------------------------------------------------------------------
+// El MES de cada cliente (seguimiento mes a mes de las animaciones)
+// ---------------------------------------------------------------------------
+
+/**
+ * "AAAA-MM" de una fecha, o null.
+ *
+ * Con el mes LOCAL: las fechas de este archivo se arman al mediodía (ver
+ * parsearFechaVW), así que ningún huso horario las corre de mes.
+ */
+export function periodoDeFecha(fecha: Date | null | undefined): string | null {
+  if (!fecha || isNaN(fecha.getTime())) return null;
+  return `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * De qué mes es una fila: el de su Fecha Dominio y, si no la trae, el de la
+ * entrega. `estimado` dice cuál de las dos se usó.
+ *
+ * La entrega es un RESPALDO, no un equivalente: en el Excel real de agosto 2026,
+ * 6 de 87 clientes patentaron en julio y recibieron el auto en agosto. Por eso se
+ * marca, para no presentar una estimación como si fuera el dato.
+ */
+export function periodoDeFila(fila: { fechaDominio?: Date | null; fechaEntrega: Date | null }): {
+  periodo: string | null;
+  estimado: boolean;
+} {
+  const real = periodoDeFecha(fila.fechaDominio);
+  if (real) return { periodo: real, estimado: false };
+  return { periodo: periodoDeFecha(fila.fechaEntrega), estimado: true };
+}
+
+export interface ResumenPeriodosVW {
+  /** El mes con más clientes: el que se le pone a la carga. null si ninguna fila trae fecha. */
+  periodo: string | null;
+  /** Clientes por mes, del más viejo al más nuevo. */
+  meses: Array<{ periodo: string; clientes: number }>;
+  /** Filas sin Fecha Dominio: su mes sale de la entrega (o no tienen ninguno). */
+  sinFechaDominio: number;
+  /** Filas sin ninguna de las dos fechas: quedan sin mes. */
+  sinMes: number;
+}
+
+/**
+ * Los meses que trae un archivo.
+ *
+ * UN EXCEL NO ES UN MES. El de fábrica de agosto 2026 trae 48 clientes de julio y
+ * 39 de agosto: fábrica lista a todos los que DEBEN la encuesta, sean del mes que
+ * sean. Si el archivo entero se etiquetara con un solo mes, 39 clientes quedarían
+ * contados en el mes equivocado. Por eso el mes vive en cada CLIENTE, y a la carga
+ * se le pone el que más clientes tiene, solo para nombrarla.
+ *
+ * En un empate gana el mes más reciente.
+ */
+export function resumirPeriodosVW(
+  filas: ReadonlyArray<{ fechaDominio?: Date | null; fechaEntrega: Date | null }>
+): ResumenPeriodosVW {
+  const conteo = new Map<string, number>();
+  let sinFechaDominio = 0;
+  let sinMes = 0;
+  for (const f of filas) {
+    const { periodo, estimado } = periodoDeFila(f);
+    if (estimado) sinFechaDominio++;
+    if (!periodo) {
+      sinMes++;
+      continue;
+    }
+    conteo.set(periodo, (conteo.get(periodo) ?? 0) + 1);
+  }
+  const meses = [...conteo.entries()]
+    .map(([periodo, clientes]) => ({ periodo, clientes }))
+    .sort((a, b) => a.periodo.localeCompare(b.periodo));
+  let periodo: string | null = null;
+  let maximo = -1;
+  for (const m of meses) {
+    // >= y no >: se recorre de viejo a nuevo, así que en un empate gana el nuevo.
+    if (m.clientes >= maximo) {
+      maximo = m.clientes;
+      periodo = m.periodo;
+    }
+  }
+  return { periodo, meses, sinFechaDominio, sinMes };
+}
+
+const NOMBRES_MES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+
+/** "2026-08" -> "agosto 2026". Si no tiene ese formato lo devuelve tal cual. */
+export function nombrePeriodo(periodo: string): string {
+  const m = periodo.match(/^(\d{4})-(\d{2})$/);
+  const nombre = m ? NOMBRES_MES[Number(m[2]) - 1] : undefined;
+  return m && nombre ? `${nombre} ${m[1]}` : periodo;
+}
+
+// ---------------------------------------------------------------------------
 // Nombre del cliente
 // ---------------------------------------------------------------------------
 
@@ -447,6 +543,14 @@ export interface FilaEncuestaVWListaParaImportar {
   canalVentas: string | null;
   area: "VENTAS" | "PLAN_DE_AHORRO" | null;
   fechaEntrega: Date | null;
+  /**
+   * La columna "Fecha Dominio": cuándo se patentó la unidad. Es la que decide de
+   * qué MES es el cliente en el seguimiento de las animaciones.
+   *
+   * Opcional porque el formato INTERNO no la trae: ahí el mes se estima con la
+   * entrega (ver periodoDeFila).
+   */
+  fechaDominio?: Date | null;
   observacionesFabrica: string[];
   /**
    * Sucursal donde se hizo LA VENTA, cuando el archivo la trae explícita.
@@ -608,6 +712,9 @@ export function parsearArchivoEncuestaVW(workbook: XLSX.WorkBook): ArchivoEncues
         canalVentas: c.canalVentas?.trim() || null,
         area: areaDeCanalVW(c.canalVentas),
         fechaEntrega: parsearFechaVW(c.fechaEntregaFinal) ?? parsearFechaVW(c.fechaEntregaReportada),
+        // Hasta ahora esta columna se ubicaba pero se descartaba acá: nunca
+        // llegaba al cliente guardado.
+        fechaDominio: parsearFechaVW(c.fechaDominio),
         observacionesFabrica: fila.observacionesFabrica,
       });
     }

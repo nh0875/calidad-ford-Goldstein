@@ -12,6 +12,7 @@ import {
   notificarEncuestaVW,
   previewEncuestaVW,
   editarEstadoEncuestaVW,
+  seguimientoEncuestaVW,
 } from "../controllers/encuesta-vw.controller";
 import { estadoMailRefuerzo } from "../controllers/refuerzo.controller";
 
@@ -19,6 +20,10 @@ const router = Router();
 
 // Lista de pendientes agrupada por vendedor: la ve cualquiera de Calidad.
 router.get("/", asyncHandler(listarEncuestaVW));
+
+// Cómo van las animaciones mes a mes: el mes de cada cliente sale de su Fecha
+// Dominio. Lo usan esta pantalla y el tablero principal.
+router.get("/seguimiento", asyncHandler(seguimientoEncuestaVW));
 
 // Carga del Excel de fábrica. Es en dos pasos a propósito: primero se muestra
 // qué trae el archivo y recién después se toca la base. La carga solo agrega

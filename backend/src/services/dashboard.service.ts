@@ -14,11 +14,14 @@ import { prisma } from "../config/prisma";
 import { FALTA_CLASIFICAR } from "./causa-raiz.service";
 import { FiltrosReporte, reporteCausaRaiz, reporteSentimiento } from "./reporte.service";
 import { nombreClienteRqr } from "./rqr.service";
+import { calcularSeguimiento, traerClientesSeguimiento } from "./seguimiento-encuesta-vw.service";
 
 // Un ranking con menos casos que esto distorsiona (una sola respuesta mala = 100% rojo)
 const MINIMO_CASOS_RANKING = 5;
 const RQR_ABIERTOS_EN_LISTA = 10;
 const VENDEDORES_EN_TABLERO = 5;
+// Cuántos meses de animaciones muestra el tablero (la pantalla de encuestas, todos).
+const MESES_EN_TABLERO = 6;
 
 /**
  * Encuestas de fábrica de Volkswagen para el tablero.
@@ -26,59 +29,78 @@ const VENDEDORES_EN_TABLERO = 5;
  * Devuelve null en las marcas que no usan este circuito, así el tablero no
  * muestra un panel vacío.
  *
- * "Respondieron" son los que dejaron de venir en el Excel de pendientes: fábrica
- * no nos dice quién contestó, se deduce de su ausencia (ver la importación).
+ * "Respondieron" son los que Calidad marcó como respondidos a mano: desde el
+ * 14-09-2026 la carga del Excel ya no cierra a nadie (ver la importación).
+ *
+ * DOS COSAS QUE SE CORRIGIERON ACÁ, y conviene no volver a romper:
+ *  - La tasa se calculaba sobre PENDIENTE + RESPONDIO y dejaba afuera a los
+ *    AVISADO, el estado del medio que se agregó después. Justo los clientes que
+ *    el vendedor ya había animado desaparecían del numerador y del denominador:
+ *    con 10 sin avisar, 50 avisados y 10 respondidos daba 50% cuando es 14%.
+ *    Ahora el total son TODOS los clientes.
+ *  - No miraba la provincia. En Volkswagen se aplica en todo el sistema, y el
+ *    tablero ya la recibe resuelta en `sucursal` (la del usuario le gana al filtro).
  */
-async function resumenEncuestaFabrica() {
+async function resumenEncuestaFabrica(sucursal: string | null) {
   if (marca.refuerzo.formatoExcel !== "VW") return null;
 
-  const [porEstado, porSucursal, vendedores] = await Promise.all([
-    prisma.encuestaFabricaVW.groupBy({ by: ["estado"], _count: { _all: true } }),
-    prisma.encuestaFabricaVW.groupBy({
-      by: ["sucursal"],
-      where: { estado: EstadoEncuestaFabrica.PENDIENTE },
-      _count: { _all: true },
-    }),
-    prisma.vendedorVW.findMany({
-      where: { pendientes: { some: { estado: EstadoEncuestaFabrica.PENDIENTE } } },
-      select: {
-        codigo: true,
-        nombre: true,
-        email: true,
-        sucursal: true,
-        _count: { select: { pendientes: { where: { estado: EstadoEncuestaFabrica.PENDIENTE } } } },
-      },
-    }),
-  ]);
+  const clientes = await traerClientesSeguimiento(sucursal);
+  const conEstado = (e: EstadoEncuestaFabrica) => clientes.filter((c) => c.estado === e);
+  const sinAvisar = conEstado(EstadoEncuestaFabrica.PENDIENTE);
+  const esperandoRespuesta = conEstado(EstadoEncuestaFabrica.AVISADO).length;
+  const respondieron = conEstado(EstadoEncuestaFabrica.RESPONDIO).length;
+  // "Sin responder" son los pendientes Y los avisados: al avisado ya se le mandó
+  // el correo al vendedor, pero el cliente todavía no contestó.
+  const sinResponder = clientes.filter((c) => c.estado !== EstadoEncuestaFabrica.RESPONDIO);
 
-  const cuenta = (e: EstadoEncuestaFabrica) =>
-    porEstado.find((g) => g.estado === e)?._count._all ?? 0;
-  const pendientes = cuenta(EstadoEncuestaFabrica.PENDIENTE);
-  const respondieron = cuenta(EstadoEncuestaFabrica.RESPONDIO);
-  const total = pendientes + respondieron;
+  const porVendedor = new Map<string, { codigo: string; nombre: string | null; sucursal: string; pendientes: number }>();
+  const porSucursal = new Map<string, number>();
+  for (const c of sinResponder) {
+    const v = porVendedor.get(c.vendedor.codigo) ?? {
+      codigo: c.vendedor.codigo,
+      nombre: c.vendedor.nombre,
+      sucursal: c.vendedor.sucursal,
+      pendientes: 0,
+    };
+    v.pendientes++;
+    porVendedor.set(c.vendedor.codigo, v);
+    porSucursal.set(c.sucursal, (porSucursal.get(c.sucursal) ?? 0) + 1);
+  }
+
+  // Sin correo cargado no se le puede avisar, y eso solo traba a los que todavía
+  // tienen clientes SIN AVISAR: a los avisados el correo ya les salió.
+  const codigosSinCorreo = new Set(sinAvisar.filter((c) => !c.vendedor.email).map((c) => c.vendedor.codigo));
 
   // Los que más deben, arriba: es la lista con la que se decide a quién apurar.
-  const ranking = vendedores
-    .map((v) => ({
-      codigo: v.codigo,
-      nombre: v.nombre,
-      sucursal: v.sucursal,
-      sinCorreo: !v.email,
-      pendientes: v._count.pendientes,
-    }))
-    .sort((a, b) => b.pendientes - a.pendientes);
+  const ranking = [...porVendedor.values()]
+    .map((v) => ({ ...v, sinCorreo: codigosSinCorreo.has(v.codigo) }))
+    .sort((x, y) => y.pendientes - x.pendientes);
+
+  const seguimiento = calcularSeguimiento(clientes, { periodo: null });
 
   return {
-    pendientes,
+    total: clientes.length,
+    sinAvisar: sinAvisar.length,
+    esperandoRespuesta,
+    // Los que todavía deben la encuesta: pendientes y avisados.
+    pendientes: sinResponder.length,
     respondieron,
-    tasaRespuesta: total > 0 ? porcentaje(respondieron, total) : null,
+    tasaRespuesta: clientes.length > 0 ? porcentaje(respondieron, clientes.length) : null,
     vendedoresConPendientes: ranking.length,
-    // Sin correo cargado no se les puede avisar: es lo que traba el circuito.
-    vendedoresSinCorreo: ranking.filter((v) => v.sinCorreo).length,
-    porSucursal: porSucursal
-      .map((g) => ({ sucursal: g.sucursal, pendientes: g._count._all }))
-      .sort((a, b) => b.pendientes - a.pendientes),
+    vendedoresSinCorreo: codigosSinCorreo.size,
+    porSucursal: [...porSucursal.entries()]
+      .map(([suc, pendientes]) => ({ sucursal: suc, pendientes }))
+      .sort((x, y) => y.pendientes - x.pendientes),
     topVendedores: ranking.slice(0, VENDEDORES_EN_TABLERO),
+    // Cómo van las animaciones mes a mes, y qué vendedores rinden más. El tablero
+    // muestra los últimos meses; la pantalla de encuestas, todos.
+    seguimiento: {
+      meses: seguimiento.meses.slice(-MESES_EN_TABLERO),
+      total: seguimiento.total,
+      sinMes: seguimiento.sinMes,
+      vendedores: seguimiento.vendedores.slice(0, VENDEDORES_EN_TABLERO),
+      minimoRanking: seguimiento.minimoRanking,
+    },
   };
 }
 
@@ -266,7 +288,7 @@ export async function dashboardResumen(f: FiltrosReporte) {
   // propia lista (Volkswagen). El bloque de arriba se calcula sobre los Casos, y
   // los clientes de la encuesta de VW no son Casos —no traen teléfono, no se los
   // puede contactar por WhatsApp—, así que ahí daba SIEMPRE cero.
-  const encuestaFabrica = await resumenEncuestaFabrica();
+  const encuestaFabrica = await resumenEncuestaFabrica(f.sucursal ?? null);
 
   return {
     periodo: { fechaDesde: f.fechaDesde ?? null, fechaHasta: f.fechaHasta ?? null },

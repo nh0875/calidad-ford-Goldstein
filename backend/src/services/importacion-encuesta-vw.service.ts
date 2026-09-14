@@ -9,7 +9,13 @@ import {
   resolverVendedores,
 } from "./encuesta-interna-vw.service";
 import { ACCIONES } from "./audit.service";
-import { ArchivoEncuestaVW, parsearArchivoEncuestaVW } from "./encuesta-vw.service";
+import {
+  ArchivoEncuestaVW,
+  parsearArchivoEncuestaVW,
+  periodoDeFecha,
+  periodoDeFila,
+  resumirPeriodosVW,
+} from "./encuesta-vw.service";
 
 /**
  * Importa el Excel de encuestas pendientes de fábrica de Volkswagen.
@@ -35,6 +41,12 @@ import { ArchivoEncuestaVW, parsearArchivoEncuestaVW } from "./encuesta-vw.servi
 
 export interface ResumenImportacionVW {
   uploadId: string;
+  /** El mes con más clientes del archivo: el que se le pone a la carga. */
+  periodo: string;
+  /** Clientes por mes según la Fecha Dominio. Un mismo archivo trae varios. */
+  meses: Array<{ periodo: string; clientes: number }>;
+  /** Clientes sin Fecha Dominio: su mes se estimó con la entrega. */
+  sinFechaDominio: number;
   sucursales: string[];
   vendedoresNuevos: number;
   vendedoresActualizados: number;
@@ -112,11 +124,13 @@ async function guardar(
 ): Promise<ResumenImportacionVW> {
   const nombresSucursal = [...new Set(archivo.hojas.map((h) => h.nombreSucursal))];
 
-  // El período sale de la entrega más reciente: es lo que da el "de cuándo" es
-  // esta foto. Si ninguna fila trae fecha, se usa el mes en curso.
-  const fechas = archivo.filas.map((f) => f.fechaEntrega).filter((f): f is Date => !!f);
-  const referencia = fechas.length ? new Date(Math.max(...fechas.map((f) => f.getTime()))) : new Date();
-  const periodo = `${referencia.getFullYear()}-${String(referencia.getMonth() + 1).padStart(2, "0")}`;
+  // El período de la carga sale de la columna "Fecha Dominio": el mes con más
+  // clientes. Un archivo trae VARIOS meses (ver resumirPeriodosVW), así que esto
+  // solo nombra la carga: el seguimiento mes a mes se hace con el mes de CADA
+  // cliente. Antes salía de la entrega más reciente, y un solo cliente de un mes
+  // nuevo corría la carga entera a ese mes. Sin ninguna fecha, el mes en curso.
+  const periodos = resumirPeriodosVW(archivo.filas);
+  const periodo = periodos.periodo ?? periodoDeFecha(new Date())!;
 
   const upload = await prisma.excelUpload.create({
     data: {
@@ -227,6 +241,8 @@ async function guardar(
       observacionesFabrica: f.observacionesFabrica,
       vistaEnUploadId: upload.id,
     };
+    // El mes del cliente: el de su Fecha Dominio, o estimado con la entrega.
+    const mes = periodoDeFila(f);
     const existente = await prisma.encuestaFabricaVW.findUnique({ where: { chasis: f.chasis } });
     if (existente) {
       // Se refrescan los DATOS (el correo corregido, el vendedor reasignado, lo
@@ -236,7 +252,20 @@ async function guardar(
       // cliente ya avisado que seguía en el archivo volvía a Pendiente —y al
       // vendedor le llegaba otra vez en el próximo aviso—, y lo que Calidad había
       // cambiado a mano se perdía con la carga siguiente.
-      await prisma.encuestaFabricaVW.update({ where: { chasis: f.chasis }, data: datos });
+      //
+      // El MES se trata aparte. Si esta fila trae Fecha Dominio, manda: es el dato
+      // real y además corrige una estimación vieja. Si NO la trae (formato
+      // interno), no se pisa un mes que ya se había leído bien de un Excel de
+      // fábrica anterior; solo se completa con la entrega si no había ninguno.
+      const mesActualizado = f.fechaDominio
+        ? { fechaDominio: f.fechaDominio, periodo: mes.periodo }
+        : !existente.periodo && mes.periodo
+          ? { periodo: mes.periodo }
+          : {};
+      await prisma.encuestaFabricaVW.update({
+        where: { chasis: f.chasis },
+        data: { ...datos, ...mesActualizado },
+      });
       pendientesQueSiguen++;
     } else {
       // Un cliente NUEVO entra siempre como Pendiente. Esto no es "cambiar un
@@ -248,6 +277,8 @@ async function guardar(
           chasis: f.chasis,
           origenUploadId: upload.id,
           origenFormato,
+          fechaDominio: f.fechaDominio ?? null,
+          periodo: mes.periodo,
         },
       });
       pendientesNuevos++;
@@ -275,11 +306,17 @@ async function guardar(
       filas: archivo.filas.length,
       pendientesNuevos,
       pendientesQueSiguen,
+      periodo,
+      meses: periodos.meses,
+      sinFechaDominio: periodos.sinFechaDominio,
     },
   });
 
   return {
     uploadId: upload.id,
+    periodo,
+    meses: periodos.meses,
+    sinFechaDominio: periodos.sinFechaDominio,
     sucursales: nombresSucursal,
     vendedoresNuevos,
     vendedoresActualizados,

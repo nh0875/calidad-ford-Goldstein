@@ -4,7 +4,7 @@ import { EstadoEncuestaFabrica } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { marca } from "../config/marca";
 import { abrirWorkbook, borrarArchivoTemporal, guardarArchivoTemporal, leerArchivoTemporal } from "../services/excel.service";
-import { parsearArchivoEncuestaVW } from "../services/encuesta-vw.service";
+import { nombrePeriodo, parsearArchivoEncuestaVW, resumirPeriodosVW } from "../services/encuesta-vw.service";
 import { importarEncuestaFabricaVW } from "../services/importacion-encuesta-vw.service";
 import {
   convertirInternoAArchivo,
@@ -15,6 +15,8 @@ import {
 import { avisarVendedoresVW } from "../services/encuesta-vw-mail.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { zSucursal } from "../services/sucursal.service";
+import { provinciaPermitida } from "../services/area.service";
+import { seguimientoEncuestasVW } from "../services/seguimiento-encuesta-vw.service";
 
 // ---------- POST /api/encuesta-vw/preview ----------
 // Se lee el archivo y se muestra lo que se va a hacer ANTES de tocar la base.
@@ -79,6 +81,9 @@ export async function previewEncuestaVW(req: Request, res: Response) {
       // Lo que hay que resolver antes de poder importar.
       vendedoresSinAsignar: sinResolver,
       vendedoresDisponibles: vendedores,
+      // El interno no trae Fecha Dominio: el mes de cada cliente se estima con la
+      // entrega, y la pantalla lo avisa con sinFechaDominio.
+      ...resumirPeriodosVW(convertido.filas),
       rechazadas: convertido.rechazadas.slice(0, 50),
       avisos: convertido.avisos,
     });
@@ -122,6 +127,9 @@ export async function previewEncuestaVW(req: Request, res: Response) {
     observadasPorFabrica: archivo.filas
       .filter((f) => f.observacionesFabrica.length > 0)
       .map((f) => ({ hoja: f.hoja, fila: f.numeroFilaExcel, cliente: f.nombreCliente, observaciones: f.observacionesFabrica })),
+    // Qué meses trae el archivo según la columna "Fecha Dominio". Un Excel de
+    // fábrica mezcla meses, así que el reparto se muestra ANTES de confirmar.
+    ...resumirPeriodosVW(archivo.filas),
     avisos: archivo.avisos,
   });
 }
@@ -178,6 +186,14 @@ export async function confirmEncuestaVW(req: Request, res: Response) {
     );
   }
   if (resumen.vendedoresSinMail.length) partes.push(`${resumen.vendedoresSinMail.length} sin correo cargado`);
+  // El mes, con el reparto si el archivo trae más de uno: es con lo que después se
+  // sigue la carga mes a mes, y conviene verlo en el momento.
+  if (resumen.meses.length > 1) {
+    const reparto = resumen.meses.map((m) => `${nombrePeriodo(m.periodo)}: ${m.clientes}`).join(", ");
+    partes.push(`clientes de ${resumen.meses.length} meses según la Fecha Dominio (${reparto})`);
+  } else if (resumen.meses.length === 1) {
+    partes.push(`todos de ${nombrePeriodo(resumen.meses[0].periodo)}`);
+  }
 
   res.status(201).json({ message: `Carga terminada: ${partes.join(", ")}.`, resumen });
 }
@@ -216,6 +232,9 @@ export async function listarEncuestaVW(req: Request, res: Response) {
           canalVentas: true,
           area: true,
           fechaEntrega: true,
+          // El mes del cliente para el seguimiento. Sin fechaDominio, es estimado.
+          fechaDominio: true,
+          periodo: true,
           estado: true,
           avisadoEn: true,
           respondioEn: true,
@@ -481,6 +500,10 @@ export async function crearEncuestaManualVW(req: Request, res: Response) {
       nombreCliente: d.nombreCliente,
       email: d.email || "",
       fechaEntrega: fecha && !Number.isNaN(fecha.getTime()) ? fecha : null,
+      // El mes, estimado con la entrega: un caso a mano no trae Fecha Dominio. Se
+      // saca del texto "AAAA-MM-DD" y no de la fecha, porque new Date("2026-08-01")
+      // es medianoche UTC, que en Argentina todavía es 31 de julio.
+      periodo: /^\d{4}-\d{2}/.test(d.fechaEntrega ?? "") ? d.fechaEntrega!.slice(0, 7) : null,
       canalVentas: d.canalVentas || null,
       vendedorId: vendedor.id,
       sucursal: vendedor.sucursal,
@@ -607,4 +630,33 @@ export async function eliminarEncuestaVW(req: Request, res: Response) {
       ? `${encuesta.nombreCliente} eliminado de la lista.`
       : `${encuesta.nombreCliente} eliminado. Ojo: vino del Excel de fábrica, así que si todavía figura ahí, la próxima carga lo vuelve a traer.`,
   });
+}
+
+// ---------- GET /api/encuesta-vw/seguimiento ----------
+//
+// Cómo van las animaciones MES A MES (ver seguimiento-encuesta-vw.service.ts).
+// `periodo` acota el ranking de vendedores a un mes; sin él, el ranking es de
+// todos los meses. La evolución de los meses viene siempre entera.
+//
+// Se acota por provincia igual que el resto de Volkswagen: alguien de Mendoza ve
+// cómo animan los vendedores de Mendoza.
+
+const seguimientoSchema = z.object({
+  periodo: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/, "El mes tiene que tener el formato AAAA-MM.")
+    .optional(),
+});
+
+export async function seguimientoEncuestaVW(req: Request, res: Response) {
+  const parsed = seguimientoSchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ message: parsed.error.errors.map((e) => e.message).join(" ") });
+  }
+  res.json(
+    await seguimientoEncuestasVW({
+      sucursal: provinciaPermitida(req.usuario!),
+      periodo: parsed.data.periodo ?? null,
+    })
+  );
 }

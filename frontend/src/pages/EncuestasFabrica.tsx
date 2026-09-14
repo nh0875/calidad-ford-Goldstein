@@ -20,6 +20,13 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 import { SelectorSucursal } from "../components/ui/SelectorSucursal";
 import { Desplegable } from "../components/ui/Desplegable";
+import {
+  BarrasAnimacionPorMes,
+  etiquetaMes,
+  RankingVendedoresAnimacion,
+  SeguimientoEncuestas,
+  TablaAnimacionPorMes,
+} from "../components/SeguimientoAnimaciones";
 
 // Los tres estados por los que pasa un cliente. El orden del array es el orden
 // del circuito, y de ahí sale también el orden de la lista en pantalla: primero
@@ -117,6 +124,10 @@ interface Pendiente {
   canalVentas: string | null;
   area: string | null;
   fechaEntrega: string | null;
+  /** La Fecha Dominio del Excel. Sin ella, el mes del cliente es estimado. */
+  fechaDominio?: string | null;
+  /** El mes del cliente, "AAAA-MM". */
+  periodo?: string | null;
   estado: EstadoCliente;
   observacionesFabrica: string[];
   esManual?: boolean;
@@ -164,6 +175,12 @@ interface VistaPrevia {
   /** Solo en el interno: vendedores que vinieron por nombre y hay que asignar. */
   vendedoresSinAsignar?: Array<{ nombre: string; filas: number }>;
   vendedoresDisponibles?: Array<{ codigo: string; nombre: string | null; sucursal: string }>;
+  /** El mes con más clientes: el que se le pone a la carga. */
+  periodo?: string | null;
+  /** Clientes por mes según la Fecha Dominio. Un mismo archivo trae varios. */
+  meses?: Array<{ periodo: string; clientes: number }>;
+  /** Clientes sin Fecha Dominio: su mes se va a estimar con la entrega. */
+  sinFechaDominio?: number;
 }
 
 interface EstadoMail {
@@ -198,6 +215,14 @@ export default function EncuestasFabrica() {
   // Casilla del sistema. Sin esto no sale ningún correo, así que se avisa ANTES
   // de que alguien apriete el botón y le vuelvan 18 errores iguales.
   const [estadoMail, setEstadoMail] = useState<EstadoMail | null>(null);
+  // Seguimiento mes a mes de las animaciones. `version` sube cada vez que se
+  // recarga la lista, así el seguimiento se refresca después de CUALQUIER cambio
+  // (un estado, un aviso, una carga) sin tener que acordarse en cada lugar.
+  const [version, setVersion] = useState(0);
+  const [seguimiento, setSeguimiento] = useState<SeguimientoEncuestas | null>(null);
+  // El mes elegido: acota el ranking de vendedores y la lista de clientes.
+  // "" = todos los meses; "SIN_MES" = los clientes que no tienen ninguna fecha.
+  const [mes, setMes] = useState("");
 
   const cargar = useCallback(async () => {
     try {
@@ -210,6 +235,7 @@ export default function EncuestasFabrica() {
       setVendedores(r.data);
       setResumen(r.resumen);
       setEstadoMail(m);
+      setVersion((v) => v + 1);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos cargar las encuestas pendientes.");
@@ -220,6 +246,16 @@ export default function EncuestasFabrica() {
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  useEffect(() => {
+    // Solo un mes de verdad acota el ranking: "SIN_MES" no es un mes que el
+    // backend entienda, y para ese caso el ranking muestra a todos.
+    const params = /^\d{4}-\d{2}$/.test(mes) ? `?periodo=${mes}` : "";
+    apiGet<SeguimientoEncuestas>(`/api/encuesta-vw/seguimiento${params}`)
+      .then(setSeguimiento)
+      // Es un agregado: si falla, la pantalla de trabajo tiene que seguir andando.
+      .catch(() => setSeguimiento(null));
+  }, [mes, version]);
 
   // ---- Carga del Excel -----------------------------------------------------
   const [previa, setPrevia] = useState<VistaPrevia | null>(null);
@@ -363,6 +399,8 @@ export default function EncuestasFabrica() {
     const q = busquedaCliente.trim().toLowerCase();
     return filas
       .filter((f) => filtroEstado === "TODOS" || f.estado === filtroEstado)
+      // El mismo mes que acota el ranking de vendedores.
+      .filter((f) => mes === "" || (mes === "SIN_MES" ? !f.periodo : f.periodo === mes))
       .filter(
         (f) =>
           q === "" ||
@@ -381,7 +419,7 @@ export default function EncuestasFabrica() {
         if (orden !== 0) return orden;
         return (a.fechaEntrega ?? "").localeCompare(b.fechaEntrega ?? "");
       });
-  }, [vendedores, busquedaCliente, filtroEstado]);
+  }, [vendedores, busquedaCliente, filtroEstado, mes]);
 
   // Cambio de estado a mano, y la nota que lo acompaña.
   //
@@ -593,6 +631,43 @@ export default function EncuestasFabrica() {
             ))}
           </div>
 
+          {/* De qué mes es cada cliente, según la columna Fecha Dominio. Un Excel de
+              fábrica mezcla meses: el reparto se muestra ANTES de confirmar, porque
+              es con eso que después se sigue la carga mes a mes. */}
+          {(previa.meses ?? []).length > 0 && (
+            <div className="mt-3 rounded-md border border-gray-200 p-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Mes según la Fecha Dominio</div>
+              {(previa.meses ?? []).length === 1 ? (
+                <p className="mt-1 text-sm text-ink">
+                  Todos los clientes son de <strong>{etiquetaMes((previa.meses ?? [])[0].periodo)}</strong>.
+                </p>
+              ) : (
+                <>
+                  <p className="mt-1 text-sm text-ink">
+                    El archivo trae clientes de {(previa.meses ?? []).length} meses. Cada cliente queda en el suyo; la carga
+                    se nombra <strong>{etiquetaMes(previa.periodo)}</strong>, que es el que más clientes tiene.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {(previa.meses ?? []).map((m) => (
+                      <span key={m.periodo} className="rounded-full bg-gray-100 px-3 py-1 text-xs text-ink">
+                        {etiquetaMes(m.periodo)}: <strong className="tabular-nums">{m.clientes}</strong>
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {(previa.sinFechaDominio ?? 0) > 0 && (
+            <div className="mt-3">
+              <Alert tono="advertencia">
+                {previa.formato === "INTERNO"
+                  ? "Este archivo no trae la columna Fecha Dominio: el mes de cada cliente se va a estimar con la fecha de entrega."
+                  : `${previa.sinFechaDominio} cliente(s) no traen Fecha Dominio: su mes se va a estimar con la fecha de entrega.`}
+              </Alert>
+            </div>
+          )}
+
           {(previa.vendedoresSinNombre ?? []).length > 0 && (
             <div className="mt-3"><Alert tono="advertencia">
               Hay {(previa.vendedoresSinNombre ?? []).length} código(s) de vendedor que no figuran en la hoja de nombres:{" "}
@@ -698,11 +773,74 @@ export default function EncuestasFabrica() {
         </Card>
       )}
 
+      {/* Animaciones mes a mes. El mes de cada cliente sale de su Fecha Dominio. */}
+      {seguimiento && (
+        <>
+          {/* El filtro va en su propia fila, ARRIBA de lo que acota (el ranking y la
+              lista de clientes), y no metido adentro del gráfico. */}
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-ink">Mes</span>
+            <Select value={mes} onChange={(e) => setMes(e.target.value)} className="!w-60">
+              <option value="">Todos los meses</option>
+              {[...seguimiento.meses].reverse().map((m) => (
+                <option key={m.periodo} value={m.periodo}>
+                  {etiquetaMes(m.periodo)} ({m.clientes})
+                </option>
+              ))}
+              {seguimiento.sinMes > 0 && <option value="SIN_MES">Sin mes ({seguimiento.sinMes})</option>}
+            </Select>
+            <span className="text-xs text-ink-muted">Acota el ranking de vendedores y la lista de clientes de abajo.</span>
+          </div>
+
+          <Card padding="p-5">
+            <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">Animaciones mes a mes</h3>
+            <p className="mt-1 text-sm text-ink-muted">
+              Cada mes son los clientes que patentaron ese mes, según la columna Fecha Dominio del Excel de fábrica. Un
+              cliente está animado desde que se le avisó a su vendedor, aunque después haya respondido.
+            </p>
+            {seguimiento.meses.length === 0 ? (
+              <p className="mt-4 text-sm text-ink-muted">
+                Todavía no hay clientes con mes. Se completa sola con la próxima carga del Excel de fábrica.
+              </p>
+            ) : (
+              <div className="mt-4 space-y-6">
+                {/* min-w-0 en cada columna: sin eso, una columna de grilla toma el
+                    ancho MINIMO de su contenido, la tabla de vendedores empuja la
+                    tarjeta entera fuera de la pantalla del celular y nunca llega a
+                    scrollear adentro de su propio contenedor. */}
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <div className="min-w-0">
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Clientes por mes</h4>
+                    <BarrasAnimacionPorMes meses={seguimiento.meses} seleccionado={mes} onSeleccionar={setMes} />
+                  </div>
+                  <div className="min-w-0">
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                      Qué vendedores animan mejor{/^\d{4}-\d{2}$/.test(mes) ? ` · ${etiquetaMes(mes)}` : ""}
+                    </h4>
+                    <RankingVendedoresAnimacion vendedores={seguimiento.vendedores} minimo={seguimiento.minimoRanking} />
+                  </div>
+                </div>
+                <TablaAnimacionPorMes meses={seguimiento.meses} total={seguimiento.total} seleccionado={mes} />
+                <p className="text-xs text-ink-muted">
+                  «Respondieron» son los que se marcaron a mano: la carga del Excel ya no le cambia el estado a nadie, así
+                  que estos números valen lo que valga esa carga. El mes en curso todavía se está trabajando.
+                  {seguimiento.total.mesEstimado > 0 &&
+                    ` ${seguimiento.total.mesEstimado} cliente(s) no traían Fecha Dominio: su mes se estimó con la fecha de entrega, y se corrige solo cuando vuelven a venir en un Excel de fábrica.`}
+                  {seguimiento.sinMes > 0 &&
+                    ` ${seguimiento.sinMes} cliente(s) no tienen ninguna fecha y no entran en ningún mes.`}
+                </p>
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+
       {/* Clientes cargados */}
       <Card padding="p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-5 py-3">
           <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">
             Clientes cargados{resumen ? ` (${clientes.length} de ${resumen.totalClientes})` : ""}
+            {mes && ` · ${mes === "SIN_MES" ? "sin mes" : etiquetaMes(mes)}`}
           </h3>
           <div className="flex flex-wrap items-center gap-2">
             <Input
@@ -726,7 +864,7 @@ export default function EncuestasFabrica() {
 
         {clientes.length === 0 ? (
           <p className="px-5 py-6 text-sm text-ink-muted">
-            {busquedaCliente || filtroEstado !== "TODOS"
+            {busquedaCliente || filtroEstado !== "TODOS" || mes
               ? "Ningún cliente coincide con lo que buscaste."
               : "Todavía no hay clientes cargados. Subí el Excel de fábrica o agregá uno a mano."}
           </p>
@@ -745,7 +883,7 @@ export default function EncuestasFabrica() {
                   <th className="px-4 py-2.5">Cliente</th>
                   <th className="whitespace-nowrap px-3 py-2.5">Chasis / Dominio</th>
                   <th className="whitespace-nowrap px-3 py-2.5">Vendedor</th>
-                  <th className="whitespace-nowrap px-3 py-2.5">Entrega</th>
+                  <th className="whitespace-nowrap px-3 py-2.5">Entrega / Mes</th>
                   <th className="whitespace-nowrap px-3 py-2.5">Estado</th>
                   <th className="whitespace-nowrap px-3 py-2.5"></th>
                 </tr>
@@ -783,8 +921,18 @@ export default function EncuestasFabrica() {
                         </div>
                         <div className="truncate text-xs text-ink-muted">{c.sucursal}</div>
                       </td>
+                      {/* El mes va apilado debajo de la entrega y no en una columna
+                          propia: la tabla se armó a propósito con pocas columnas
+                          para que no se corte contra el borde. */}
                       <td className="whitespace-nowrap px-3 py-2.5 text-ink-muted">
-                        {c.fechaEntrega ? fechaCorta(c.fechaEntrega) : "—"}
+                        <div>{c.fechaEntrega ? fechaCorta(c.fechaEntrega) : "—"}</div>
+                        <div
+                          className="text-xs"
+                          title={c.periodo && !c.fechaDominio ? "No trajo Fecha Dominio: el mes se estimó con la entrega." : undefined}
+                        >
+                          {c.periodo ? etiquetaMes(c.periodo) : "sin mes"}
+                          {c.periodo && !c.fechaDominio && " (estimado)"}
+                        </div>
                       </td>
                       {/* El estado se cambia acá mismo, sin abrir nada: es lo que
                           más se toca, y esconderlo detrás de un botón sumaría un

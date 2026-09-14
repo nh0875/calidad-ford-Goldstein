@@ -785,6 +785,16 @@ model EncuestaFabricaVW {
   nombreCliente String
   email         String
   fechaEntrega  DateTime?
+  // La columna "Fecha Dominio" del Excel de fábrica: cuándo se patentó la unidad.
+  // Es la que decide de qué MES es el cliente en el seguimiento de las
+  // animaciones. null en los que no la traen: el formato interno, los cargados a
+  // mano y los que ya estaban antes de que se leyera.
+  fechaDominio  DateTime?
+  // El mes del cliente, "AAAA-MM". Sale de fechaDominio y, si falta, de la
+  // entrega. Cuando sale de la entrega es una ESTIMACIÓN y fechaDominio queda en
+  // null: en el Excel real 6 de 87 clientes patentaron en un mes y recibieron el
+  // auto en el siguiente.
+  periodo       String?
 
   // "TRADICIONAL" / "AUTOAHORRO" tal como vienen, más el área que se deduce de
   // ahí. Se guarda el texto original por si fábrica agrega un canal nuevo.
@@ -839,6 +849,7 @@ model EncuestaFabricaVW {
   @@index([sucursal, estado])
   @@index([origenFormato])
   @@index([vistaEnUploadId])
+  @@index([periodo])
 }
 
 // ---------------------------------------------------------------------------

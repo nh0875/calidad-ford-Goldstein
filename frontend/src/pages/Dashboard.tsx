@@ -9,6 +9,12 @@ import { etiquetaCategoria } from "../lib/categorias";
 import { AREAS, etiquetaArea } from "../lib/area";
 import { FiltroFecha, FiltroSelect, FiltroTexto } from "../components/filtros";
 import { DistribucionEstrellas, DistribucionSemaforo, EvolucionSemaforo } from "../components/graficos";
+import {
+  BarrasAnimacionPorMes,
+  RankingVendedoresAnimacion,
+  SeguimientoEncuestas,
+  TablaAnimacionPorMes,
+} from "../components/SeguimientoAnimaciones";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
@@ -88,6 +94,10 @@ interface Resumen {
   };
   // Solo en las marcas cuya encuesta de fábrica vive en su propia lista (VW).
   encuestaFabrica: null | {
+    total: number;
+    sinAvisar: number;
+    esperandoRespuesta: number;
+    /** Los que todavía deben la encuesta: sin avisar + esperando respuesta. */
     pendientes: number;
     respondieron: number;
     tasaRespuesta: number | null;
@@ -95,6 +105,8 @@ interface Resumen {
     vendedoresSinCorreo: number;
     porSucursal: Array<{ sucursal: string; pendientes: number }>;
     topVendedores: Array<{ codigo: string; nombre: string | null; sucursal: string; sinCorreo: boolean; pendientes: number }>;
+    /** Las animaciones mes a mes (los últimos meses) y los vendedores que mejor animan. */
+    seguimiento: SeguimientoEncuestas;
   };
   desgloseArea: null | Record<
     string,
@@ -456,15 +468,18 @@ export default function Dashboard() {
           {resumen.encuestaFabrica && (
             <Card>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-sm font-semibold text-ink">Encuestas de fábrica sin responder</h3>
+                <h3 className="text-sm font-semibold text-ink">Encuestas de fábrica</h3>
                 <Link to="/encuestas-fabrica" className="text-xs font-medium text-accent-dark hover:underline">
                   Ver por vendedor →
                 </Link>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+              {/* La tasa va sobre TODOS los clientes. Antes se calculaba sin los
+                  avisados y salía inflada justo cuando más se animaba. */}
+              <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
                 <MiniKpi titulo="Tasa de respuesta" valor={porcentaje(resumen.encuestaFabrica.tasaRespuesta)} color="text-accent-dark" />
                 <MiniKpi titulo="Respondieron" valor={resumen.encuestaFabrica.respondieron} color="text-green-700" />
-                <MiniKpi titulo="Pendientes" valor={resumen.encuestaFabrica.pendientes} color="text-yellow-700" />
+                <MiniKpi titulo="Esperando respuesta" valor={resumen.encuestaFabrica.esperandoRespuesta} color="text-accent-dark" />
+                <MiniKpi titulo="Sin avisar" valor={resumen.encuestaFabrica.sinAvisar} color="text-yellow-700" />
                 <MiniKpi titulo="Vendedores con pendientes" valor={resumen.encuestaFabrica.vendedoresConPendientes} color="text-ink" />
                 <MiniKpi
                   titulo="Sin correo cargado"
@@ -501,13 +516,17 @@ export default function Dashboard() {
                 </div>
               )}
 
+              {/* Este texto decía que "respondieron" se deduce de que el cliente deje
+                  de venir en el Excel. Desde el 14-09-2026 eso ya no pasa. */}
               <p className="mt-3 text-xs text-ink-muted">
-                Fábrica no avisa quién contestó: se deduce de que deje de venir en el Excel de pendientes.
+                «Respondieron» son los clientes que Calidad marcó a mano: la carga del Excel ya no le cambia el estado a nadie.
                 {resumen.encuestaFabrica.vendedoresSinCorreo > 0 &&
                   " A los vendedores sin correo no se les puede avisar hasta que se les cargue."}
               </p>
             </Card>
           )}
+
+          {resumen.encuestaFabrica && <AnimacionesMesAMes seguimiento={resumen.encuestaFabrica.seguimiento} />}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <TablaRanking
@@ -841,5 +860,67 @@ function PasoCircuito({
       <div className="text-xs font-semibold">{titulo}</div>
       <div className="mt-0.5 text-[11px] opacity-75">{detalle}</div>
     </div>
+  );
+}
+
+/**
+ * Cómo van las animaciones de encuestas de fábrica, mes a mes (Volkswagen).
+ *
+ * El número que manda es la efectividad: de los clientes animados, cuántos
+ * respondieron, y se lee mes contra mes y vendedor contra vendedor. NO se la
+ * compara con "los que respondieron sin animación": ese grupo no es comparable
+ * (ver seguimiento-encuesta-vw.service.ts) y la comparación hacía parecer que
+ * animar empeoraba las cosas.
+ */
+function AnimacionesMesAMes({ seguimiento }: { seguimiento: SeguimientoEncuestas }) {
+  const t = seguimiento.total;
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-ink">Animaciones de encuestas, mes a mes</h3>
+        <Link to="/encuestas-fabrica" className="text-xs font-medium text-accent-dark hover:underline">
+          Ver el detalle →
+        </Link>
+      </div>
+      {/* Aclaración necesaria: el tablero tiene un rango de fechas arriba y este
+          bloque NO lo usa. Sin decirlo, alguien achica el rango y espera que esto
+          cambie. La sucursal sí lo acota. */}
+      <p className="mt-1 text-xs text-ink-muted">
+        Cada mes son los clientes que patentaron ese mes, según la Fecha Dominio del Excel de fábrica. No usa el rango de
+        fechas de arriba; la sucursal sí.
+      </p>
+
+      <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <MiniKpi titulo="Efectividad de la animación" valor={porcentaje(t.efectividadAnimacion)} color="text-green-700" />
+        <MiniKpi titulo="Clientes animados" valor={t.animados} color="text-accent-dark" />
+        <MiniKpi titulo="Parte animada" valor={porcentaje(t.coberturaAnimacion)} color="text-accent-dark" />
+        <MiniKpi titulo="Respondieron por su cuenta" valor={t.respondieronSinAnimar} color="text-ink" />
+      </div>
+
+      {seguimiento.meses.length === 0 ? (
+        <p className="mt-4 text-sm text-ink-muted">
+          Todavía no hay clientes con mes. Se completa sola con la próxima carga del Excel de fábrica.
+        </p>
+      ) : (
+        // min-w-0 en cada columna: sin eso, una columna de grilla toma el ancho
+        // MINIMO de su contenido y en el celular las tablas empujan la tarjeta
+        // entera fuera de la pantalla en vez de scrollear adentro.
+        <div className="mt-5 grid gap-6 lg:grid-cols-2">
+          <div className="min-w-0">
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Clientes por mes</h4>
+            <BarrasAnimacionPorMes meses={seguimiento.meses} />
+          </div>
+          <div className="min-w-0">
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+              Vendedores que mejor animan
+            </h4>
+            <RankingVendedoresAnimacion vendedores={seguimiento.vendedores} minimo={seguimiento.minimoRanking} compacto />
+          </div>
+          <div className="min-w-0 lg:col-span-2">
+            <TablaAnimacionPorMes meses={seguimiento.meses} total={t} />
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
