@@ -274,7 +274,9 @@ try {
   $resp = $req.GetResponse()
   $lec = New-Object System.IO.StreamReader($resp.GetResponseStream())
   $r = @{ Content = $lec.ReadToEnd() }; $lec.Close(); $resp.Close()
-  $appViva = ($r.StatusCode -eq 200)
+  # $r es una tabla con Content y nada mas: el ".StatusCode" que habia aca daba
+  # siempre falso. GetResponse ya corta con error si no es 2xx.
+  $appViva = ($r.Content -match '"status"\s*:\s*"ok"')
 } catch {}
 Marcar $appViva "La app responde en http://localhost/api/health" "La app no responde todavía (esperá 1-2 min a que Docker termine de arrancar)." | Out-Null
 

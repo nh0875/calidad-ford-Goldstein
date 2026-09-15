@@ -270,8 +270,8 @@ function Backend-Arrancando {
 function Salud-VW-Ok {
     try {
         $r = Consultar-Web "http://localhost:$PuertoVW/api/health" 10
-        if ($r.StatusCode -ne 200) { return $false }
-        return ((($r.Content | ConvertFrom-Json).status) -eq "ok")
+        if (-not $r.ok) { return $false }
+        return ((($r.texto | ConvertFrom-Json).status) -eq "ok")
     } catch { return $false }
 }
 
@@ -279,7 +279,12 @@ function Tunel-Ok {
     # Se consulta la API local de ngrok: es fiable y no depende de internet.
     try {
         $r = Consultar-Web "http://127.0.0.1:4040/api/tunnels" 8
-        return ($r.Content -match [regex]::Escape($NgrokDomain))
+        # Consultar-Web devuelve @{ ok; texto; error }, NO lo de Invoke-WebRequest.
+        # Desde el 02-09 aca quedo ".Content", que no existe: daba SIEMPRE falso y
+        # el vigilante reiniciaba el tunel cada 5 minutos en las dos PCs (en Ford
+        # mataba el ngrok de Windows; en Volkswagen reiniciaba el contenedor).
+        if (-not $r.ok) { return $false }
+        return ($r.texto -match [regex]::Escape($NgrokDomain))
     } catch { return $false }
 }
 
