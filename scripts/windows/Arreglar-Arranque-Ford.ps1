@@ -41,6 +41,21 @@ function Aviso($t)  { Linea "  [OJO]   $t" "Yellow" }
 function Info($t)   { Linea "          $t" "Gray" }
 function Titulo($t) { Linea ""; Linea "== $t" "Cyan" }
 
+# Guarda el informe SIEMPRE, tambien cuando corta antes de terminar: justamente
+# esos son los casos que hay que poder mandar.
+function Terminar([int]$codigo) {
+    $nombre = "arranque-ford-$(Get-Date -Format 'yyyyMMdd-HHmm').txt"
+    $bom = New-Object System.Text.UTF8Encoding $true
+    foreach ($dest in @($ScriptDir, [Environment]::GetFolderPath("Desktop"))) {
+        try { [System.IO.File]::WriteAllLines((Join-Path $dest $nombre), $informe, $bom) } catch { }
+    }
+    Write-Host ""
+    Write-Host "          Informe guardado como $nombre (en esta carpeta y en el Escritorio)." -ForegroundColor Gray
+    Write-Host ""
+    Read-Host "Enter para cerrar" | Out-Null
+    exit $codigo
+}
+
 function Leer([string]$clave, [string]$porDefecto = "") {
     if (-not (Test-Path $EnvFile)) { return $porDefecto }
     foreach ($linea in (Get-Content $EnvFile -ErrorAction SilentlyContinue)) {
@@ -80,19 +95,49 @@ function Tunel-Ok   { $r = Pedir "http://127.0.0.1:4040/api/tunnels"; return ($r
 Linea "Arreglo del arranque automatico - $(Get-Date -Format 'dd/MM/yyyy HH:mm')" "Cyan"
 Info "PC: $env:COMPUTERNAME   usuario: $env:USERDOMAIN\$env:USERNAME"
 Info "carpeta: $ProjectDir"
+Info "version del sistema: $(((& git -C $ProjectDir rev-parse --short HEAD 2>$null) -join '').Trim())"
 
 # ---------------------------------------------------------------- guardas ----
-if (-not (Test-Path $EnvFile)) { Mal "No existe .env.prod en $ProjectDir. ¿Es la carpeta del sistema?"; Read-Host "Enter para cerrar"; exit 1 }
+if (-not (Test-Path $EnvFile)) { Mal "No existe .env.prod en $ProjectDir. ¿Es la carpeta del sistema?"; Terminar 1 }
 if ($marca -eq "VOLKSWAGEN" -or $marca -eq "VW") {
     Mal "Esta es la PC de VOLKSWAGEN. Este arreglo es solo para la de Ford (la de Volkswagen ya arranca sola)."
-    Read-Host "Enter para cerrar"; exit 1
+    Terminar 1
 }
 if (Test-Path (Join-Path $ProjectDir "SISTEMA-EN-SERVIDOR.txt")) {
     Mal "Existe SISTEMA-EN-SERVIDOR.txt: por ese archivo esta PC no levanta nada."
     Info "Si el sistema NO se mudo al servidor, borralo y volve a correr esto."
-    Read-Host "Enter para cerrar"; exit 1
+    Terminar 1
 }
-if (-not (Test-Path $Bucle)) { Mal "No encuentro vigilante-bucle.ps1. Actualiza el sistema (Actualizar-AHORA.bat) y volve a probar."; Read-Host "Enter para cerrar"; exit 1 }
+if (-not (Test-Path $Bucle)) {
+    # Paso en la PC de Ford: el archivo faltaba y actualizar no lo traia. Git solo
+    # repone lo que CAMBIA en la version nueva; un archivo borrado en la PC (a mano
+    # o por el antivirus) queda borrado aunque se actualice mil veces.
+    Aviso "Falta vigilante-bucle.ps1. Intento recuperarlo desde git..."
+    $estadoGit = ((& git -C $ProjectDir status --short -- "scripts/windows/vigilante-bucle.ps1" 2>$null) -join " ").Trim()
+    Info ("git dice: " + $(if ($estadoGit) { $estadoGit } else { "nada (esta version del sistema no lo tiene)" }))
+    & git -C $ProjectDir checkout -- "scripts/windows/vigilante-bucle.ps1" 2>$null
+    # Se espera antes de confirmar: si lo borra el antivirus, lo borra apenas
+    # aparece, y conviene enterarse ahora y no despues de reiniciar.
+    Start-Sleep -Seconds 10
+    if (Test-Path $Bucle) {
+        Bien "vigilante-bucle.ps1 recuperado, y sigue ahi."
+    } else {
+        Mal "No se pudo recuperar vigilante-bucle.ps1, o vuelve a desaparecer apenas se recupera."
+        try {
+            $det = @(Get-MpThreatDetection -ErrorAction Stop | Where-Object { ($_.Resources -join " ") -match "vigilante" })
+            if ($det.Count -gt 0) {
+                Mal "El antivirus (Defender) lo detecto $($det.Count) vez/veces. Ultima: $($det[-1].InitialDetectionTime)"
+                Get-MpThreat -ErrorAction SilentlyContinue | Where-Object { ($_.Resources -join " ") -match "vigilante" } |
+                    ForEach-Object { Info "   amenaza: $($_.ThreatName)" }
+                Info "Hace falta que un administrador agregue una exclusion en Seguridad de Windows para:"
+                Info "   $ProjectDir"
+            } else {
+                Info "Defender no registra haberlo borrado (o esta cuenta no puede ver ese historial)."
+            }
+        } catch { Info "No pude consultar el historial del antivirus desde esta cuenta." }
+        Terminar 1
+    }
+}
 
 # ------------------------------------------------------------ 1. revisar ----
 Titulo "1. COMO ESTA HOY"
@@ -221,12 +266,5 @@ if ($sis -and $tun -and ($okLnk -or $okRun)) {
 } else {
     Linea "  Quedo algo en rojo. Mandale este informe a Ignacio." "Yellow"
 }
-$nombre = "arranque-ford-$(Get-Date -Format 'yyyyMMdd-HHmm').txt"
-$bom = New-Object System.Text.UTF8Encoding $true
-foreach ($dest in @($ScriptDir, [Environment]::GetFolderPath("Desktop"))) {
-    try { [System.IO.File]::WriteAllLines((Join-Path $dest $nombre), $informe, $bom) } catch { }
-}
-Linea ""
-Info "Informe guardado como $nombre (en esta carpeta y en el Escritorio)."
-Linea ""
-Read-Host "Enter para cerrar"
+Terminar 0
+
