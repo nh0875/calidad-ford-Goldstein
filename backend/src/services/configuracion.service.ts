@@ -222,6 +222,8 @@ export interface GuardarMeta {
   fidelizacionTemplateLang?: string;
   respuestaNoRecibidaName?: string;
   respuestaNoRecibidaLang?: string;
+  segundoContactoName?: string;
+  segundoContactoLang?: string;
 }
 
 export async function guardarCredencialesMeta(d: GuardarMeta): Promise<void> {
@@ -250,6 +252,12 @@ export async function guardarCredencialesMeta(d: GuardarMeta): Promise<void> {
     await set(CLAVES_META.RESPUESTA_NO_RECIBIDA_NAME, d.respuestaNoRecibidaName, false);
   if (d.respuestaNoRecibidaLang !== undefined)
     await set(CLAVES_META.RESPUESTA_NO_RECIBIDA_LANG, d.respuestaNoRecibidaLang, false);
+  // La lectura ya existía (obtenerCredencialesMeta) pero nunca se podía guardar
+  // desde la pantalla: la única forma de cambiarla era el .env del servidor.
+  if (d.segundoContactoName !== undefined)
+    await set(CLAVES_META.SEGUNDO_CONTACTO_NAME, d.segundoContactoName, false);
+  if (d.segundoContactoLang !== undefined)
+    await set(CLAVES_META.SEGUNDO_CONTACTO_LANG, d.segundoContactoLang, false);
 }
 
 // ---------- Estado de la plantilla de Fidelización (lo setea el webhook) ----------
@@ -291,6 +299,8 @@ export async function estadoMeta() {
     fidelizacionTemplateLang: c.fidelizacionTemplateLang,
     respuestaNoRecibidaName: c.respuestaNoRecibidaName,
     respuestaNoRecibidaLang: c.respuestaNoRecibidaLang,
+    segundoContactoName: c.segundoContactoName,
+    segundoContactoLang: c.segundoContactoLang,
     completo: Boolean(c.token && c.phoneNumberId),
   };
 }

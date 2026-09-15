@@ -66,9 +66,21 @@ function haceHoras(horas: number): Date {
  * (ver encolarSegundosContactos) en vez de dar por hecho que encoló.
  *
  * Se exporta para que el diagnóstico pueda mirar el mismo job desde afuera.
+ *
+ * CON GUION Y NO CON DOS PUNTOS, y no es estética. Hasta el 15-09-2026 era
+ * "segundo-contacto:<id>", y BullMQ 5 rechaza todo jobId propio que tenga ":"
+ * ("Custom Id cannot contain :": es el separador de sus claves en Redis). El add
+ * tiraba SIEMPRE. El botón "Insistir ahora" devolvía un 500, y la barrida
+ * automática atrapaba el error, contaba el caso como omitido y seguía: a nadie le
+ * salió nunca un segundo contacto, y ninguna pantalla lo avisó.
+ *
+ * Tiene que ser EXACTAMENTE el mismo que arma campana.service.ts para la campaña
+ * de insistencia ("segundo-contacto-<id>"). Si difieren, el candado contra el
+ * duplicado no cruza los caminos: la campaña, la barrida y el botón encolarían
+ * cada uno el suyo para el mismo cliente.
  */
 export function jobIdSegundoContacto(casoId: string): string {
-  return `segundo-contacto:${casoId}`;
+  return `segundo-contacto-${casoId}`;
 }
 
 export interface ResultadoBarrida {
@@ -233,11 +245,30 @@ export async function encolarSegundoContactoManual(
     };
   }
 
+  // Un job anterior con el mismo id hace que BullMQ descarte este add EN SILENCIO:
+  // la pantalla diría "encolado" y no saldría nada. Si el anterior ya terminó
+  // (típicamente, falló), se lo saca para poder reintentar a mano, que es para lo
+  // que existe este botón. Si todavía está esperando o saliendo, no se toca: ahí
+  // el candado es justamente lo que evita mandarlo dos veces.
+  const jobId = jobIdSegundoContacto(caso.id);
+  const previo = await whatsappQueue.getJob(jobId);
+  if (previo) {
+    const estado = await previo.getState().catch(() => "desconocido");
+    if (estado === "failed" || estado === "completed") {
+      await previo.remove();
+    } else {
+      return {
+        encolado: false,
+        motivo: "Ya hay un segundo contacto en cola para este cliente: sale dentro del horario de envío.",
+      };
+    }
+  }
+
   await whatsappQueue.add(
     "segundo-contacto",
     { casoId: caso.id, plantilla: "segundo_contacto" as const },
     {
-      jobId: jobIdSegundoContacto(caso.id),
+      jobId,
       attempts: 3,
       backoff: { type: "exponential", delay: 10_000 },
       removeOnComplete: true,

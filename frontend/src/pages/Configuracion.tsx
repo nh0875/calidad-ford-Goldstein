@@ -327,6 +327,8 @@ interface EstadoMeta {
   fidelizacionTemplateLang: string;
   respuestaNoRecibidaName: string;
   respuestaNoRecibidaLang: string;
+  segundoContactoName: string;
+  segundoContactoLang: string;
   completo: boolean;
 }
 
@@ -350,6 +352,8 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
   const [fidelizacionTemplateLang, setFidelizacionTemplateLang] = useState("");
   const [respuestaNoRecibidaName, setRespuestaNoRecibidaName] = useState("");
   const [respuestaNoRecibidaLang, setRespuestaNoRecibidaLang] = useState("");
+  const [segundoContactoName, setSegundoContactoName] = useState("");
+  const [segundoContactoLang, setSegundoContactoLang] = useState("");
 
   const cargar = useCallback(async () => {
     try {
@@ -364,6 +368,8 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
       setFidelizacionTemplateLang(data.fidelizacionTemplateLang);
       setRespuestaNoRecibidaName(data.respuestaNoRecibidaName);
       setRespuestaNoRecibidaLang(data.respuestaNoRecibidaLang);
+      setSegundoContactoName(data.segundoContactoName);
+      setSegundoContactoLang(data.segundoContactoLang);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos cargar la configuración de WhatsApp.");
     }
@@ -387,6 +393,8 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
         fidelizacionTemplateLang,
         respuestaNoRecibidaName,
         respuestaNoRecibidaLang,
+        segundoContactoName,
+        segundoContactoLang,
       };
       if (token.trim()) body.token = token.trim();
       if (verify.trim()) body.webhookVerifyToken = verify.trim();
@@ -472,6 +480,24 @@ function SeccionWhatsapp({ esAdmin }: { esAdmin: boolean }) {
         <Campo etiqueta="Idioma (no recibida)">
           <Input type="text" value={respuestaNoRecibidaLang} onChange={(e) => setRespuestaNoRecibidaLang(e.target.value)} placeholder="es_AR" disabled={!esAdmin} />
         </Campo>
+        {/* Solo en las marcas con circuito de insistencia (Volkswagen). En Ford esta
+            plantilla no se usa, y mostrarla invitaría a configurar algo que nunca sale. */}
+        {getMarca().modulos.segundoContacto && (
+          <>
+            <Campo
+              etiqueta="Plantilla “Insistir ahora”"
+              hint="El segundo WhatsApp, para los que no contestaron el primero: sale solo a las 24 h, o antes con el botón Insistir ahora. Tiene que ser de TEXTO FIJO, igual que las de contacto."
+            >
+              <Input type="text" value={segundoContactoName} onChange={(e) => setSegundoContactoName(e.target.value)} placeholder="segundo_contacto" disabled={!esAdmin} />
+            </Campo>
+            <Campo
+              etiqueta="Idioma (insistir)"
+              hint="Tiene que ser EXACTAMENTE el idioma con el que Meta aprobó la plantilla. Si no coincide, Meta rechaza el envío (error 132001) y al cliente no le llega nada."
+            >
+              <Input type="text" value={segundoContactoLang} onChange={(e) => setSegundoContactoLang(e.target.value)} placeholder="es" disabled={!esAdmin} />
+            </Campo>
+          </>
+        )}
       </div>
 
       {prueba && (

@@ -64,6 +64,9 @@ const metaSchema = z.object({
   fidelizacionTemplateLang: z.string().trim().optional(),
   respuestaNoRecibidaName: z.string().trim().optional(),
   respuestaNoRecibidaLang: z.string().trim().optional(),
+  // La plantilla de insistencia ("Insistir ahora" y el envío automático a las 24 h).
+  segundoContactoName: z.string().trim().optional(),
+  segundoContactoLang: z.string().trim().optional(),
 });
 
 export async function patchMeta(req: Request, res: Response) {
