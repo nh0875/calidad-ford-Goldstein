@@ -92,6 +92,25 @@ $dominio = Leer "NGROK_DOMAIN" "dealer-occupant-brigade.ngrok-free.dev"
 function Sistema-Ok { $r = Pedir "http://127.0.0.1:$puerto/api/health"; return ($r -and $r -match '"status"\s*:\s*"ok"') }
 function Tunel-Ok   { $r = Pedir "http://127.0.0.1:4040/api/tunnels"; return ($r -and $r -match [regex]::Escape($dominio)) }
 
+# El link PUBLICO, que es lo que usa Meta. La consola local de ngrok (4040) puede
+# decir "activo" mientras desde afuera no anda: paso en Ford, con un contenedor del
+# tunel peleandose con el ngrok de Windows por el mismo dominio. Esto sale por el
+# proxy de la empresa, con las credenciales de Windows.
+function Publico-Ok {
+    try {
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+        $req = [System.Net.HttpWebRequest]::Create("https://$dominio/api/health")
+        $req.Timeout = 12000
+        $req.Headers.Add("ngrok-skip-browser-warning", "1")
+        $req.Proxy = [System.Net.WebRequest]::DefaultWebProxy
+        if ($req.Proxy) { $req.Proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials }
+        $resp = $req.GetResponse()
+        $lector = New-Object System.IO.StreamReader($resp.GetResponseStream())
+        $texto = $lector.ReadToEnd(); $lector.Close(); $resp.Close()
+        return ($texto -match '"status"\s*:\s*"ok"')
+    } catch { return $false }
+}
+
 Linea "Arreglo del arranque automatico - $(Get-Date -Format 'dd/MM/yyyy HH:mm')" "Cyan"
 Info "PC: $env:COMPUTERNAME   usuario: $env:USERDOMAIN\$env:USERNAME"
 Info "carpeta: $ProjectDir"
@@ -148,6 +167,7 @@ Info "politica de ejecucion del usuario: $politica"
 # Tareas programadas: todos los nombres que se usaron en algun momento.
 $tareas = @("Sistema de Calidad - Vigilante", "Sistema Calidad - Vigilante", "Sistema de Calidad - ngrok", "Sistema de Calidad - actualizacion automatica")
 $hayTareaVigilante = $false
+$hayTareaNgrok = $false
 foreach ($t in $tareas) {
     $xml = (& schtasks /query /TN "$t" /XML 2>$null) -join "`n"
     if ($LASTEXITCODE -ne 0 -or -not $xml) { Info "tarea '$t': no existe"; continue }
@@ -161,6 +181,7 @@ foreach ($t in $tareas) {
         if (-not (Test-Path $m.Value)) { Mal "   la tarea '$t' apunta a un archivo que YA NO EXISTE: $($m.Value)" }
     }
     if ($t -like "*Vigilante") { $hayTareaVigilante = $true }
+    if ($t -eq "Sistema de Calidad - ngrok") { $hayTareaNgrok = $true }
 }
 
 $inicio = Join-Path ([Environment]::GetFolderPath("Startup")) "Sistema de Calidad.lnk"
@@ -183,7 +204,8 @@ $ng = Get-Process ngrok -ErrorAction SilentlyContinue | Select-Object -First 1
 Info ("ngrok de Windows corriendo: " + $(if ($ng) { "SI ($($ng.Path))" } else { "no" }))
 
 if (Sistema-Ok) { Bien "el sistema responde en el puerto $puerto" } else { Aviso "el sistema NO responde en el puerto $puerto" }
-if (Tunel-Ok) { Bien "el tunel https://$dominio esta activo" } else { Aviso "el tunel https://$dominio NO esta activo" }
+if (Tunel-Ok) { Info "consola local de ngrok: dice que el tunel esta activo" } else { Aviso "consola local de ngrok: el tunel NO esta activo" }
+if (Publico-Ok) { Bien "el link publico https://$dominio responde (lo que usa Meta)" } else { Mal "el link publico https://$dominio NO responde desde afuera" }
 
 foreach ($log in @("vigilante.log", "vigilante-bucle.log")) {
     $p = Join-Path $ScriptDir $log
@@ -195,16 +217,29 @@ foreach ($log in @("vigilante.log", "vigilante-bucle.log")) {
 
 # ------------------------------------------------------------ 2. tunel ----
 Titulo "2. TUNEL"
-if ($estadoCont -and ($estadoCont -notlike "Up*") -and -not (Tunel-Ok)) {
-    # El vigilante ve el contenedor (aunque este parado), intenta revivirlo cada
-    # 5 minutos y por eso nunca vuelve al ngrok de Windows, que es el de Ford.
+# En Ford el tunel es el ngrok de Windows (su tarea existe). El contenedor que
+# quedo de septiembre sobra en CUALQUIER estado: arrancado o reintentando, usa el
+# mismo dominio y la misma cuenta, y se pelea con el ngrok de Windows. Asi se veia
+# en esta PC: la consola local decia "activo" y el link de afuera no andaba. Ademas
+# el vigilante, al verlo, lo reinicia en vez de reparar el ngrok de siempre.
+# La condicion anterior miraba la consola local, que justo mentia: por eso no lo sacaba.
+$sacado = $false
+if ($estadoCont -and ($hayTareaNgrok -or ($estadoCont -notlike "Up*"))) {
     & docker rm -f $Contenedor 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { Bien "Saque el contenedor del tunel que no arrancaba: vuelve el ngrok de siempre." }
+    if ($LASTEXITCODE -eq 0) { Bien "Saque el contenedor del tunel ($estadoCont): en Ford el tunel es el ngrok de Windows."; $sacado = $true }
     else { Mal "No pude sacar el contenedor $Contenedor." }
-} elseif ($estadoCont -like "Up*") {
-    Bien "El contenedor del tunel esta andando: no se toca."
+} elseif ($estadoCont) {
+    Bien "El contenedor del tunel esta andando y esta PC no tiene ngrok de Windows configurado: no se toca."
 } else {
-    Bien "No hay contenedor del tunel trabado."
+    Bien "No hay contenedor del tunel."
+}
+if ($sacado -and $hayTareaNgrok) {
+    # Se reinicia el ngrok de Windows para que tome el dominio de cero, sin la
+    # sesion que le haya dejado tironeada el contenedor.
+    Get-Process ngrok -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
+    & schtasks /run /TN "Sistema de Calidad - ngrok" 2>$null | Out-Null
+    Info "Reinicie el ngrok de Windows (su tarea) para que tome el dominio limpio."
 }
 
 # ---------------------------------------------------------- 3. arranque ----
@@ -252,16 +287,30 @@ Info "esperando hasta 6 minutos a que respondan el sistema y el tunel..."
 $limite = (Get-Date).AddMinutes(6)
 $sis = $false; $tun = $false
 while ((Get-Date) -lt $limite) {
-    $sis = Sistema-Ok; $tun = Tunel-Ok
+    $sis = Sistema-Ok; $tun = Publico-Ok
     if ($sis -and $tun) { break }
     Start-Sleep -Seconds 15
 }
 if ($sis) { Bien "el sistema responde" } else { Mal "el sistema todavia no responde" }
-if ($tun) { Bien "el tunel https://$dominio esta activo" } else { Mal "el tunel todavia no esta activo" }
+if ($tun) { Bien "el link publico https://$dominio responde (lo que usa Meta)" } else { Mal "el link publico https://$dominio todavia NO responde" }
+
+# El antivirus puede no borrar el archivo al crearlo sino al EJECUTARLO (lo
+# analiza cuando PowerShell lo carga). El chequeo del principio no ve eso: este si.
+$bucleVivo = Test-Path $Bucle
+if ($bucleVivo) {
+    Bien "vigilante-bucle.ps1 sigue ahi despues de arrancar"
+} else {
+    Mal "vigilante-bucle.ps1 DESAPARECIO al arrancar: lo borra el antivirus cuando se ejecuta."
+    try {
+        Get-MpThreatDetection -ErrorAction Stop | Where-Object { ($_.Resources -join " ") -match "vigilante" } |
+            Select-Object -Last 3 | ForEach-Object { Info "   deteccion: $($_.InitialDetectionTime)" }
+    } catch { }
+    Info "Hace falta una exclusion del antivirus para $ProjectDir (la agrega un administrador)."
+}
 
 # ------------------------------------------------------------- informe ----
 Titulo "RESULTADO"
-if ($sis -and $tun -and ($okLnk -or $okRun)) {
+if ($sis -and $tun -and $bucleVivo -and ($okLnk -or $okRun)) {
     Linea "  LISTO. Para confirmarlo del todo: reiniciar la PC, iniciar sesion y esperar 3 minutos." "Green"
 } else {
     Linea "  Quedo algo en rojo. Mandale este informe a Ignacio." "Yellow"
