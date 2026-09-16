@@ -10,6 +10,7 @@ import { cupoDisponibleHoy, dentroDeVentana } from "../services/ventana-envio.se
 import { estadoMeta } from "../services/configuracion.service";
 import { areaEfectiva, parsearAreaQuery, provinciaPermitida, puedeAcceder, puedeVer } from "../services/area.service";
 import { estaSuprimido, telefonosSuprimidos } from "../services/supresion.service";
+import { encolarSegundoContactoManual, esErrorDeSegundoContacto } from "../services/segundo-contacto.service";
 
 const filtrosSchema = z.object({
   uploadId: z.string().trim().min(1).optional(),
@@ -242,6 +243,46 @@ export async function reintentarEnvio(req: Request, res: Response) {
     }
   }
 
+  const fueraDeHorario = !dentroDeVentana()
+    ? ` Estás fuera del horario de envío (${env.horaInicioEnvio}-${env.horaFinEnvio}): va a salir cuando abra la ventana.`
+    : "";
+
+  // Lo que falló fue la INSISTENCIA (el primer contacto ya le había llegado): se
+  // reintenta la insistencia. Volver a PENDIENTE le mandaría otra vez el primer
+  // WhatsApp y el caso no llegaría nunca a la llamada (decisión del dueño,
+  // 16-09-2026: el caso queda en ERROR para que se vea, y Reintentar insiste).
+  if (marca.segundoContacto && esErrorDeSegundoContacto(caso.ultimoErrorEnvio)) {
+    // Vuelve a ENVIADO, que es lo que exige el segundo contacto.
+    await prisma.caso.update({
+      where: { id: caso.id },
+      data: { estadoContacto: EstadoContacto.ENVIADO, ultimoErrorEnvio: null },
+    });
+    const resultado = await encolarSegundoContactoManual(caso.id);
+    if (!resultado.encolado) {
+      await prisma.caso.update({
+        where: { id: caso.id },
+        data: { estadoContacto: EstadoContacto.ERROR, ultimoErrorEnvio: caso.ultimoErrorEnvio },
+      });
+      return res.status(409).json({ message: resultado.motivo ?? "No pudimos reencolar la insistencia." });
+    }
+
+    await auditar(req, {
+      accion: ACCIONES.ENVIO_REINTENTADO,
+      entidad: "Caso",
+      entidadId: caso.id,
+      detalles: {
+        numeroOrden: caso.numeroOrden,
+        cliente: caso.nombrePropietario,
+        errorPrevio: caso.ultimoErrorEnvio,
+        plantilla: "segundo_contacto",
+      },
+    });
+
+    return res.status(202).json({
+      message: `Insistencia reprogramada para ${caso.nombrePropietario} (orden ${caso.numeroOrden}).${fueraDeHorario}`,
+    });
+  }
+
   // Vuelve a PENDIENTE para que lo tome la cola, y se limpia el error viejo.
   await prisma.caso.update({
     where: { id: caso.id },
@@ -274,11 +315,7 @@ export async function reintentarEnvio(req: Request, res: Response) {
     },
   });
 
-  const avisos = !dentroDeVentana()
-    ? ` Estás fuera del horario de envío (${env.horaInicioEnvio}-${env.horaFinEnvio}): va a salir cuando abra la ventana.`
-    : "";
-
   res.status(202).json({
-    message: `Reintento programado para ${caso.nombrePropietario} (orden ${caso.numeroOrden}).${avisos}`,
+    message: `Reintento programado para ${caso.nombrePropietario} (orden ${caso.numeroOrden}).${fueraDeHorario}`,
   });
 }

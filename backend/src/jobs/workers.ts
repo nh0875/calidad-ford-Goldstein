@@ -6,7 +6,11 @@ import { usaEstrellas } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { redisConnection } from "../config/redis";
 import { marcarNoRespondidos } from "../services/mantenimiento.service";
-import { encolarSegundosContactos, marcarLlamadasPendientes } from "../services/segundo-contacto.service";
+import {
+  encolarSegundosContactos,
+  marcarLlamadasPendientes,
+  PREFIJO_ERROR_SEGUNDO_CONTACTO,
+} from "../services/segundo-contacto.service";
 import { crearRqrAutomatico } from "../services/rqr.service";
 import { ITEM_QUE_DEFINE_EL_CASO, etiquetaItem, itemsPreguntados } from "../config/posventa-vw";
 import { PuntajeItem, guardarPuntajes, usaEncuestaPorItems } from "../services/encuesta-posventa.service";
@@ -896,12 +900,15 @@ export function startWorkers() {
     console.error(
       `[whatsapp-envio] envío definitivamente fallido para caso ${job.data.casoId}: ${err.message}`
     );
+    // Si lo que falló fue la insistencia, se deja dicho en el error: "Reintentar"
+    // lo lee para volver a mandar la insistencia y no el primer contacto.
+    const prefijo = job.data.plantilla === "segundo_contacto" ? PREFIJO_ERROR_SEGUNDO_CONTACTO : "";
     try {
       await prisma.caso.update({
         where: { id: job.data.casoId },
         data: {
           estadoContacto: EstadoContacto.ERROR,
-          ultimoErrorEnvio: err.message.slice(0, 500),
+          ultimoErrorEnvio: (prefijo + err.message).slice(0, 500),
         },
       });
     } catch (updateErr) {

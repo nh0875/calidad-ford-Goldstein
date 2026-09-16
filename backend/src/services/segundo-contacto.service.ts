@@ -118,6 +118,21 @@ export const INSISTENCIA_AUTOMATICA_DESDE: Date = (() => {
 })();
 
 /**
+ * Con qué empieza ultimoErrorEnvio cuando lo que falló fue el SEGUNDO contacto.
+ *
+ * Las dos fallas terminan en el mismo ERROR, pero "Reintentar" tiene que saber
+ * cuál fue: si repitiera siempre el primer contacto, a un cliente que ya lo
+ * recibió le llegaría otra vez y el caso no volvería nunca al circuito. Lo
+ * escribe el handler 'failed' del worker de WhatsApp, que es el único lugar que
+ * sabe qué plantilla falló. Además se lee en pantalla ("Segundo contacto: ...").
+ */
+export const PREFIJO_ERROR_SEGUNDO_CONTACTO = "Segundo contacto: ";
+
+export function esErrorDeSegundoContacto(ultimoErrorEnvio: string | null | undefined): boolean {
+  return !!ultimoErrorEnvio?.startsWith(PREFIJO_ERROR_SEGUNDO_CONTACTO);
+}
+
+/**
  * Qué casos le tocan a la barrida automática. Vive acá, en un solo lugar, para que
  * el diagnóstico (scripts/diagnostico-circuito.ts) cuente exactamente lo mismo.
  *
@@ -150,6 +165,11 @@ export function whereCandidatosSegundoContacto(corte: Date, suprimidos: Set<stri
       // SALIENTE más viejo del caso y no desde createdAt: un caso puede estar
       // cargado hace una semana y haberse contactado recién ayer.
       { mensajes: { some: { direction: MessageDirection.SALIENTE, createdAt: { lte: corte } } } },
+      // Y en las últimas 24 h no se le mandó NADA. Si alguien de Calidad le
+      // reenvió a mano la plantilla desde Seguimiento, el reloj arranca de nuevo
+      // desde ese envío: sin esto la insistencia podía llegarle menos de una hora
+      // después del reenvío (decisión del dueño, 16-09-2026).
+      { mensajes: { none: { direction: MessageDirection.SALIENTE, createdAt: { gt: corte } } } },
       // Y ese primer contacto es de cuando ya corría la insistencia automática: un
       // caso con CUALQUIER mensaje saliente anterior queda afuera (ver arriba).
       { mensajes: { none: { direction: MessageDirection.SALIENTE, createdAt: { lt: INSISTENCIA_AUTOMATICA_DESDE } } } },
