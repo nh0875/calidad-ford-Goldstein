@@ -32,6 +32,7 @@ import {
   jobIdSegundoContacto,
   whereCandidatosSegundoContacto,
 } from "../services/segundo-contacto.service";
+import { telefonosSuprimidos } from "../services/supresion.service";
 
 const AR = "America/Argentina/Buenos_Aires";
 
@@ -105,7 +106,7 @@ async function main(): Promise<void> {
   // contar cosas distintas sin que nadie lo note.
   console.log(`Solo casos cuyo primer contacto salió desde ${hora(INSISTENCIA_AUTOMATICA_DESDE)} (los anteriores se insisten a mano).`);
   const candidatos = await prisma.caso.findMany({
-    where: whereCandidatosSegundoContacto(corte),
+    where: whereCandidatosSegundoContacto(corte, await telefonosSuprimidos()),
     select: { id: true, numeroOrden: true, nombrePropietario: true },
     orderBy: { createdAt: "asc" },
     take: 30,

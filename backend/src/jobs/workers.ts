@@ -87,6 +87,10 @@ async function procesarEnvioWhatsapp(job: Job<DatosEnvio>, token?: string) {
     if (caso.segundoContactoEn) {
       return { omitido: true, motivo: "ya se le mando el segundo contacto" };
     }
+    // Lo pudieron borrar mientras el job esperaba la ventana de envío.
+    if (caso.eliminadoEn) {
+      return { omitido: true, motivo: "caso eliminado" };
+    }
   }
 
   // Idempotencia de la campaña de CONTACTO: solo se envía a PENDIENTE (si cambió

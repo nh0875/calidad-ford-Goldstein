@@ -31,6 +31,7 @@ import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { whatsappQueue } from "../jobs/queues";
 import { env } from "../config/env";
+import { telefonosSuprimidos } from "./supresion.service";
 
 /** Horas sin respuesta antes de insistir con el segundo WhatsApp. */
 export const HORAS_PARA_SEGUNDO_CONTACTO = 24;
@@ -119,14 +120,26 @@ export const INSISTENCIA_AUTOMATICA_DESDE: Date = (() => {
 /**
  * Qué casos le tocan a la barrida automática. Vive acá, en un solo lugar, para que
  * el diagnóstico (scripts/diagnostico-circuito.ts) cuente exactamente lo mismo.
+ *
+ * `suprimidos` es telefonosSuprimidos(): se pide afuera porque es una consulta
+ * aparte y esto tiene que seguir siendo un where armado, sin ir a la base.
  */
-export function whereCandidatosSegundoContacto(corte: Date): Prisma.CasoWhereInput {
+export function whereCandidatosSegundoContacto(corte: Date, suprimidos: Set<string>): Prisma.CasoWhereInput {
   return {
     estadoContacto: EstadoContacto.ENVIADO,
     // Todavía no se le insistió.
     segundoContactoEn: null,
+    // Un caso borrado no recibe WhatsApp, la misma regla que las campañas. Borrar
+    // no cambia el estado: sin esto, un duplicado eliminado seguía en ENVIADO y
+    // al cliente le llegaba la insistencia por el caso que ya no existe.
+    eliminadoEn: null,
     // Nadie pidió la baja.
     whatsappOptOut: false,
+    // Ni el teléfono está en la lista de supresión. El worker igual no le manda,
+    // pero ese job termina "omitido" y se borra, así que a la hora siguiente la
+    // barrida lo volvía a encolar, para siempre, ocupando lugar entre los
+    // MAX_POR_BARRIDA de cada pasada.
+    ...(suprimidos.size > 0 ? { NOT: { telefonosNorm: { hasSome: [...suprimidos] } } } : {}),
     // Y no contestó NADA desde que se le escribió. Se mira si hay algún
     // mensaje ENTRANTE, y no el estado: un caso puede seguir en ENVIADO por un
     // rato aunque el cliente ya haya escrito, y volver a escribirle a alguien
@@ -159,7 +172,7 @@ export async function encolarSegundosContactos(): Promise<ResultadoBarrida> {
   const corte = haceHoras(HORAS_PARA_SEGUNDO_CONTACTO);
 
   const candidatos = await prisma.caso.findMany({
-    where: whereCandidatosSegundoContacto(corte),
+    where: whereCandidatosSegundoContacto(corte, await telefonosSuprimidos()),
     select: { id: true },
     orderBy: { createdAt: "asc" },
     take: MAX_POR_BARRIDA,
@@ -227,6 +240,8 @@ export async function marcarLlamadasPendientes(): Promise<number> {
     where: {
       estadoContacto: EstadoContacto.ENVIADO,
       segundoContactoEn: { lte: corte },
+      // A un caso borrado nadie lo tiene que llamar.
+      eliminadoEn: null,
       // Sigue sin contestar nada.
       mensajes: { none: { direction: MessageDirection.ENTRANTE } },
     },
