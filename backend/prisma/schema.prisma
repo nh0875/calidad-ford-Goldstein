@@ -346,6 +346,9 @@ model Caso {
   tareasRefuerzo     TareaRefuerzo[]
   supresiones        SupresionContacto[]  @relation("SupresionCasoOrigen")
   avisos             Aviso[]
+  // Si el caso es un promotor de Posventa (5 estrellas) en la pestaña de
+  // Encuestas de fábrica PV (Volkswagen). Ver EncuestaFabricaPV.
+  encuestaFabricaPV  EncuestaFabricaPV?
 
   @@index([uploadId])
   @@index([sucursal, estadoContacto])
@@ -892,4 +895,37 @@ model EvaluacionPosventa {
   @@unique([casoId, item])
   @@index([item, estrellas])
   @@index([analisisId])
+}
+
+/// Encuestas de fábrica de POSVENTA (Volkswagen, pedido de Calidad del 16-09-2026).
+///
+/// Los clientes de Posventa de la sucursal configurada (marca.encuestaFabricaPV)
+/// que calificaron con 5 estrellas: los promotores. Calidad los anima a responder
+/// la encuesta de fábrica, con el mismo circuito que las encuestas de Ventas
+/// (EncuestaFabricaVW) y el mismo enum de estados. En pantalla AVISADO se lee
+/// "Animado": acá no hay vendedor al que avisarle, lo contacta Calidad.
+///
+/// No es una copia del caso: los datos del cliente se leen del Caso. La lista se
+/// sincroniza contra el análisis principal (ver services/encuesta-pv.service.ts).
+model EncuestaFabricaPV {
+  id String @id @default(cuid())
+
+  // Un caso entra una sola vez: el índice único es lo que hace segura la
+  // sincronización cuando dos pedidos la corren a la vez.
+  casoId String @unique
+  caso   Caso   @relation(fields: [casoId], references: [id], onDelete: Cascade)
+
+  estado EstadoEncuestaFabrica @default(PENDIENTE)
+
+  // Cuándo quedó en 5 el análisis que lo trajo (la respuesta, la llamada o la
+  // corrección de Calidad).
+  calificadoEn DateTime?
+  // Cuándo entró a la lista.
+  detectadaEn  DateTime  @default(now())
+  // Cuándo Calidad lo animó. Como en Ventas, no se borra al pasar a Respondió: es
+  // lo que usa el seguimiento para medir la efectividad.
+  animadoEn    DateTime?
+  respondioEn  DateTime?
+
+  @@index([estado])
 }

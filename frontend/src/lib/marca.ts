@@ -24,6 +24,8 @@ export interface InfoMarca {
     refuerzo: boolean;
     // Pantalla propia de encuestas de fábrica (Volkswagen).
     encuestaFabrica: boolean;
+    // Encuestas de fábrica de Posventa: los promotores de 5 estrellas (Volkswagen).
+    encuestaFabricaPV: boolean;
     // Pantalla de desempeño de Posventa por ítems (Volkswagen).
     desempenoPosventa: boolean;
     // Circuito de insistencia: 2° contacto por WhatsApp y 3° por llamada.
@@ -68,7 +70,14 @@ const POR_DEFECTO: InfoMarca = {
   nombre: "Ford",
   escala: "SEMAFORO",
   estrellasSinRqr: null,
-  modulos: { fidelizacion: true, refuerzo: true, encuestaFabrica: false, desempenoPosventa: false, segundoContacto: false },
+  modulos: {
+    fidelizacion: true,
+    refuerzo: true,
+    encuestaFabrica: false,
+    encuestaFabricaPV: false,
+    desempenoPosventa: false,
+    segundoContacto: false,
+  },
   sucursales: ["Mendoza", "San Juan"],
   // Vacío a propósito: hasta que responda /api/marca no se sabe cuáles son, y
   // mostrar las de la otra marca sería peor que no mostrar ninguna.

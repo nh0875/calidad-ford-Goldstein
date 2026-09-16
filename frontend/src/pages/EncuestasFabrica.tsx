@@ -11,6 +11,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Mail, MailCheck, Pencil, Plus, Trash2, UploadCloud, UserPlus } from "lucide-react";
 import { apiDelete, apiGet, apiPatchJson, apiPostForm, apiPostJson } from "../lib/api";
 import { getMarca } from "../lib/marca";
+import { esSoloFidelizacion, getUsuario } from "../lib/auth";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
@@ -206,6 +207,9 @@ function fechaCorta(iso: string | null): string {
 
 export default function EncuestasFabrica() {
   const marca = getMarca();
+  // Fidelización ve esta pestaña SOLO con los gráficos: la lista y las acciones le
+  // dan 403 en el backend, así que ni se piden ni se muestran.
+  const soloGraficos = esSoloFidelizacion(getUsuario());
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
   const [resumen, setResumen] = useState<Resumen | null>(null);
   const [cargando, setCargando] = useState(true);
@@ -223,8 +227,19 @@ export default function EncuestasFabrica() {
   // El mes elegido: acota el ranking de vendedores y la lista de clientes.
   // "" = todos los meses; "SIN_MES" = los clientes que no tienen ninguna fecha.
   const [mes, setMes] = useState("");
+  // Sucursal de los GRÁFICOS ("" = las dos). Los gráficos los ve cualquier perfil
+  // con las dos provincias; esto es un filtro que elige la persona.
+  const [sucursalGraficos, setSucursalGraficos] = useState("");
+  // Si falla el pedido de los gráficos se quedan los últimos y se avisa: sin esto,
+  // en la pantalla de solo gráficos quedaba un esqueleto de carga para siempre.
+  const [errorSeguimiento, setErrorSeguimiento] = useState(false);
 
   const cargar = useCallback(async () => {
+    if (soloGraficos) {
+      setVersion((v) => v + 1);
+      setCargando(false);
+      return;
+    }
     try {
       const [r, m] = await Promise.all([
         // Se piden tambien los respondidos: si no, el cliente desaparecia de la
@@ -242,7 +257,7 @@ export default function EncuestasFabrica() {
     } finally {
       setCargando(false);
     }
-  }, []);
+  }, [soloGraficos]);
   useEffect(() => {
     cargar();
   }, [cargar]);
@@ -250,12 +265,35 @@ export default function EncuestasFabrica() {
   useEffect(() => {
     // Solo un mes de verdad acota el ranking: "SIN_MES" no es un mes que el
     // backend entienda, y para ese caso el ranking muestra a todos.
-    const params = /^\d{4}-\d{2}$/.test(mes) ? `?periodo=${mes}` : "";
-    apiGet<SeguimientoEncuestas>(`/api/encuesta-vw/seguimiento${params}`)
-      .then(setSeguimiento)
+    const params = new URLSearchParams();
+    if (/^\d{4}-\d{2}$/.test(mes)) params.set("periodo", mes);
+    if (sucursalGraficos) params.set("sucursal", sucursalGraficos);
+    const consulta = params.toString();
+    // Una respuesta vieja (otra sucursal, otro mes) que llega tarde no pisa a la última.
+    let vigente = true;
+    apiGet<SeguimientoEncuestas>(`/api/encuesta-vw/seguimiento${consulta ? `?${consulta}` : ""}`)
+      .then((r) => {
+        if (!vigente) return;
+        setSeguimiento(r);
+        setErrorSeguimiento(false);
+      })
       // Es un agregado: si falla, la pantalla de trabajo tiene que seguir andando.
-      .catch(() => setSeguimiento(null));
-  }, [mes, version]);
+      .catch(() => {
+        if (vigente) setErrorSeguimiento(true);
+      });
+    return () => {
+      vigente = false;
+    };
+  }, [mes, version, sucursalGraficos]);
+
+  // Si el mes elegido ya no existe en los gráficos que llegaron (por ejemplo, al
+  // cambiar la sucursal), se vuelve a "Todos los meses". Si no, el desplegable
+  // mostraría "Todos los meses" con el ranking y la lista acotados al mes viejo.
+  useEffect(() => {
+    if (!seguimiento || mes === "") return;
+    const existe = mes === "SIN_MES" ? seguimiento.sinMes > 0 : seguimiento.meses.some((m) => m.periodo === mes);
+    if (!existe) setMes("");
+  }, [seguimiento, mes]);
 
   // ---- Carga del Excel -----------------------------------------------------
   const [previa, setPrevia] = useState<VistaPrevia | null>(null);
@@ -526,6 +564,103 @@ export default function EncuestasFabrica() {
     return <Alert tono="info">Esta pantalla es de {marca.nombre}. En esta marca no aplica.</Alert>;
   }
 
+  // Animaciones mes a mes. El mes de cada cliente sale de su Fecha Dominio.
+  const bloqueSeguimiento = seguimiento && (
+        <>
+          {/* El filtro va en su propia fila, ARRIBA de lo que acota (el ranking y la
+              lista de clientes), y no metido adentro del gráfico. */}
+          <div className="flex flex-wrap items-center gap-3">
+            <label htmlFor="ef-mes" className="text-sm font-medium text-ink">
+              Mes
+            </label>
+            <Select id="ef-mes" value={mes} onChange={(e) => setMes(e.target.value)} className="!w-60">
+              <option value="">Todos los meses</option>
+              {[...seguimiento.meses].reverse().map((m) => (
+                <option key={m.periodo} value={m.periodo}>
+                  {etiquetaMes(m.periodo)} ({m.clientes})
+                </option>
+              ))}
+              {seguimiento.sinMes > 0 && <option value="SIN_MES">Sin mes ({seguimiento.sinMes})</option>}
+            </Select>
+            <label htmlFor="ef-sucursal" className="text-sm font-medium text-ink">
+              Sucursal
+            </label>
+            <SelectorSucursal
+              id="ef-sucursal"
+              valor={sucursalGraficos}
+              onCambiar={setSucursalGraficos}
+              extra="todas"
+              className="!w-52"
+            />
+            <span className="text-xs text-ink-muted">
+              {soloGraficos
+                ? "El mes acota el ranking de vendedores; la sucursal, todos los gráficos."
+                : "El mes acota el ranking de vendedores y la lista de clientes de abajo; la sucursal, solo los gráficos."}
+            </span>
+          </div>
+
+          <Card padding="p-5">
+            <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">Animaciones mes a mes</h3>
+            <p className="mt-1 text-sm text-ink-muted">
+              Cada mes son los clientes que patentaron ese mes, según la columna Fecha Dominio del Excel de fábrica. Un
+              cliente está animado desde que se le avisó a su vendedor, aunque después haya respondido.
+            </p>
+            {seguimiento.meses.length === 0 ? (
+              <p className="mt-4 text-sm text-ink-muted">
+                Todavía no hay clientes con mes. Se completa sola con la próxima carga del Excel de fábrica.
+              </p>
+            ) : (
+              <div className="mt-4 space-y-6">
+                {/* min-w-0 en cada columna: sin eso, una columna de grilla toma el
+                    ancho MINIMO de su contenido, la tabla de vendedores empuja la
+                    tarjeta entera fuera de la pantalla del celular y nunca llega a
+                    scrollear adentro de su propio contenedor. */}
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <div className="min-w-0">
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Clientes por mes</h4>
+                    <BarrasAnimacionPorMes meses={seguimiento.meses} seleccionado={mes} onSeleccionar={setMes} />
+                  </div>
+                  <div className="min-w-0">
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                      Qué vendedores animan mejor{/^\d{4}-\d{2}$/.test(mes) ? ` · ${etiquetaMes(mes)}` : ""}
+                    </h4>
+                    <RankingVendedoresAnimacion vendedores={seguimiento.vendedores} minimo={seguimiento.minimoRanking} />
+                  </div>
+                </div>
+                <TablaAnimacionPorMes meses={seguimiento.meses} total={seguimiento.total} seleccionado={mes} />
+                <p className="text-xs text-ink-muted">
+                  «Respondieron» son los que se marcaron a mano: la carga del Excel ya no le cambia el estado a nadie, así
+                  que estos números valen lo que valga esa carga. El mes en curso todavía se está trabajando.
+                  {seguimiento.total.mesEstimado > 0 &&
+                    ` ${seguimiento.total.mesEstimado} cliente(s) no traían Fecha Dominio: su mes se estimó con la fecha de entrega, y se corrige solo cuando vuelven a venir en un Excel de fábrica.`}
+                  {seguimiento.sinMes > 0 &&
+                    ` ${seguimiento.sinMes} cliente(s) no tienen ninguna fecha y no entran en ningún mes.`}
+                </p>
+              </div>
+            )}
+          </Card>
+        </>
+  );
+
+  if (soloGraficos) {
+    return (
+      <div className="space-y-4">
+        <Alert tono="info">
+          Ves los gráficos de las encuestas de fábrica de las dos provincias. La lista de clientes y los avisos a los
+          vendedores los maneja Calidad.
+        </Alert>
+        {errorSeguimiento && (
+          <Alert tono="advertencia">
+            {seguimiento
+              ? "No pudimos actualizar los gráficos: se muestran los últimos que cargaron."
+              : "No pudimos cargar los gráficos. Probá de nuevo en un rato."}
+          </Alert>
+        )}
+        {bloqueSeguimiento ?? (!errorSeguimiento && <SkeletonBlock className="h-64" />)}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {error && <Alert tono="error">{error}</Alert>}
@@ -773,67 +908,10 @@ export default function EncuestasFabrica() {
         </Card>
       )}
 
-      {/* Animaciones mes a mes. El mes de cada cliente sale de su Fecha Dominio. */}
-      {seguimiento && (
-        <>
-          {/* El filtro va en su propia fila, ARRIBA de lo que acota (el ranking y la
-              lista de clientes), y no metido adentro del gráfico. */}
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm font-medium text-ink">Mes</span>
-            <Select value={mes} onChange={(e) => setMes(e.target.value)} className="!w-60">
-              <option value="">Todos los meses</option>
-              {[...seguimiento.meses].reverse().map((m) => (
-                <option key={m.periodo} value={m.periodo}>
-                  {etiquetaMes(m.periodo)} ({m.clientes})
-                </option>
-              ))}
-              {seguimiento.sinMes > 0 && <option value="SIN_MES">Sin mes ({seguimiento.sinMes})</option>}
-            </Select>
-            <span className="text-xs text-ink-muted">Acota el ranking de vendedores y la lista de clientes de abajo.</span>
-          </div>
-
-          <Card padding="p-5">
-            <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">Animaciones mes a mes</h3>
-            <p className="mt-1 text-sm text-ink-muted">
-              Cada mes son los clientes que patentaron ese mes, según la columna Fecha Dominio del Excel de fábrica. Un
-              cliente está animado desde que se le avisó a su vendedor, aunque después haya respondido.
-            </p>
-            {seguimiento.meses.length === 0 ? (
-              <p className="mt-4 text-sm text-ink-muted">
-                Todavía no hay clientes con mes. Se completa sola con la próxima carga del Excel de fábrica.
-              </p>
-            ) : (
-              <div className="mt-4 space-y-6">
-                {/* min-w-0 en cada columna: sin eso, una columna de grilla toma el
-                    ancho MINIMO de su contenido, la tabla de vendedores empuja la
-                    tarjeta entera fuera de la pantalla del celular y nunca llega a
-                    scrollear adentro de su propio contenedor. */}
-                <div className="grid gap-6 lg:grid-cols-2">
-                  <div className="min-w-0">
-                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Clientes por mes</h4>
-                    <BarrasAnimacionPorMes meses={seguimiento.meses} seleccionado={mes} onSeleccionar={setMes} />
-                  </div>
-                  <div className="min-w-0">
-                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
-                      Qué vendedores animan mejor{/^\d{4}-\d{2}$/.test(mes) ? ` · ${etiquetaMes(mes)}` : ""}
-                    </h4>
-                    <RankingVendedoresAnimacion vendedores={seguimiento.vendedores} minimo={seguimiento.minimoRanking} />
-                  </div>
-                </div>
-                <TablaAnimacionPorMes meses={seguimiento.meses} total={seguimiento.total} seleccionado={mes} />
-                <p className="text-xs text-ink-muted">
-                  «Respondieron» son los que se marcaron a mano: la carga del Excel ya no le cambia el estado a nadie, así
-                  que estos números valen lo que valga esa carga. El mes en curso todavía se está trabajando.
-                  {seguimiento.total.mesEstimado > 0 &&
-                    ` ${seguimiento.total.mesEstimado} cliente(s) no traían Fecha Dominio: su mes se estimó con la fecha de entrega, y se corrige solo cuando vuelven a venir en un Excel de fábrica.`}
-                  {seguimiento.sinMes > 0 &&
-                    ` ${seguimiento.sinMes} cliente(s) no tienen ninguna fecha y no entran en ningún mes.`}
-                </p>
-              </div>
-            )}
-          </Card>
-        </>
+      {errorSeguimiento && seguimiento && (
+        <Alert tono="advertencia">No pudimos actualizar los gráficos: se muestran los últimos que cargaron.</Alert>
       )}
+      {bloqueSeguimiento}
 
       {/* Clientes cargados */}
       <Card padding="p-0">

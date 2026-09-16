@@ -61,6 +61,9 @@ export const ACCIONES = {
   // porque es el único lugar donde una persona puede declarar que un cliente
   // contestó sin que haya un archivo de fábrica que lo respalde.
   ENCUESTA_VW_ESTADO_CAMBIADO: "ENCUESTA_VW_ESTADO_CAMBIADO",
+  // Lo mismo en la pestaña de Posventa (promotores de 5 estrellas): Calidad
+  // declara que animó al cliente o que ya respondió la encuesta de fábrica.
+  ENCUESTA_PV_ESTADO_CAMBIADO: "ENCUESTA_PV_ESTADO_CAMBIADO",
   // El circuito de insistencia. Las tres se auditan porque las tres terminan
   // en algo que le pasa a un cliente real: un WhatsApp que sale, o un caso que
   // se da por respondido sin que haya quedado ni un mensaje escrito.

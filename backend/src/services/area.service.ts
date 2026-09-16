@@ -103,6 +103,16 @@ async function sucursalesConocidas(): Promise<string[]> {
   return valores;
 }
 
+/**
+ * Cómo está escrita una sucursal en los casos ("Mendoza", "MENDOZA", "Mendoza "):
+ * todas las variantes que coinciden con la normalizada. Sirve para filtrar en SQL
+ * con un `in` sin dejar afuera casos por una tilde o una mayúscula.
+ */
+export async function variantesDeSucursal(sucursal: string): Promise<string[]> {
+  const clave = claveNormalizada(sucursal);
+  return (await sucursalesConocidas()).filter((s) => claveNormalizada(s) === clave);
+}
+
 /** Se vacía el caché al importar, para que una sucursal nueva se vea enseguida. */
 export function olvidarSucursalesConocidas(): void {
   cacheSucursales = null;

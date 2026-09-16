@@ -50,6 +50,44 @@ export interface SeguimientoEncuestas {
   minimoRanking: number;
 }
 
+/**
+ * Los textos que cambian según quién anima. En Ventas se le AVISA al vendedor para
+ * que llame al cliente; en Posventa lo anima Calidad directamente y la persona del
+ * ranking es el asesor de servicio. El cálculo es el mismo en las dos.
+ */
+export interface TextosAnimacion {
+  /** Cómo se llama el estado del que todavía no se animó. */
+  sinAnimar: string;
+  /** Qué significa "animado" (para el título de la columna). */
+  animadoAyuda: string;
+  /** "Por su cuenta": respondieron sin que se los animara. */
+  porSuCuentaAyuda: string;
+  /** La persona del ranking. */
+  persona: string;
+  /** Qué ayuda da la columna de animados del ranking. */
+  personaAnimadosAyuda: string;
+  /** Cuando el ranking está vacío. */
+  personaVacio: string;
+}
+
+export const TEXTOS_VENTAS: TextosAnimacion = {
+  sinAnimar: "Sin avisar",
+  animadoAyuda: "Clientes a los que se les avisó al vendedor, y qué parte del mes son",
+  porSuCuentaAyuda: "Respondieron sin que se le avisara al vendedor",
+  persona: "Vendedor",
+  personaAnimadosAyuda: "Clientes a los que se le avisó a este vendedor",
+  personaVacio: "Todavía no hay vendedores con clientes en este mes.",
+};
+
+export const TEXTOS_POSVENTA: TextosAnimacion = {
+  sinAnimar: "Sin animar",
+  animadoAyuda: "Clientes que Calidad ya animó a responder, y qué parte del mes son",
+  porSuCuentaAyuda: "Respondieron sin que Calidad los animara",
+  persona: "Asesor",
+  personaAnimadosAyuda: "Clientes de este asesor que Calidad ya animó",
+  personaVacio: "Todavía no hay asesores con clientes en este mes.",
+};
+
 const NOMBRES_MES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
@@ -103,13 +141,18 @@ const SERIES = [
 
 type ClaveSerie = (typeof SERIES)[number]["clave"];
 
-function Leyenda() {
+/** La etiqueta de una serie con el texto de la pantalla (el amarillo cambia de nombre). */
+function etiquetaSerie(clave: ClaveSerie, etiqueta: string, textos: TextosAnimacion): string {
+  return clave === "sinAvisar" ? textos.sinAnimar : etiqueta;
+}
+
+function Leyenda({ textos }: { textos: TextosAnimacion }) {
   return (
     <div className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-ink-muted">
       {SERIES.map((s) => (
         <span key={s.clave} className="flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: s.color }} aria-hidden="true" />
-          {s.etiqueta}
+          {etiquetaSerie(s.clave, s.etiqueta, textos)}
         </span>
       ))}
     </div>
@@ -130,10 +173,12 @@ export function BarrasAnimacionPorMes({
   meses,
   seleccionado,
   onSeleccionar,
+  textos = TEXTOS_VENTAS,
 }: {
   meses: MesSeguimiento[];
   seleccionado?: string;
   onSeleccionar?: (periodo: string) => void;
+  textos?: TextosAnimacion;
 }) {
   const [foco, setFoco] = useState<{ periodo: string; clave: ClaveSerie } | null>(null);
 
@@ -183,7 +228,7 @@ export function BarrasAnimacionPorMes({
                         key={p.clave}
                         tabIndex={0}
                         role="img"
-                        aria-label={`${etiquetaMes(m.periodo)}: ${p.valor} de ${m.clientes}, ${p.etiqueta.toLowerCase()}`}
+                        aria-label={`${etiquetaMes(m.periodo)}: ${p.valor} de ${m.clientes}, ${etiquetaSerie(p.clave, p.etiqueta, textos).toLowerCase()}`}
                         onMouseEnter={() => setFoco({ periodo: m.periodo, clave: p.clave })}
                         onMouseLeave={() => setFoco(null)}
                         onFocus={() => setFoco({ periodo: m.periodo, clave: p.clave })}
@@ -214,7 +259,7 @@ export function BarrasAnimacionPorMes({
                   </div>
                   <div className="flex items-center gap-1.5 text-ink-muted">
                     <span className="inline-block h-0.5 w-3" style={{ backgroundColor: enFoco.color }} aria-hidden="true" />
-                    {enFoco.etiqueta} · {etiquetaMes(m.periodo)}
+                    {etiquetaSerie(enFoco.clave, enFoco.etiqueta, textos)} · {etiquetaMes(m.periodo)}
                   </div>
                 </div>
               )}
@@ -222,7 +267,7 @@ export function BarrasAnimacionPorMes({
           );
         })}
       </div>
-      <Leyenda />
+      <Leyenda textos={textos} />
     </div>
   );
 }
@@ -241,10 +286,12 @@ export function TablaAnimacionPorMes({
   meses,
   total,
   seleccionado,
+  textos = TEXTOS_VENTAS,
 }: {
   meses: MesSeguimiento[];
   total?: NumerosAnimacion;
   seleccionado?: string;
+  textos?: TextosAnimacion;
 }) {
   const enCurso = mesEnCurso();
 
@@ -269,7 +316,7 @@ export function TablaAnimacionPorMes({
           <tr className="border-b border-gray-200 text-left text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
             <th className="px-3 py-2">Mes</th>
             <th className="px-3 py-2 text-right">Clientes</th>
-            <th className="px-3 py-2 text-right" title="Clientes a los que se les avisó al vendedor, y qué parte del mes son">
+            <th className="px-3 py-2 text-right" title={textos.animadoAyuda}>
               Animados
             </th>
             <th className="px-3 py-2 text-right">Respondieron</th>
@@ -279,7 +326,7 @@ export function TablaAnimacionPorMes({
             <th className="px-3 py-2 text-right" title="De los clientes animados, qué parte respondió">
               Efectividad
             </th>
-            <th className="px-3 py-2 text-right" title="Respondieron sin que se le avisara al vendedor">
+            <th className="px-3 py-2 text-right" title={textos.porSuCuentaAyuda}>
               Por su cuenta
             </th>
           </tr>
@@ -332,13 +379,15 @@ export function RankingVendedoresAnimacion({
   vendedores,
   minimo,
   compacto = false,
+  textos = TEXTOS_VENTAS,
 }: {
   vendedores: VendedorSeguimiento[];
   minimo: number;
   compacto?: boolean;
+  textos?: TextosAnimacion;
 }) {
   if (vendedores.length === 0) {
-    return <p className="py-6 text-center text-sm text-ink-muted">Todavía no hay vendedores con clientes en este mes.</p>;
+    return <p className="py-6 text-center text-sm text-ink-muted">{textos.personaVacio}</p>;
   }
   const hayPocos = vendedores.some((v) => v.pocos);
   return (
@@ -347,8 +396,8 @@ export function RankingVendedoresAnimacion({
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-white">
             <tr className="border-b text-[11px] uppercase tracking-wider text-ink-muted">
-              <th className="px-2 py-1.5 text-left">Vendedor</th>
-              <th className="px-2 py-1.5 text-right" title="Clientes a los que se le avisó a este vendedor">
+              <th className="px-2 py-1.5 text-left">{textos.persona}</th>
+              <th className="px-2 py-1.5 text-right" title={textos.personaAnimadosAyuda}>
                 Animados
               </th>
               <th className="px-2 py-1.5 text-right" title="De esos clientes animados, cuántos respondieron">
@@ -364,7 +413,7 @@ export function RankingVendedoresAnimacion({
               <tr key={v.codigo} className="border-b border-gray-100">
                 <td className="px-2 py-1.5">
                   <div className="text-ink">
-                    {v.nombre || `Vendedor ${v.codigo}`}
+                    {v.nombre || `${textos.persona} ${v.codigo}`}
                     {v.pocos && (
                       <span
                         className="ml-1 text-[10px] text-ink-muted"

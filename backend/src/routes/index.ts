@@ -21,12 +21,14 @@ import demoRoutes from "./demo.routes";
 import configuracionRoutes from "./configuracion.routes";
 import refuerzoRoutes from "./refuerzo.routes";
 import encuestaVwRoutes from "./encuesta-vw.routes";
+import encuestaPvRoutes from "./encuesta-pv.routes";
 import posventaRoutes from "./posventa.routes";
 import supresionRoutes from "./supresion.routes";
 import normalizacionRoutes from "./normalizacion.routes";
 import avisoRoutes from "./aviso.routes";
 import fidelizacionRoutes from "./fidelizacion.routes";
 import {
+  requireEncuestaPV,
   requireEncuestaVW,
   requireFidelizacion,
   requirePosventaPorItems,
@@ -83,6 +85,9 @@ router.use("/refuerzos", requireRefuerzo, refuerzoRoutes); // tareas de refuerzo
 // Encuestas de fábrica de Volkswagen: lista aparte de Caso (esos clientes no
 // traen teléfono) más el ABM de vendedores y el aviso por correo.
 router.use("/encuesta-vw", requireEncuestaVW, encuestaVwRoutes);
+// Encuestas de fábrica de Posventa (Volkswagen): los promotores de 5 estrellas de
+// la sucursal configurada, que Calidad anima a responder la encuesta.
+router.use("/encuesta-pv", requireEncuestaPV, encuestaPvRoutes);
 // Desempeño de Posventa por ítems (trato, organización, reparación, lavado y
 // satisfacción general), con su exportación a Excel y Word.
 router.use("/posventa", requirePosventaPorItems, posventaRoutes);

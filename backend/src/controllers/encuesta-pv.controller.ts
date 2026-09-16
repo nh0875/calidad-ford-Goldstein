@@ -1,0 +1,150 @@
+import { Request, Response } from "express";
+import { z } from "zod";
+import { AreaTrabajo, EstadoEncuestaFabrica } from "@prisma/client";
+import { prisma } from "../config/prisma";
+import { marca } from "../config/marca";
+import { ACCIONES, auditar } from "../services/audit.service";
+import { areaPermitida, provinciaPermitida } from "../services/area.service";
+import { claveNormalizada } from "../services/normalizacion.service";
+import {
+  casoEsDeLaLista,
+  contarPendientesPV,
+  esPromotorPV,
+  listarPromotoresPV,
+  seguimientoEncuestasPV,
+} from "../services/encuesta-pv.service";
+
+// Encuestas de fábrica de Posventa (promotores de 5 estrellas). Ver
+// services/encuesta-pv.service.ts.
+//
+// QUIÉN VE QUÉ:
+//  - Los GRÁFICOS mes a mes los ve cualquier perfil (pedido de Calidad del
+//    16-09-2026), incluido Fidelización (ver RUTAS_FIDELIZACION en auth.ts).
+//  - La LISTA y el cambio de estado son el trabajo de Calidad de Posventa de esa
+//    sucursal: quien está restringido a Ventas, o asignado a otra provincia, no la
+//    trabaja. Las listas siguen separadas por provincia, igual que el resto de
+//    Volkswagen.
+
+/** Por qué este usuario no trabaja la lista, o null si puede. */
+function motivoSinAcceso(req: Request): string | null {
+  const sucursal = marca.encuestaFabricaPV.sucursal ?? "";
+  if (areaPermitida(req.usuario!) === AreaTrabajo.VENTAS) {
+    return "Esta lista es del área de Posventa. Los gráficos mes a mes sí los podés ver.";
+  }
+  const provincia = provinciaPermitida(req.usuario!);
+  if (provincia && claveNormalizada(provincia) !== claveNormalizada(sucursal)) {
+    return `Esta lista es de Posventa ${sucursal} y tu usuario es de ${provincia}. Los gráficos mes a mes sí los podés ver.`;
+  }
+  return null;
+}
+
+// ---------- GET /api/encuesta-pv ----------
+export async function listarEncuestaPV(req: Request, res: Response) {
+  const motivo = motivoSinAcceso(req);
+  if (motivo) return res.status(403).json({ message: motivo });
+  res.json({ ...(await listarPromotoresPV()), sucursal: marca.encuestaFabricaPV.sucursal });
+}
+
+// ---------- GET /api/encuesta-pv/pendientes ----------
+// Para el contador del menú. A quien no trabaja la lista le devuelve 0 en vez de
+// un 403: el menú lo pide seguido y un error ahí solo ensucia.
+export async function pendientesEncuestaPV(req: Request, res: Response) {
+  if (motivoSinAcceso(req)) return res.json({ pendientes: 0 });
+  res.json({ pendientes: await contarPendientesPV() });
+}
+
+// ---------- PATCH /api/encuesta-pv/clientes/:id ----------
+//
+// Cambio de estado a mano: Pendiente / Animado (en la base, AVISADO: es el mismo
+// enum que las encuestas de Ventas) / Respondió. Las fechas las pone el sistema.
+const estadoSchema = z.object({
+  estado: z.nativeEnum(EstadoEncuestaFabrica),
+});
+
+export async function editarEstadoEncuestaPV(req: Request, res: Response) {
+  const motivo = motivoSinAcceso(req);
+  if (motivo) return res.status(403).json({ message: motivo });
+
+  const parseo = estadoSchema.safeParse(req.body);
+  if (!parseo.success) {
+    return res.status(400).json({ message: "Elegí un estado válido: Pendiente, Animado o Respondió." });
+  }
+  const estadoNuevo = parseo.data.estado;
+  const sucursalPV = marca.encuestaFabricaPV.sucursal ?? "";
+
+  const fila = await prisma.encuestaFabricaPV.findUnique({
+    where: { id: req.params.id },
+    include: { caso: { select: { nombrePropietario: true, numeroOrden: true } } },
+  });
+  if (!fila) return res.status(404).json({ message: "No se encontró ese cliente. Actualizá la lista." });
+  // Un caso eliminado o corregido (ya no es de Posventa de la sucursal) no se lista:
+  // tampoco se le cambia el estado desde una pantalla vieja.
+  if (!(await casoEsDeLaLista(fila.casoId))) {
+    return res.status(404).json({ message: `Ese cliente ya no es de Posventa ${sucursalPV}. Actualizá la lista.` });
+  }
+  // Volver a Pendiente a un cliente que ya no es promotor lo haría desaparecer en la
+  // próxima sincronización, con todo lo trabajado. Se rechaza en vez de perderlo.
+  if (
+    estadoNuevo === EstadoEncuestaFabrica.PENDIENTE &&
+    fila.estado !== EstadoEncuestaFabrica.PENDIENTE &&
+    !(await esPromotorPV(fila.casoId))
+  ) {
+    return res.status(409).json({
+      message:
+        "Este cliente ya no tiene 5 estrellas: si lo pasás a Pendiente sale de la lista y se pierde lo trabajado. Dejalo en Animado o Respondió.",
+    });
+  }
+
+  const data: { estado: EstadoEncuestaFabrica; animadoEn?: Date | null; respondioEn?: Date | null } = {
+    estado: estadoNuevo,
+  };
+  // Igual que en las encuestas de Ventas: la fecha de animado es la que usa el
+  // seguimiento para contar la efectividad, así que NO se borra al pasar a
+  // Respondió. Volver a Pendiente sí la borra: significa "todavía no se lo animó".
+  if (estadoNuevo === EstadoEncuestaFabrica.PENDIENTE) data.animadoEn = null;
+  if (estadoNuevo === EstadoEncuestaFabrica.AVISADO && !fila.animadoEn) data.animadoEn = new Date();
+  if (estadoNuevo === EstadoEncuestaFabrica.RESPONDIO && !fila.respondioEn) data.respondioEn = new Date();
+  if (estadoNuevo !== EstadoEncuestaFabrica.RESPONDIO) data.respondioEn = null;
+
+  // updateMany y no update: si una sincronización borró la fila entre la lectura y
+  // acá, responde 404 en vez de un 500.
+  const { count } = await prisma.encuestaFabricaPV.updateMany({ where: { id: fila.id }, data });
+  if (count === 0) return res.status(404).json({ message: "No se encontró ese cliente. Actualizá la lista." });
+  const actualizada = await prisma.encuestaFabricaPV.findUnique({ where: { id: fila.id } });
+
+  auditar(req, {
+    accion: ACCIONES.ENCUESTA_PV_ESTADO_CAMBIADO,
+    entidad: "EncuestaFabricaPV",
+    entidadId: fila.id,
+    detalles: {
+      casoId: fila.casoId,
+      cliente: fila.caso.nombrePropietario,
+      orden: fila.caso.numeroOrden,
+      estadoAnterior: fila.estado,
+      estadoNuevo,
+    },
+  });
+
+  res.json({ data: actualizada });
+}
+
+// ---------- GET /api/encuesta-pv/seguimiento ----------
+// Los gráficos mes a mes. Sin restricción de perfil ni de provincia: los ve todo
+// el que entra al sistema.
+const seguimientoSchema = z.object({
+  periodo: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/, "El mes tiene que tener el formato AAAA-MM.")
+    .optional(),
+});
+
+export async function seguimientoEncuestaPV(req: Request, res: Response) {
+  const parsed = seguimientoSchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ message: parsed.error.errors.map((e) => e.message).join(" ") });
+  }
+  res.json({
+    ...(await seguimientoEncuestasPV({ periodo: parsed.data.periodo ?? null })),
+    sucursal: marca.encuestaFabricaPV.sucursal,
+  });
+}

@@ -45,6 +45,19 @@ export function requireEncuestaVW(_req: Request, res: Response, next: NextFuncti
 }
 
 /**
+ * Encuestas de fábrica de Posventa (los promotores de 5 estrellas). Solo en las
+ * marcas que la tienen prendida: en Ford no hay estrellas y la pestaña no existe.
+ */
+export function requireEncuestaPV(_req: Request, res: Response, next: NextFunction) {
+  if (!marca.encuestaFabricaPV.habilitado || !marca.encuestaFabricaPV.sucursal) {
+    return res.status(404).json({
+      message: `Las encuestas de fábrica de Posventa no están disponibles en ${marca.nombre}.`,
+    });
+  }
+  next();
+}
+
+/**
  * Encuesta de Posventa medida por ítems. Solo en las marcas que la usan: en las
  * demás el área se clasifica con una nota sola y estas pantallas no existen.
  */

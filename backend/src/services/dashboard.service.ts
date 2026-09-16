@@ -41,7 +41,7 @@ const MESES_EN_TABLERO = 6;
  *  - No miraba la provincia. En Volkswagen se aplica en todo el sistema, y el
  *    tablero ya la recibe resuelta en `sucursal` (la del usuario le gana al filtro).
  */
-async function resumenEncuestaFabrica(sucursal: string | null) {
+async function resumenEncuestaFabrica(sucursal: string | null, sucursalGraficos: string | null) {
   if (marca.refuerzo.formatoExcel !== "VW") return null;
 
   const clientes = await traerClientesSeguimiento(sucursal);
@@ -76,7 +76,12 @@ async function resumenEncuestaFabrica(sucursal: string | null) {
     .map((v) => ({ ...v, sinCorreo: codigosSinCorreo.has(v.codigo) }))
     .sort((x, y) => y.pendientes - x.pendientes);
 
-  const seguimiento = calcularSeguimiento(clientes, { periodo: null });
+  // Los gráficos mes a mes son de todos (16-09-2026): con la sucursal elegida, o las
+  // dos, igual que en la pantalla de Encuestas de fábrica. Los números de arriba
+  // (pendientes, vendedores) siguen siendo de la provincia del usuario.
+  const clientesGraficos =
+    sucursalGraficos === sucursal ? clientes : await traerClientesSeguimiento(sucursalGraficos);
+  const seguimiento = calcularSeguimiento(clientesGraficos, { periodo: null });
 
   return {
     total: clientes.length,
@@ -104,7 +109,7 @@ async function resumenEncuestaFabrica(sucursal: string | null) {
   };
 }
 
-export async function dashboardResumen(f: FiltrosReporte) {
+export async function dashboardResumen(f: FiltrosReporte, sucursalGraficos: string | null = f.sucursal ?? null) {
   const rangoFechas = {
     ...(f.fechaDesde ? { gte: new Date(`${f.fechaDesde}T00:00:00`) } : {}),
     ...(f.fechaHasta ? { lte: new Date(`${f.fechaHasta}T23:59:59.999`) } : {}),
@@ -193,6 +198,8 @@ export async function dashboardResumen(f: FiltrosReporte) {
       cliente: nombreClienteRqr(r),
       sucursal: r.caso?.sucursal ?? "—",
       modelo: r.caso?.modelo ?? r.modeloManual ?? "—",
+      // El asesor que quedó en el RQR al abrirlo (pedido de Calidad, 16-09-2026).
+      asesor: r.asesor,
       causaRaiz: r.causaRaiz,
       estado: r.estado,
       diasAbierto: diasAbierto(r.fechaApertura),
@@ -288,7 +295,7 @@ export async function dashboardResumen(f: FiltrosReporte) {
   // propia lista (Volkswagen). El bloque de arriba se calcula sobre los Casos, y
   // los clientes de la encuesta de VW no son Casos —no traen teléfono, no se los
   // puede contactar por WhatsApp—, así que ahí daba SIEMPRE cero.
-  const encuestaFabrica = await resumenEncuestaFabrica(f.sucursal ?? null);
+  const encuestaFabrica = await resumenEncuestaFabrica(f.sucursal ?? null, sucursalGraficos);
 
   return {
     periodo: { fechaDesde: f.fechaDesde ?? null, fechaHasta: f.fechaHasta ?? null },

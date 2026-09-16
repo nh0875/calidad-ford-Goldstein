@@ -31,6 +31,8 @@ export function infoMarca(_req: Request, res: Response) {
       // carga de Excel rechazaría el archivo real de VW, que tiene otro formato.
       refuerzo: marca.refuerzo.habilitado && marca.refuerzo.formatoExcel === "FORD",
       encuestaFabrica: marca.refuerzo.habilitado && marca.refuerzo.formatoExcel === "VW",
+      // Encuestas de fábrica de Posventa: los promotores de 5 estrellas.
+      encuestaFabricaPV: marca.encuestaFabricaPV.habilitado && !!marca.encuestaFabricaPV.sucursal,
       // Pantalla de desempeño de Posventa por ítems.
       desempenoPosventa: marca.posventaPorItems,
       // El circuito de insistencia (2° contacto + llamada). La pantalla lo usa

@@ -92,6 +92,14 @@ interface Formulario {
   fechaCierre: string; // AAAA-MM-DD o ""
 }
 
+// El asesor se copia del caso al abrir el RQR. Puede venir vacío (un Excel sin
+// la columna Asesor) o como "(sin asesor)" (importación de formularios sin el
+// dato): los dos se muestran igual que cualquier dato faltante de esta pantalla.
+function asesorVisible(asesor: string | null | undefined): string {
+  const limpio = (asesor ?? "").trim();
+  return limpio && limpio !== "(sin asesor)" ? limpio : "—";
+}
+
 function diasDesde(iso: string): number {
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
 }
@@ -305,13 +313,15 @@ export default function RqrDetalle() {
             <Dato etiqueta="Vehículo" valor={`${rqr.caso.modelo} — ${rqr.caso.patente}${rqr.caso.chasisVIN ? ` — VIN ${rqr.caso.chasisVIN}` : ""}`} />
             <Dato etiqueta="N° de orden" valor={rqr.caso.numeroOrden} />
             <Dato etiqueta="Sucursal" valor={rqr.caso.sucursal} />
+            <Dato etiqueta="Asesor" valor={asesorVisible(rqr.asesor)} />
             <Dato etiqueta="Fecha del servicio" valor={fechaCorta(rqr.caso.fechaSalida ?? rqr.caso.fechaProgramacion)} />
           </div>
         ) : (
-          <div className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
+          <div className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
             <Dato etiqueta="Cliente" valor={nombreClienteRqr(rqr)} />
             <Dato etiqueta="Teléfono" valor={rqr.telefonoManual ?? "—"} />
             <Dato etiqueta="Vehículo" valor={rqr.modeloManual ?? "—"} />
+            <Dato etiqueta="Asesor" valor={asesorVisible(rqr.asesor)} />
           </div>
         )}
         {/* Clasificación de Volkswagen. Se muestra solo si el RQR la tiene

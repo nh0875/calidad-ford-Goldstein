@@ -33,5 +33,8 @@ export async function getDashboardResumen(req: Request, res: Response) {
   const area = areaEfectiva(req.usuario!, parsearAreaQuery(req.query.area));
   // La provincia del usuario, si tiene una, le gana al filtro pedido.
   const sucursal = provinciaPermitida(req.usuario!) ?? q.sucursal;
-  res.json(await dashboardResumen({ fechaDesde, fechaHasta, sucursal, area }));
+  // Los gráficos mes a mes de encuestas de fábrica son de todos (16-09-2026): usan
+  // la sucursal que ELIGIÓ la persona (sin elegir, las dos), no la de su usuario.
+  // El resto del tablero sigue acotado a su provincia.
+  res.json(await dashboardResumen({ fechaDesde, fechaHasta, sucursal, area }, q.sucursal ?? null));
 }

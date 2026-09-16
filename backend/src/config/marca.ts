@@ -94,6 +94,20 @@ export interface PerfilMarca {
     formatoExcel: "FORD" | "VW";
   };
   /**
+   * Encuestas de fábrica de POSVENTA: los clientes de Posventa que calificaron con
+   * 5 estrellas (los promotores) entran solos a una pestaña donde Calidad los anima
+   * a responder la encuesta de fábrica, con el mismo circuito Pendiente → Animado →
+   * Respondió y el mismo seguimiento mes a mes que las encuestas de Ventas.
+   *
+   * Lo pidió Calidad de Volkswagen (16-09-2026) para Posventa MENDOZA: `sucursal`
+   * es la única sucursal cuyos casos entran. En Ford está apagado: allá no hay
+   * estrellas (la escala es el semáforo) y la pestaña quedaría vacía.
+   */
+  encuestaFabricaPV: {
+    habilitado: boolean;
+    sucursal: string | null;
+  };
+  /**
    * La separación por PROVINCIA se aplica en TODO el sistema (listados, tableros,
    * reportes, campañas) además de por área.
    *
@@ -167,6 +181,8 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     rqrClienteAnonimo: false,
     posventaPorItems: false,
     refuerzo: { habilitado: true, notificarPorMail: false, formatoExcel: "FORD" },
+    // Sin estrellas no hay promotores de 5: la pestaña no aplica.
+    encuestaFabricaPV: { habilitado: false, sucursal: null },
     visibilidadPorProvincia: false,
     avisoPosibleDuplicado: false,
     segundoContacto: false,
@@ -198,6 +214,8 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     rqrClienteAnonimo: true,
     posventaPorItems: true,
     refuerzo: { habilitado: true, notificarPorMail: true, formatoExcel: "VW" },
+    // Pedido de Calidad del 16-09-2026: los promotores de Posventa MENDOZA.
+    encuestaFabricaPV: { habilitado: true, sucursal: "Mendoza" },
     visibilidadPorProvincia: true,
     avisoPosibleDuplicado: true,
     segundoContacto: true,

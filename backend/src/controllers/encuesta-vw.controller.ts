@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { EstadoEncuestaFabrica } from "@prisma/client";
 import { prisma } from "../config/prisma";
-import { marca } from "../config/marca";
+import { marca, mensajeSucursalInvalida, sucursalCanonica, SUCURSAL_GENERAL } from "../config/marca";
 import { abrirWorkbook, borrarArchivoTemporal, guardarArchivoTemporal, leerArchivoTemporal } from "../services/excel.service";
 import { nombrePeriodo, parsearArchivoEncuestaVW, resumirPeriodosVW } from "../services/encuesta-vw.service";
 import { importarEncuestaFabricaVW } from "../services/importacion-encuesta-vw.service";
@@ -15,7 +15,6 @@ import {
 import { avisarVendedoresVW } from "../services/encuesta-vw-mail.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { zSucursal } from "../services/sucursal.service";
-import { provinciaPermitida } from "../services/area.service";
 import { seguimientoEncuestasVW } from "../services/seguimiento-encuesta-vw.service";
 
 // ---------- POST /api/encuesta-vw/preview ----------
@@ -638,14 +637,19 @@ export async function eliminarEncuestaVW(req: Request, res: Response) {
 // `periodo` acota el ranking de vendedores a un mes; sin él, el ranking es de
 // todos los meses. La evolución de los meses viene siempre entera.
 //
-// Se acota por provincia igual que el resto de Volkswagen: alguien de Mendoza ve
-// cómo animan los vendedores de Mendoza.
+// LOS GRÁFICOS SON DE TODOS (pedido de Calidad, 16-09-2026): cualquier perfil —
+// administrador, Calidad y también Fidelización— ve las DOS provincias. Antes se
+// acotaban a la provincia del usuario, y por eso alguien de Calidad de Mendoza veía
+// menos que un administrador sin saber por qué. `sucursal` es un filtro que elige
+// la persona, no una restricción: sin él se ven todas. La lista de clientes y las
+// acciones de esta pantalla no cambian.
 
 const seguimientoSchema = z.object({
   periodo: z
     .string()
     .regex(/^\d{4}-\d{2}$/, "El mes tiene que tener el formato AAAA-MM.")
     .optional(),
+  sucursal: z.string().optional(),
 });
 
 export async function seguimientoEncuestaVW(req: Request, res: Response) {
@@ -653,10 +657,16 @@ export async function seguimientoEncuestaVW(req: Request, res: Response) {
   if (!parsed.success) {
     return res.status(400).json({ message: parsed.error.errors.map((e) => e.message).join(" ") });
   }
-  res.json(
-    await seguimientoEncuestasVW({
-      sucursal: provinciaPermitida(req.usuario!),
-      periodo: parsed.data.periodo ?? null,
-    })
-  );
+  let sucursal: string | null = null;
+  if (parsed.data.sucursal) {
+    // Con la lista cerrada de la marca: "SAN JUAN" o "san juan" entran como "San
+    // Juan", y un valor que no es una sucursal real se rechaza en vez de devolver
+    // gráficos vacíos que parecerían datos.
+    const canonica = sucursalCanonica(parsed.data.sucursal);
+    if (!canonica || canonica === SUCURSAL_GENERAL) {
+      return res.status(400).json({ message: mensajeSucursalInvalida() });
+    }
+    sucursal = canonica;
+  }
+  res.json(await seguimientoEncuestasVW({ sucursal, periodo: parsed.data.periodo ?? null }));
 }

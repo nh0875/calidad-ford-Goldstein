@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Award,
   ClipboardCheck,
   ClipboardList,
   GitBranch,
@@ -45,7 +46,7 @@ const navItems: Array<{
   label: string;
   icono: LucideIcon;
   exacto?: boolean;
-  modulo?: "fidelizacion" | "refuerzo" | "encuestaFabrica" | "desempenoPosventa";
+  modulo?: "fidelizacion" | "refuerzo" | "encuestaFabrica" | "encuestaFabricaPV" | "desempenoPosventa";
 }> = [
   { to: "/dashboard", label: "Dashboard", icono: LayoutDashboard },
   { to: "/upload", label: "Carga de Excel", icono: UploadCloud },
@@ -57,6 +58,7 @@ const navItems: Array<{
   { to: "/seguimiento", label: "Seguimiento", icono: MessagesSquare },
   { to: "/refuerzos", label: "Refuerzo de encuesta", icono: ClipboardCheck, modulo: "refuerzo" },
   { to: "/encuestas-fabrica", label: "Encuestas de fábrica", icono: MailCheck, modulo: "encuestaFabrica" },
+  { to: "/encuestas-fabrica-pv", label: "Encuestas de fábrica PV", icono: Award, modulo: "encuestaFabricaPV" },
   // Fidelización solo existe en las marcas que la usan (ver modulo abajo).
   { to: "/fidelizacion", label: "Fidelización", icono: Gift, exacto: true, modulo: "fidelizacion" },
   { to: "/fidelizacion/clientes", label: "Clientes de fidelización", icono: HeartHandshake, modulo: "fidelizacion" },
@@ -78,6 +80,7 @@ const pageTitles: Record<string, string> = {
   "/desempeno-posventa": "Desempeño de Posventa — por ítem",
   "/refuerzos": "Refuerzo de la encuesta de fábrica",
   "/encuestas-fabrica": "Encuestas de fábrica — pendientes por vendedor",
+  "/encuestas-fabrica-pv": "Encuestas de fábrica PV — promotores de Posventa",
   "/fidelizacion": "Fidelización — carga de planillas",
   "/fidelizacion/clientes": "Clientes de fidelización",
   "/cambiar-password": "Cambiar mi contraseña",
@@ -92,6 +95,9 @@ export default function MainLayout() {
   const [pendientesRefuerzo, setPendientesRefuerzo] = useState(0);
   // Badge del sidebar: casos que esperan clasificación manual (del área del usuario)
   const [pendientesRevision, setPendientesRevision] = useState(0);
+  // Badge del sidebar: promotores de Posventa (5 estrellas) que nadie animó todavía.
+  // Es lo que hace que un 5 nuevo se vea enseguida desde cualquier pantalla.
+  const [pendientesPV, setPendientesPV] = useState(0);
   useEffect(() => {
     // El puesto de Fidelizacion no trabaja refuerzos: pedirlo seria un 403 seguro.
     // Y en las marcas sin la pantalla de refuerzos de Ford el endpoint no existe:
@@ -108,6 +114,31 @@ export default function MainLayout() {
       .catch(() => {});
   }, [pathname]);
 
+  // El contador de promotores de Posventa. Va aparte y con su propio reloj: pedirlo
+  // solo al cambiar de pantalla no avisaba un 5 nuevo mientras alguien trabajaba en
+  // Seguimiento (ahí cambia el ?caso=, no la ruta). La pestaña además avisa el número
+  // apenas recarga su lista, así baja en el momento al marcar Animado.
+  useEffect(() => {
+    // Fidelización no trabaja esa lista (solo ve sus gráficos), y en las marcas sin
+    // la pestaña el endpoint no existe.
+    if (esSoloFidelizacion(usuario) || !getMarca().modulos.encuestaFabricaPV) return;
+    const pedir = () =>
+      apiGet<{ pendientes: number }>("/api/encuesta-pv/pendientes")
+        .then((r) => setPendientesPV(r.pendientes))
+        .catch(() => {});
+    pedir();
+    const reloj = window.setInterval(pedir, 60_000);
+    const alAvisar = (e: Event) => {
+      const n = (e as CustomEvent<number>).detail;
+      if (typeof n === "number") setPendientesPV(n);
+    };
+    window.addEventListener("encuesta-pv:pendientes", alAvisar);
+    return () => {
+      window.clearInterval(reloj);
+      window.removeEventListener("encuesta-pv:pendientes", alAvisar);
+    };
+  }, [pathname]);
+
   const title =
     pageTitles[pathname] ??
     (pathname === "/rqr/nuevo"
@@ -120,10 +151,17 @@ export default function MainLayout() {
   // en Volkswagen). El backend igual responde 404 en esos endpoints: esconder
   // la pestaña es comodidad, no la barrera.
   const modulos = getMarca().modulos;
-  // Las dos pantallas del puesto de Fidelizacion. Tienen que coincidir con la
-  // lista blanca del backend (middlewares/auth.ts, RUTAS_FIDELIZACION): si aca
-  // se muestra algo de mas, el usuario lo abre y come un 403.
-  const RUTAS_DE_FIDELIZACION = ["/fidelizacion", "/fidelizacion/clientes", "/seguimiento"];
+  // Las pantallas del puesto de Fidelizacion. Tienen que coincidir con la lista
+  // blanca del backend (middlewares/auth.ts, RUTAS_FIDELIZACION): si aca se
+  // muestra algo de mas, el usuario lo abre y come un 403. Encuestas de fabrica
+  // entra desde el 16-09-2026 SOLO con sus graficos (la pantalla se lo acota).
+  const RUTAS_DE_FIDELIZACION = [
+    "/fidelizacion",
+    "/fidelizacion/clientes",
+    "/seguimiento",
+    "/encuestas-fabrica",
+    "/encuestas-fabrica-pv",
+  ];
   const soloFidelizacion = esSoloFidelizacion(usuario);
   const itemsDeLaMarca = navItems
     .filter((i) => !i.modulo || modulos[i.modulo])
@@ -185,6 +223,11 @@ export default function MainLayout() {
               {item.to === "/refuerzos" && pendientesRefuerzo > 0 && (
                 <span className="ml-auto inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-bold text-white">
                   {pendientesRefuerzo}
+                </span>
+              )}
+              {item.to === "/encuestas-fabrica-pv" && pendientesPV > 0 && (
+                <span className="ml-auto inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-bold text-white">
+                  {pendientesPV}
                 </span>
               )}
               {item.to === "/seguimiento" && pendientesRevision > 0 && (

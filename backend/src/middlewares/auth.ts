@@ -65,6 +65,12 @@ const RUTAS_FIDELIZACION = [
   /^\/seguimiento(\/|$)/,   // el chat con esos clientes (el controller acota a fidelizacion)
   /^\/auth(\/|$)/,          // login, cambiar su propia contrasena
   /^\/marca(\/|$)/,         // que marca es el sistema, para dibujar la pantalla
+  // Los GRAFICOS mes a mes de Encuestas de fabrica: los ve cualquier perfil
+  // (pedido de Calidad, 16-09-2026). Es SOLO la lectura del seguimiento, con el
+  // patron exacto: la lista de clientes y las acciones siguen cerradas.
+  /^\/encuesta-vw\/seguimiento$/,
+  // Lo mismo para los graficos de Encuestas de fabrica de Posventa.
+  /^\/encuesta-pv\/seguimiento$/,
 ];
 
 /**

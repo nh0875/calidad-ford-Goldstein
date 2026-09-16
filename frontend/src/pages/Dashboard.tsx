@@ -74,6 +74,7 @@ interface Resumen {
       cliente: string;
       sucursal: string;
       modelo: string;
+      asesor: string;
       causaRaiz: string | null;
       estado: string;
       diasAbierto: number;
@@ -561,6 +562,7 @@ export default function Dashboard() {
                           {r.cliente} · {r.modelo}
                         </span>
                         <div className="text-xs text-ink-muted/80">
+                          {r.asesor && r.asesor !== "(sin asesor)" ? `Asesor: ${r.asesor} · ` : ""}
                           {etiquetaCategoria(r.causaRaiz)} · {r.estado.replace("_", " ")}
                         </div>
                       </div>
@@ -887,7 +889,7 @@ function AnimacionesMesAMes({ seguimiento }: { seguimiento: SeguimientoEncuestas
           cambie. La sucursal sí lo acota. */}
       <p className="mt-1 text-xs text-ink-muted">
         Cada mes son los clientes que patentaron ese mes, según la Fecha Dominio del Excel de fábrica. No usa el rango de
-        fechas de arriba; la sucursal sí.
+        fechas de arriba. Muestra las dos provincias, salvo que elijas una sucursal en el filtro.
       </p>
 
       <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
