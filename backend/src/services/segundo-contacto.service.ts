@@ -26,7 +26,7 @@
 // Todo esto corre SOLO si marca.segundoContacto está prendido (Volkswagen). En
 // Ford las dos funciones devuelven cero sin tocar nada.
 
-import { EstadoContacto, MessageDirection } from "@prisma/client";
+import { EstadoContacto, MessageDirection, Prisma } from "@prisma/client";
 import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { whatsappQueue } from "../jobs/queues";
@@ -97,6 +97,54 @@ export interface ResultadoBarrida {
 }
 
 /**
+ * Desde cuándo corre la insistencia AUTOMÁTICA: 16-09-2026 a las 00:00 de Argentina.
+ *
+ * POR QUÉ HAY UNA FECHA. Hasta el 15-09-2026 la barrida nunca pudo encolar nada
+ * (el jobId con ":" que BullMQ rechazaba). Con el arreglo, TODOS los casos que
+ * seguían en ENVIADO sin respuesta quedaban en condiciones a la vez, aunque el
+ * primer contacto hubiera salido hace semanas. A esos Calidad ya les insistió a mano
+ * con el botón "Insistir ahora", así que el dueño decidió (16-09-2026) que lo
+ * automático sea SOLO para los casos cuyo primer contacto salió desde ese día. Los
+ * anteriores no reciben nada solo; el botón sigue andando igual para cualquiera.
+ *
+ * SEGUNDO_CONTACTO_DESDE lo cambia, pero existe para las pruebas: en producción no se
+ * define.
+ */
+const DESDE_POR_DEFECTO = "2026-09-16T00:00:00-03:00";
+export const INSISTENCIA_AUTOMATICA_DESDE: Date = (() => {
+  const d = new Date(process.env.SEGUNDO_CONTACTO_DESDE ?? DESDE_POR_DEFECTO);
+  return isNaN(d.getTime()) ? new Date(DESDE_POR_DEFECTO) : d;
+})();
+
+/**
+ * Qué casos le tocan a la barrida automática. Vive acá, en un solo lugar, para que
+ * el diagnóstico (scripts/diagnostico-circuito.ts) cuente exactamente lo mismo.
+ */
+export function whereCandidatosSegundoContacto(corte: Date): Prisma.CasoWhereInput {
+  return {
+    estadoContacto: EstadoContacto.ENVIADO,
+    // Todavía no se le insistió.
+    segundoContactoEn: null,
+    // Nadie pidió la baja.
+    whatsappOptOut: false,
+    // Y no contestó NADA desde que se le escribió. Se mira si hay algún
+    // mensaje ENTRANTE, y no el estado: un caso puede seguir en ENVIADO por un
+    // rato aunque el cliente ya haya escrito, y volver a escribirle a alguien
+    // que acaba de contestar es de las cosas que más molestan.
+    mensajes: { none: { direction: MessageDirection.ENTRANTE } },
+    AND: [
+      // El primer contacto salió hace 24 h o más. Se cuenta desde el mensaje
+      // SALIENTE más viejo del caso y no desde createdAt: un caso puede estar
+      // cargado hace una semana y haberse contactado recién ayer.
+      { mensajes: { some: { direction: MessageDirection.SALIENTE, createdAt: { lte: corte } } } },
+      // Y ese primer contacto es de cuando ya corría la insistencia automática: un
+      // caso con CUALQUIER mensaje saliente anterior queda afuera (ver arriba).
+      { mensajes: { none: { direction: MessageDirection.SALIENTE, createdAt: { lt: INSISTENCIA_AUTOMATICA_DESDE } } } },
+    ],
+  };
+}
+
+/**
  * Escalón 1: encola el segundo contacto para los casos que hace 24 h que no
  * contestan.
  *
@@ -111,22 +159,7 @@ export async function encolarSegundosContactos(): Promise<ResultadoBarrida> {
   const corte = haceHoras(HORAS_PARA_SEGUNDO_CONTACTO);
 
   const candidatos = await prisma.caso.findMany({
-    where: {
-      estadoContacto: EstadoContacto.ENVIADO,
-      // Todavía no se le insistió.
-      segundoContactoEn: null,
-      // Nadie pidió la baja.
-      whatsappOptOut: false,
-      // Y no contestó NADA desde que se le escribió. Se mira si hay algún
-      // mensaje ENTRANTE, y no el estado: un caso puede seguir en ENVIADO por un
-      // rato aunque el cliente ya haya escrito, y volver a escribirle a alguien
-      // que acaba de contestar es de las cosas que más molestan.
-      mensajes: { none: { direction: MessageDirection.ENTRANTE } },
-      // El primer contacto salió hace 24 h o más. Se cuenta desde el mensaje
-      // SALIENTE más viejo del caso y no desde createdAt: un caso puede estar
-      // cargado hace una semana y haberse contactado recién ayer.
-      AND: [{ mensajes: { some: { direction: MessageDirection.SALIENTE, createdAt: { lte: corte } } } }],
-    },
+    where: whereCandidatosSegundoContacto(corte),
     select: { id: true },
     orderBy: { createdAt: "asc" },
     take: MAX_POR_BARRIDA,

@@ -28,7 +28,9 @@ import { mantenimientoQueue, whatsappQueue } from "../jobs/queues";
 import {
   HORAS_PARA_LLAMADA,
   HORAS_PARA_SEGUNDO_CONTACTO,
+  INSISTENCIA_AUTOMATICA_DESDE,
   jobIdSegundoContacto,
+  whereCandidatosSegundoContacto,
 } from "../services/segundo-contacto.service";
 
 const AR = "America/Argentina/Buenos_Aires";
@@ -98,14 +100,12 @@ async function main(): Promise<void> {
   const aLlamar = await prisma.caso.count({ where: { estadoContacto: EstadoContacto.LLAMADA_PENDIENTE } });
   console.log(`\nEn ENVIADO: ${enviados} · ya con segundo contacto: ${conSegundo} · en LLAMADA_PENDIENTE: ${aLlamar}`);
 
+  // La MISMA condición que usa la barrida (incluida la fecha de arranque de la
+  // insistencia automática): si se copiara, el diagnóstico y la barrida podrían
+  // contar cosas distintas sin que nadie lo note.
+  console.log(`Solo casos cuyo primer contacto salió desde ${hora(INSISTENCIA_AUTOMATICA_DESDE)} (los anteriores se insisten a mano).`);
   const candidatos = await prisma.caso.findMany({
-    where: {
-      estadoContacto: EstadoContacto.ENVIADO,
-      segundoContactoEn: null,
-      whatsappOptOut: false,
-      mensajes: { none: { direction: MessageDirection.ENTRANTE } },
-      AND: [{ mensajes: { some: { direction: MessageDirection.SALIENTE, createdAt: { lte: corte } } } }],
-    },
+    where: whereCandidatosSegundoContacto(corte),
     select: { id: true, numeroOrden: true, nombrePropietario: true },
     orderBy: { createdAt: "asc" },
     take: 30,
