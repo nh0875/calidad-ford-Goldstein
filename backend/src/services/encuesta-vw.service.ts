@@ -1,5 +1,7 @@
 import * as XLSX from "xlsx";
+import { marca } from "../config/marca";
 import { leerFilasCrudas, normalizarTexto } from "./excel.service";
+import { claveNormalizada } from "./normalizacion.service";
 
 /**
  * Lector del Excel de encuestas de fábrica de Volkswagen.
@@ -64,6 +66,52 @@ export function partirCodigoVendedor(valor: unknown): CodigoVendedorPartido | nu
   const texto = String(valor ?? "").trim();
   if (!/^\d{7}$/.test(texto)) return null;
   return { completo: texto, sucursal: texto.slice(0, 4), numero: Number(texto.slice(4)) };
+}
+
+// ---------------------------------------------------------------------------
+// Sucursal y persona, a partir del código
+// ---------------------------------------------------------------------------
+//
+// REGLA ESTRICTA (Calidad de VW, 16-09-2026): 1035 = Mendoza y 1036 = San Juan
+// (marca.refuerzo.sucursalPorCodigoVendedor). La sucursal de un vendedor y la de
+// cada cliente salen SOLO del prefijo del código. Antes salían del nombre de la
+// hoja del Excel (y en el formato interno quedaba guardado "1035" a secas), y así
+// aparecían vendedores 1036 figurando en Mendoza.
+
+/**
+ * La sucursal de un código de vendedor, como se guarda en la base ("MENDOZA",
+ * "SAN JUAN": en mayúsculas, igual que todo lo que ya estaba cargado). null si el
+ * prefijo no es de ninguna sucursal conocida.
+ */
+export function sucursalDeCodigoVendedor(codigo: string): string | null {
+  const partido = partirCodigoVendedor(codigo);
+  if (!partido) return null;
+  const sucursal = marca.refuerzo.sucursalPorCodigoVendedor[partido.sucursal];
+  return sucursal ? sucursal.toUpperCase() : null;
+}
+
+/** El prefijo de 4 dígitos de una sucursal ("San Juan" → "1036"), o null. */
+export function prefijoDeSucursal(sucursal: string | null | undefined): string | null {
+  const clave = claveNormalizada(sucursal ?? "");
+  if (!clave) return null;
+  const par = Object.entries(marca.refuerzo.sucursalPorCodigoVendedor).find(([, s]) => claveNormalizada(s) === clave);
+  return par ? par[0] : null;
+}
+
+/**
+ * El 002 de cada sucursal es el MOSTRADOR (vende todos los planes de ahorro), no
+ * una persona: el 1035002 y el 1036002 son dos mostradores distintos y no se
+ * juntan nunca (decisión de Calidad de VW, 16-09-2026).
+ */
+export const NUMEROS_DE_MOSTRADOR: ReadonlySet<number> = new Set([2]);
+
+/**
+ * Quién es la PERSONA detrás de un código. El 1035078 y el 1036078 son el mismo
+ * vendedor vendiendo en dos sucursales: comparten clave, nombre y correo, y en
+ * "Todas las provincias" van en un solo renglón. Un mostrador es su propio código.
+ */
+export function clavePersonaVendedor(v: { codigo: string; numero: number }): string {
+  return NUMEROS_DE_MOSTRADOR.has(v.numero) ? `codigo-${v.codigo}` : `numero-${v.numero}`;
 }
 
 // ---------------------------------------------------------------------------

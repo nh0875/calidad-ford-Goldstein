@@ -35,11 +35,13 @@ import { prisma } from "../config/prisma";
 import { claveNormalizada } from "./normalizacion.service";
 import {
   ArchivoEncuestaVW,
+  clavePersonaVendedor,
   FilaEncuestaVWListaParaImportar,
   esHojaFormatoInterno,
   parsearFechaVW,
   parsearHojaInternaVW,
   partirCodigoVendedor,
+  prefijoDeSucursal,
 } from "./encuesta-vw.service";
 import { leerFilasCrudas } from "./excel.service";
 
@@ -103,21 +105,28 @@ export async function resolverVendedores(
   // 2. Coincidencia EXACTA con el nombre de un vendedor ya cargado.
   const vendedores = await prisma.vendedorVW.findMany({
     where: { nombre: { not: null } },
-    select: { codigo: true, nombre: true },
+    select: { codigo: true, numero: true, nombre: true },
+    orderBy: { codigo: "asc" },
   });
-  const porNombre = new Map<string, string[]>();
+  const porNombre = new Map<string, Array<{ codigo: string; numero: number }>>();
   for (const v of vendedores) {
     const k = claveNormalizada(v.nombre ?? "");
     if (!k) continue;
-    porNombre.set(k, [...(porNombre.get(k) ?? []), v.codigo]);
+    porNombre.set(k, [...(porNombre.get(k) ?? []), v]);
   }
   for (const nombre of nombres) {
     const k = claveNormalizada(nombre);
     if (mapa.has(k)) continue;
-    const candidatos = porNombre.get(k);
+    const candidatos = porNombre.get(k) ?? [];
     // Si hay DOS vendedores con el mismo nombre no se elige ninguno: que lo
     // decida una persona, no la suerte del orden de la consulta.
-    if (candidatos && candidatos.length === 1) mapa.set(k, candidatos[0]);
+    //
+    // Salvo que sean la MISMA persona: el 1035078 y el 1036078 llevan el mismo
+    // nombre a propósito (se guarda en todos sus códigos). Ahí da igual cuál se
+    // tome, porque convertirInternoAArchivo le pone el prefijo de la sucursal de
+    // la venta; sin Suc. Cpa. queda el primero (el de código más bajo).
+    const personas = new Set(candidatos.map((c) => clavePersonaVendedor(c)));
+    if (candidatos.length > 0 && personas.size === 1) mapa.set(k, candidatos[0].codigo);
   }
 
   // 3. Lo que la persona asignó recién, que manda sobre todo lo anterior.
@@ -233,11 +242,23 @@ export function convertirInternoAArchivo(
         rechazar(`El vendedor "${nombreVendedor}" todavía no está asignado a ningún código.`);
         continue;
       }
-      const partido = partirCodigoVendedor(codigo);
-      if (!partido) {
+      const asignado = partirCodigoVendedor(codigo);
+      if (!asignado) {
         rechazar(`El código asignado a "${nombreVendedor}" ("${codigo}") no tiene 7 dígitos.`);
         continue;
       }
+      // La venta manda sobre el vendedor. Al nombre le toca UN código (el de su
+      // sucursal), pero si vendió en la otra se carga con el prefijo de esa: un
+      // mendocino 1035078 que vendió en San Juan entra como 1036078. Así el
+      // cliente es de San Juan por la regla estricta del código, y en "Todas las
+      // provincias" se junta con su 1035078 (decisión de Calidad de VW,
+      // 16-09-2026). Sin Suc. Cpa., o con una que no se reconoce, queda el asignado.
+      const sucursalVenta = normalizarSucursalVenta(c.sucursalTexto);
+      const prefijoVenta = prefijoDeSucursal(sucursalVenta);
+      const partido =
+        prefijoVenta && prefijoVenta !== asignado.sucursal
+          ? partirCodigoVendedor(`${prefijoVenta}${String(asignado.numero).padStart(3, "0")}`) ?? asignado
+          : asignado;
       const cliente = (c.cliente ?? "").trim();
       if (!cliente) {
         rechazar("La fila no tiene nombre del cliente.");
@@ -266,9 +287,7 @@ export function convertirInternoAArchivo(
         area: null,
         fechaEntrega: parsearFechaVW(c.fechaEntrega),
         observacionesFabrica: [],
-        // La venta manda sobre el vendedor: si un mendocino vendió en San Juan,
-        // el cliente es de San Juan.
-        sucursalVenta: normalizarSucursalVenta(c.sucursalTexto),
+        sucursalVenta,
       });
     }
   }

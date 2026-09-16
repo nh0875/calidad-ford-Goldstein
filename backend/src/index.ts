@@ -6,6 +6,7 @@ import { modoAnalisisActivo } from "./services/sentiment.service";
 import { seedAdmin } from "./scripts/seedAdmin";
 import { detenerLatido, iniciarLatido } from "./services/latido.service";
 import { limpiarCausasRaizFueraDeLista } from "./services/causa-raiz.service";
+import { completarDatosDePersonas, corregirSucursalesPorCodigo } from "./services/importacion-encuesta-vw.service";
 
 const app = createApp();
 
@@ -38,6 +39,29 @@ seedAdmin().catch((err) => console.error("[seed] Error creando el admin inicial:
 limpiarCausasRaizFueraDeLista().catch((err) =>
   console.error("[causa-raiz] no se pudieron limpiar las causas viejas:", err)
 );
+
+// Encuestas de fábrica (VW): la sucursal de vendedores y clientes sale del código
+// (1035 = Mendoza, 1036 = San Juan). Corrige lo cargado con la regla vieja; en
+// Ford no hace nada.
+corregirSucursalesPorCodigo()
+  .then(({ vendedores, clientes, internosSinSucursalDeVenta }) => {
+    if (vendedores || clientes) {
+      console.log(`[encuesta-vw] sucursal corregida por código: ${vendedores} vendedor(es), ${clientes} cliente(s)`);
+    }
+    if (internosSinSucursalDeVenta) {
+      console.warn(
+        `[encuesta-vw] ${internosSinSucursalDeVenta} cliente(s) del Excel interno quedaron en la sucursal de su ` +
+          `vendedor: si alguno se vendió en la otra sucursal, volver a subir el último Excel interno lo ubica bien.`
+      );
+    }
+    // El nombre y el correo son de la persona: se completan en el código que no los tiene.
+    return completarDatosDePersonas();
+  })
+  .then((r) => {
+    if (r?.completados) console.log(`[encuesta-vw] ${r.completados} dato(s) de vendedor completados con su otro código`);
+    if (r?.distintos.length) console.warn(`[encuesta-vw] vendedores con datos distintos en sus dos códigos: ${r.distintos.join("; ")}`);
+  })
+  .catch((err) => console.error("[encuesta-vw] no se pudieron corregir las sucursales:", err));
 
 // Latido: deja constancia de que el sistema esta vivo, y al arrancar mide cuanto
 // estuvo caido. Importa porque los mensajes entrantes de WhatsApp llegan SOLO

@@ -92,6 +92,16 @@ export interface PerfilMarca {
      *    entrar al circuito de WhatsApp y viven en una lista aparte.
      */
     formatoExcel: "FORD" | "VW";
+    /**
+     * Qué sucursal es cada prefijo del código de vendedor ("1035078" = sucursal
+     * 1035 + vendedor 078). REGLA ESTRICTA, pedida por Calidad de VW el
+     * 16-09-2026: la sucursal de un vendedor y la de cada cliente salen de acá y
+     * de nada más (ni del nombre de la hoja del Excel ni de ninguna columna). Un
+     * vendedor de Mendoza que vende en San Juan viene como 1036078: ese cliente es
+     * de San Juan, y en "Todas las provincias" se junta con su 1035078 porque es
+     * la misma persona. Vacío en las marcas que no usan este Excel.
+     */
+    sucursalPorCodigoVendedor: Record<string, string>;
   };
   /**
    * Encuestas de fábrica de POSVENTA: los clientes de Posventa que calificaron con
@@ -180,7 +190,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     rqrConSubareas: false,
     rqrClienteAnonimo: false,
     posventaPorItems: false,
-    refuerzo: { habilitado: true, notificarPorMail: false, formatoExcel: "FORD" },
+    refuerzo: { habilitado: true, notificarPorMail: false, formatoExcel: "FORD", sucursalPorCodigoVendedor: {} },
     // Sin estrellas no hay promotores de 5: la pestaña no aplica.
     encuestaFabricaPV: { habilitado: false, sucursal: null },
     visibilidadPorProvincia: false,
@@ -213,7 +223,12 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     rqrConSubareas: true,
     rqrClienteAnonimo: true,
     posventaPorItems: true,
-    refuerzo: { habilitado: true, notificarPorMail: true, formatoExcel: "VW" },
+    refuerzo: {
+      habilitado: true,
+      notificarPorMail: true,
+      formatoExcel: "VW",
+      sucursalPorCodigoVendedor: { "1035": "Mendoza", "1036": "San Juan" },
+    },
     // Pedido de Calidad del 16-09-2026: los promotores de Posventa MENDOZA.
     encuestaFabricaPV: { habilitado: true, sucursal: "Mendoza" },
     visibilidadPorProvincia: true,

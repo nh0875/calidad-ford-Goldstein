@@ -53,27 +53,37 @@ async function resumenEncuestaFabrica(sucursal: string | null, sucursalGraficos:
   // el correo al vendedor, pero el cliente todavía no contestó.
   const sinResponder = clientes.filter((c) => c.estado !== EstadoEncuestaFabrica.RESPONDIO);
 
+  // Un renglón por PERSONA: el 1035078 y el 1036078 son el mismo vendedor en dos
+  // sucursales y se suman, igual que en la pantalla de Encuestas de fábrica.
+  const juntar = (lista: string, valor: string) =>
+    lista.split(" · ").includes(valor) ? lista : [...lista.split(" · "), valor].sort().join(" · ");
+  const personaDe = (c: (typeof clientes)[number]) => c.vendedor.persona ?? c.vendedor.codigo;
   const porVendedor = new Map<string, { codigo: string; nombre: string | null; sucursal: string; pendientes: number }>();
   const porSucursal = new Map<string, number>();
   for (const c of sinResponder) {
-    const v = porVendedor.get(c.vendedor.codigo) ?? {
+    const v = porVendedor.get(personaDe(c)) ?? {
       codigo: c.vendedor.codigo,
       nombre: c.vendedor.nombre,
       sucursal: c.vendedor.sucursal,
       pendientes: 0,
     };
+    v.codigo = juntar(v.codigo, c.vendedor.codigo);
+    v.sucursal = juntar(v.sucursal, c.vendedor.sucursal);
+    v.nombre = v.nombre ?? c.vendedor.nombre;
     v.pendientes++;
-    porVendedor.set(c.vendedor.codigo, v);
+    porVendedor.set(personaDe(c), v);
     porSucursal.set(c.sucursal, (porSucursal.get(c.sucursal) ?? 0) + 1);
   }
 
   // Sin correo cargado no se le puede avisar, y eso solo traba a los que todavía
   // tienen clientes SIN AVISAR: a los avisados el correo ya les salió.
-  const codigosSinCorreo = new Set(sinAvisar.filter((c) => !c.vendedor.email).map((c) => c.vendedor.codigo));
+  // El correo es de la persona: si alguno de sus códigos lo tiene, el aviso sale.
+  const personasConCorreo = new Set(clientes.filter((c) => c.vendedor.email).map(personaDe));
+  const personasSinCorreo = new Set(sinAvisar.map(personaDe).filter((p) => !personasConCorreo.has(p)));
 
   // Los que más deben, arriba: es la lista con la que se decide a quién apurar.
-  const ranking = [...porVendedor.values()]
-    .map((v) => ({ ...v, sinCorreo: codigosSinCorreo.has(v.codigo) }))
+  const ranking = [...porVendedor.entries()]
+    .map(([persona, v]) => ({ ...v, sinCorreo: personasSinCorreo.has(persona) }))
     .sort((x, y) => y.pendientes - x.pendientes);
 
   // Los gráficos mes a mes son de todos (16-09-2026): con la sucursal elegida, o las
@@ -92,7 +102,7 @@ async function resumenEncuestaFabrica(sucursal: string | null, sucursalGraficos:
     respondieron,
     tasaRespuesta: clientes.length > 0 ? porcentaje(respondieron, clientes.length) : null,
     vendedoresConPendientes: ranking.length,
-    vendedoresSinCorreo: codigosSinCorreo.size,
+    vendedoresSinCorreo: personasSinCorreo.size,
     porSucursal: [...porSucursal.entries()]
       .map(([suc, pendientes]) => ({ sucursal: suc, pendientes }))
       .sort((x, y) => y.pendientes - x.pendientes),

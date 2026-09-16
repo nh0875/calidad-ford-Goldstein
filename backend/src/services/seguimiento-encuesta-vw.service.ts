@@ -1,5 +1,6 @@
 import { EstadoEncuestaFabrica } from "@prisma/client";
 import { prisma } from "../config/prisma";
+import { clavePersonaVendedor } from "./encuesta-vw.service";
 import { claveNormalizada } from "./normalizacion.service";
 import { porcentaje } from "./redondeo";
 
@@ -50,7 +51,18 @@ export interface ClienteSeguimiento {
   estado: EstadoEncuestaFabrica;
   avisadoEn: Date | null;
   sucursal: string;
-  vendedor: { codigo: string; nombre: string | null; sucursal: string; email: string | null };
+  vendedor: {
+    codigo: string;
+    nombre: string | null;
+    sucursal: string;
+    email: string | null;
+    /**
+     * Quién es la persona detrás del código (clavePersonaVendedor). El 1035078 y el
+     * 1036078 comparten clave y van en un solo renglón del ranking. Sin clave, cada
+     * código es su propio renglón (Posventa, donde el "vendedor" es el asesor).
+     */
+    persona?: string;
+  };
 }
 
 export interface NumerosAnimacion {
@@ -174,20 +186,30 @@ export function calcularSeguimiento(
     .map(([periodo, lista]) => ({ periodo, ...numerosDe(lista) }));
 
   const delRanking = opciones.periodo ? (porMes.get(opciones.periodo) ?? []) : clientes;
-  const porVendedor = new Map<string, { vendedor: ClienteSeguimiento["vendedor"]; lista: ClienteSeguimiento[] }>();
+  // Un renglón por PERSONA: con las dos provincias, el 1035078 y el 1036078 son el
+  // mismo vendedor y se suman (Calidad de VW, 16-09-2026). Con una sola provincia
+  // los clientes ya vienen filtrados, así que queda solo el código de esa sucursal.
+  const porVendedor = new Map<
+    string,
+    { codigos: string[]; nombre: string | null; sucursales: string[]; lista: ClienteSeguimiento[] }
+  >();
   for (const c of delRanking) {
-    const grupo = porVendedor.get(c.vendedor.codigo) ?? { vendedor: c.vendedor, lista: [] };
+    const clave = c.vendedor.persona ?? c.vendedor.codigo;
+    const grupo = porVendedor.get(clave) ?? { codigos: [], nombre: null, sucursales: [], lista: [] };
+    if (!grupo.codigos.includes(c.vendedor.codigo)) grupo.codigos.push(c.vendedor.codigo);
+    if (!grupo.sucursales.includes(c.vendedor.sucursal)) grupo.sucursales.push(c.vendedor.sucursal);
+    grupo.nombre = grupo.nombre ?? c.vendedor.nombre;
     grupo.lista.push(c);
-    porVendedor.set(c.vendedor.codigo, grupo);
+    porVendedor.set(clave, grupo);
   }
 
   const vendedores: VendedorSeguimiento[] = [...porVendedor.values()]
-    .map(({ vendedor, lista }) => {
+    .map(({ codigos, nombre, sucursales, lista }) => {
       const n = numerosDe(lista);
       return {
-        codigo: vendedor.codigo,
-        nombre: vendedor.nombre,
-        sucursal: vendedor.sucursal,
+        codigo: [...codigos].sort().join(" · "),
+        nombre,
+        sucursal: [...sucursales].sort().join(" · "),
         clientes: n.clientes,
         animados: n.animados,
         respondieron: n.respondieron,
@@ -234,12 +256,16 @@ export async function traerClientesSeguimiento(sucursal: string | null): Promise
       estado: true,
       avisadoEn: true,
       sucursal: true,
-      vendedor: { select: { codigo: true, nombre: true, sucursal: true, email: true } },
+      vendedor: { select: { codigo: true, numero: true, nombre: true, sucursal: true, email: true } },
     },
   });
-  if (!sucursal) return filas;
+  const clientes: ClienteSeguimiento[] = filas.map(({ vendedor: { numero, ...vendedor }, ...f }) => ({
+    ...f,
+    vendedor: { ...vendedor, persona: clavePersonaVendedor({ codigo: vendedor.codigo, numero }) },
+  }));
+  if (!sucursal) return clientes;
   const clave = claveNormalizada(sucursal);
-  return filas.filter((f) => claveNormalizada(f.sucursal) === clave);
+  return clientes.filter((f) => claveNormalizada(f.sucursal) === clave);
 }
 
 export async function seguimientoEncuestasVW(opciones: {

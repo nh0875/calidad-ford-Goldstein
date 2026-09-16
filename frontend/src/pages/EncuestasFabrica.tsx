@@ -135,11 +135,18 @@ interface Pendiente {
   avisadoEn?: string | null;
   respondioEn?: string | null;
   detectadaEn?: string | null;
+  /** La sucursal del CLIENTE: la dice el código con el que se vendió (1035 / 1036). */
+  sucursal?: string;
 }
 
 interface Vendedor {
   id: string;
   codigo: string;
+  /**
+   * Quién es la persona detrás del código: el 1035078 y el 1036078 comparten
+   * clave. El mostrador (002) es uno por sucursal y tiene la suya.
+   */
+  persona?: string;
   nombre: string | null;
   email: string | null;
   sucursal: string;
@@ -198,6 +205,31 @@ interface ResultadoAviso {
   enviado: boolean;
   error: string | null;
 }
+
+/** Compara sucursales sin mayúsculas ni tildes: en la base están como "SAN JUAN". */
+function mismaSucursal(a: string | null | undefined, b: string | null | undefined): boolean {
+  const clave = (s: string | null | undefined) =>
+    (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  return clave(a) === clave(b);
+}
+
+/**
+ * Una PERSONA de la sección Vendedores: sus códigos (uno por sucursal donde vende)
+ * con todos sus clientes. Con "Todas las provincias" el 1035078 y el 1036078 van
+ * juntos; con una sucursal elegida queda solo el código de esa sucursal.
+ */
+interface GrupoVendedor {
+  clave: string;
+  codigos: Vendedor[];
+  nombre: string | null;
+  email: string | null;
+  sucursales: string[];
+  ultimoAvisoEn: string | null;
+  pendientes: Pendiente[];
+}
+
+/** Cuántos clientes entran en cada página de la lista. */
+const CLIENTES_POR_PAGINA = 25;
 
 function fechaCorta(iso: string | null): string {
   if (!iso) return "—";
@@ -368,10 +400,10 @@ export default function EncuestasFabrica() {
   const [formEmail, setFormEmail] = useState("");
   const [guardando, setGuardando] = useState(false);
 
-  function abrirEdicion(v: Vendedor) {
-    setEditando(v.id);
-    setFormNombre(v.nombre ?? "");
-    setFormEmail(v.email ?? "");
+  function abrirEdicion(g: GrupoVendedor) {
+    setEditando(g.clave);
+    setFormNombre(g.nombre ?? "");
+    setFormEmail(g.email ?? "");
   }
 
   async function guardarVendedor(id: string) {
@@ -392,9 +424,9 @@ export default function EncuestasFabrica() {
     }
   }
 
-  async function eliminarVendedor(v: Vendedor) {
+  async function eliminarVendedor(g: GrupoVendedor) {
     const ok = window.confirm(
-      `¿Eliminar a ${v.nombre || v.codigo}?
+      `¿Eliminar a ${g.nombre || g.codigos[0].codigo}${g.codigos.length > 1 ? ` (códigos ${g.codigos.map((v) => v.codigo).join(" y ")})` : ""}?
 
 ` +
         `Solo se puede si no tiene encuestas asociadas. Si las tiene, el sistema te lo ` +
@@ -405,8 +437,16 @@ export default function EncuestasFabrica() {
     setError(null);
     setMensaje(null);
     try {
-      const r = await apiDelete<{ message: string }>(`/api/encuesta-vw/vendedores/${v.id}`);
-      setMensaje(r.message);
+      // Con varios códigos se borran todos o ninguno. Si alguno tiene encuestas,
+      // se le pide el borrado SOLO a ese: el backend responde el 409 que explica
+      // qué hacer, y los demás códigos no se tocan.
+      const conEncuestas = g.codigos.find((v) => v.pendientes.length > 0);
+      let ultimo = "";
+      for (const v of conEncuestas ? [conEncuestas] : g.codigos) {
+        const r = await apiDelete<{ message: string }>(`/api/encuesta-vw/vendedores/${v.id}`);
+        ultimo = r.message;
+      }
+      setMensaje(ultimo);
       await cargar();
     } catch (err) {
       // El 409 de "tiene encuestas asociadas" trae la explicación y qué hacer:
@@ -431,12 +471,15 @@ export default function EncuestasFabrica() {
         ...p,
         vendedorNombre: v.nombre || v.codigo,
         vendedorCodigo: v.codigo,
-        sucursal: v.sucursal,
+        // La del cliente, que sale del código con el que se vendió.
+        sucursal: p.sucursal ?? v.sucursal,
       }))
     );
     const q = busquedaCliente.trim().toLowerCase();
     return filas
       .filter((f) => filtroEstado === "TODOS" || f.estado === filtroEstado)
+      // La sucursal elegida arriba: con una, solo sus clientes; con Todas, los dos.
+      .filter((f) => sucursalGraficos === "" || mismaSucursal(f.sucursal, sucursalGraficos))
       // El mismo mes que acota el ranking de vendedores.
       .filter((f) => mes === "" || (mes === "SIN_MES" ? !f.periodo : f.periodo === mes))
       .filter(
@@ -446,7 +489,8 @@ export default function EncuestasFabrica() {
           f.chasis.toLowerCase().includes(q) ||
           (f.dominio ?? "").toLowerCase().includes(q) ||
           (f.email ?? "").toLowerCase().includes(q) ||
-          f.vendedorNombre.toLowerCase().includes(q)
+          f.vendedorNombre.toLowerCase().includes(q) ||
+          f.vendedorCodigo.includes(q)
       )
       .sort((a, b) => {
         // Por avance del circuito: primero lo que falta hacer (pendientes),
@@ -457,7 +501,20 @@ export default function EncuestasFabrica() {
         if (orden !== 0) return orden;
         return (a.fechaEntrega ?? "").localeCompare(b.fechaEntrega ?? "");
       });
-  }, [vendedores, busquedaCliente, filtroEstado, mes]);
+  }, [vendedores, busquedaCliente, filtroEstado, mes, sucursalGraficos]);
+
+  // De a CLIENTES_POR_PAGINA: con 150 clientes de un tirón la lista no se podía
+  // recorrer (pedido de Calidad, 16-09-2026). Cualquier filtro nuevo vuelve a la 1.
+  const [pagina, setPagina] = useState(1);
+  useEffect(() => {
+    setPagina(1);
+  }, [busquedaCliente, filtroEstado, mes, sucursalGraficos]);
+  const totalPaginas = Math.max(1, Math.ceil(clientes.length / CLIENTES_POR_PAGINA));
+  // Si la lista se achica (se borró un cliente, cambió un estado con un filtro
+  // puesto), no se queda en una página que ya no existe.
+  const paginaActual = Math.min(pagina, totalPaginas);
+  const desde = (paginaActual - 1) * CLIENTES_POR_PAGINA;
+  const clientesDeLaPagina = clientes.slice(desde, desde + CLIENTES_POR_PAGINA);
 
   // Cambio de estado a mano, y la nota que lo acompaña.
   //
@@ -554,11 +611,51 @@ export default function EncuestasFabrica() {
     }
   }
 
+  // Los códigos de una misma persona, juntos. `sucursal` vacía = las dos provincias.
+  const agrupar = (lista: Vendedor[], sucursal: string): GrupoVendedor[] => {
+    // El nombre y el correo son de la PERSONA: se toman de todos sus códigos aunque
+    // haya una sucursal elegida. Si no, con San Juan puesto el renglón decía "falta
+    // el correo" (lo tenía el 1035) y guardar el formulario lo borraba en los dos.
+    const datosPersona = new Map<string, { nombre: string | null; email: string | null }>();
+    for (const v of lista) {
+      const d = datosPersona.get(v.persona ?? v.codigo) ?? { nombre: null, email: null };
+      d.nombre = d.nombre || v.nombre;
+      d.email = d.email || v.email;
+      datosPersona.set(v.persona ?? v.codigo, d);
+    }
+    const grupos = new Map<string, GrupoVendedor>();
+    for (const v of lista) {
+      if (sucursal && !mismaSucursal(v.sucursal, sucursal)) continue;
+      const clave = v.persona ?? v.codigo;
+      const g = grupos.get(clave) ?? {
+        clave,
+        codigos: [],
+        nombre: null,
+        email: null,
+        sucursales: [],
+        ultimoAvisoEn: null,
+        pendientes: [],
+      };
+      g.codigos.push(v);
+      g.nombre = datosPersona.get(clave)!.nombre;
+      g.email = datosPersona.get(clave)!.email;
+      if (!g.sucursales.some((s) => mismaSucursal(s, v.sucursal))) g.sucursales.push(v.sucursal);
+      if (v.ultimoAvisoEn && (!g.ultimoAvisoEn || v.ultimoAvisoEn > g.ultimoAvisoEn)) g.ultimoAvisoEn = v.ultimoAvisoEn;
+      g.pendientes.push(...v.pendientes.filter((p) => !sucursal || mismaSucursal(p.sucursal ?? v.sucursal, sucursal)));
+      grupos.set(clave, g);
+    }
+    return [...grupos.values()];
+  };
+  const gruposVendedores = useMemo(() => agrupar(vendedores, sucursalGraficos), [vendedores, sucursalGraficos]);
+
+  // Para el botón de avisar y el cartel de correos faltantes: de TODAS las
+  // sucursales (el aviso sale para todos) y por persona, así el correo cargado en
+  // el 1035078 también le sirve al 1036078.
   const conPendientes = useMemo(
-    () => vendedores.filter((v) => v.pendientes.some((p) => p.estado === "PENDIENTE")),
+    () => agrupar(vendedores, "").filter((g) => g.pendientes.some((p) => p.estado === "PENDIENTE")),
     [vendedores]
   );
-  const sinCorreo = conPendientes.filter((v) => !v.email);
+  const sinCorreo = conPendientes.filter((g) => !g.email);
 
   if (!marca.modulos.encuestaFabrica) {
     return <Alert tono="info">Esta pantalla es de {marca.nombre}. En esta marca no aplica.</Alert>;
@@ -595,7 +692,7 @@ export default function EncuestasFabrica() {
             <span className="text-xs text-ink-muted">
               {soloGraficos
                 ? "El mes acota el ranking de vendedores; la sucursal, todos los gráficos."
-                : "El mes acota el ranking de vendedores y la lista de clientes de abajo; la sucursal, solo los gráficos."}
+                : "El mes acota el ranking y la lista de clientes. La sucursal acota los gráficos, el ranking, la lista y los vendedores (el resumen de arriba y el aviso son de las dos). Con Todas las provincias, un vendedor que vende en las dos aparece una sola vez."}
             </span>
           </div>
 
@@ -733,7 +830,7 @@ export default function EncuestasFabrica() {
         {sinCorreo.length > 0 && (
           <div className="mt-3"><Alert tono="advertencia">
             {sinCorreo.length === 1
-              ? `Al vendedor ${sinCorreo[0].nombre || sinCorreo[0].codigo} le falta el correo, así que no se le puede avisar.`
+              ? `Al vendedor ${sinCorreo[0].nombre || sinCorreo[0].codigos[0].codigo} le falta el correo, así que no se le puede avisar.`
               : `A ${sinCorreo.length} vendedores con clientes pendientes les falta el correo, así que no se les puede avisar.`}{" "}
             Cargáselo con el lápiz de su fila.
           </Alert></div>
@@ -942,7 +1039,7 @@ export default function EncuestasFabrica() {
 
         {clientes.length === 0 ? (
           <p className="px-5 py-6 text-sm text-ink-muted">
-            {busquedaCliente || filtroEstado !== "TODOS" || mes
+            {busquedaCliente || filtroEstado !== "TODOS" || mes || sucursalGraficos
               ? "Ningún cliente coincide con lo que buscaste."
               : "Todavía no hay clientes cargados. Subí el Excel de fábrica o agregá uno a mano."}
           </p>
@@ -967,7 +1064,7 @@ export default function EncuestasFabrica() {
                 </tr>
               </thead>
               <tbody>
-                {clientes.map((c) => (
+                {clientesDeLaPagina.map((c) => (
                   <Fragment key={c.id}>
                     <tr className="border-b border-gray-100 transition-colors duration-150 hover:bg-accent-light/20">
                       {/* max-w + truncate: un nombre largo se corta con puntos
@@ -1048,6 +1145,27 @@ export default function EncuestasFabrica() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {clientes.length > CLIENTES_POR_PAGINA && (
+          <div className="flex flex-wrap items-center justify-center gap-2 border-t border-gray-200 px-5 py-3">
+            <button
+              onClick={() => setPagina(Math.max(1, paginaActual - 1))}
+              disabled={paginaActual <= 1}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-ink-muted transition-colors hover:bg-gray-50 disabled:opacity-40"
+            >
+              ← Anterior
+            </button>
+            <span className="text-sm text-ink-muted">
+              {desde + 1}–{desde + clientesDeLaPagina.length} de {clientes.length} · página {paginaActual} de {totalPaginas}
+            </span>
+            <button
+              onClick={() => setPagina(Math.min(totalPaginas, paginaActual + 1))}
+              disabled={paginaActual >= totalPaginas}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-ink-muted transition-colors hover:bg-gray-50 disabled:opacity-40"
+            >
+              Siguiente →
+            </button>
           </div>
         )}
       </Card>
@@ -1174,24 +1292,29 @@ export default function EncuestasFabrica() {
           />
         ) : (
           <div className="divide-y divide-gray-100">
-            {vendedores.map((v) => {
+            {gruposVendedores.length === 0 && (
+              <p className="px-5 py-6 text-sm text-ink-muted">No hay vendedores de esa sucursal.</p>
+            )}
+            {gruposVendedores.map((g) => {
               // Dos cosas distintas que antes eran una sola, y confundirlas
               // haría desaparecer clientes de la pantalla apenas se avisa:
               //   sinResponder = todo lo que sigue abierto (pendientes Y avisados).
               //                  Es lo que Calidad tiene que seguir viendo.
               //   sinAvisar    = solo los pendientes. Es lo que entraría en el
               //                  próximo correo, así que manda sobre el botón.
-              const sinResponder = v.pendientes.filter((p) => p.estado !== "RESPONDIO");
-              const sinAvisar = v.pendientes.filter((p) => p.estado === "PENDIENTE");
-              const abierto = abiertos.has(v.id);
+              const sinResponder = g.pendientes.filter((p) => p.estado !== "RESPONDIO");
+              const sinAvisar = g.pendientes.filter((p) => p.estado === "PENDIENTE");
+              const abierto = abiertos.has(g.clave);
+              // El vendedor vende en más de una sucursal (y se miran las dos).
+              const variasSucursales = g.sucursales.length > 1;
               return (
-                <div key={v.id}>
+                <div key={g.clave}>
                   <div className="flex flex-wrap items-center gap-3 px-5 py-3">
                     <button
                       onClick={() =>
                         setAbiertos((s) => {
                           const n = new Set(s);
-                          n.has(v.id) ? n.delete(v.id) : n.add(v.id);
+                          n.has(g.clave) ? n.delete(g.clave) : n.add(g.clave);
                           return n;
                         })
                       }
@@ -1207,10 +1330,14 @@ export default function EncuestasFabrica() {
                       ) : (
                         <span className="w-4" />
                       )}
-                      <span className="font-medium text-ink">{v.nombre || `Vendedor ${v.codigo}`}</span>
+                      <span className="font-medium text-ink">{g.nombre || `Vendedor ${g.codigos[0].codigo}`}</span>
                     </button>
-                    <span className="font-mono text-xs text-ink-muted">{v.codigo}</span>
-                    <Badge tono="gris">{v.sucursal}</Badge>
+                    <span className="font-mono text-xs text-ink-muted">{g.codigos.map((v) => v.codigo).join(" · ")}</span>
+                    {g.sucursales.map((suc) => (
+                      <Badge key={suc} tono="gris">
+                        {suc}
+                      </Badge>
+                    ))}
                     {/* Se muestran los dos números porque responden preguntas
                         distintas: cuántos le faltan avisar (lo que sale en el
                         próximo correo) y cuántos están esperando respuesta. Un
@@ -1224,7 +1351,7 @@ export default function EncuestasFabrica() {
                           : "Todo respondido"}
                     </Badge>
 
-                    {editando === v.id ? (
+                    {editando === g.clave ? (
                       <div className="flex flex-1 flex-wrap items-end gap-2">
                         <Campo etiqueta="Nombre">
                           <Input value={formNombre} onChange={(e) => setFormNombre(e.target.value)} />
@@ -1232,7 +1359,9 @@ export default function EncuestasFabrica() {
                         <Campo etiqueta="Correo">
                           <Input value={formEmail} onChange={(e) => setFormEmail(e.target.value)} type="email" />
                         </Campo>
-                        <button onClick={() => guardarVendedor(v.id)} disabled={guardando} className={claseBoton("primario", "!py-1.5")}>
+                        {/* Se guarda en un código y el backend lo copia a todos los de
+                            la persona: el correo se carga una sola vez. */}
+                        <button onClick={() => guardarVendedor(g.codigos[0].id)} disabled={guardando} className={claseBoton("primario", "!py-1.5")}>
                           Guardar
                         </button>
                         <button onClick={() => setEditando(null)} className={claseBoton("secundario", "!py-1.5")}>
@@ -1241,21 +1370,21 @@ export default function EncuestasFabrica() {
                       </div>
                     ) : (
                       <>
-                        <span className={`flex-1 text-sm ${v.email ? "text-ink-muted" : "text-rojo"}`}>
-                          {v.email || (
+                        <span className={`flex-1 text-sm ${g.email ? "text-ink-muted" : "text-rojo"}`}>
+                          {g.email || (
                             <span className="inline-flex items-center gap-1">
                               <AlertTriangle className="h-3.5 w-3.5" /> falta el correo
                             </span>
                           )}
                         </span>
-                        {v.ultimoAvisoEn && (
-                          <span className="text-xs text-ink-muted">último aviso {fechaCorta(v.ultimoAvisoEn)}</span>
+                        {g.ultimoAvisoEn && (
+                          <span className="text-xs text-ink-muted">último aviso {fechaCorta(g.ultimoAvisoEn)}</span>
                         )}
-                        <button onClick={() => abrirEdicion(v)} className={claseBoton("secundario", "!py-1 !px-2")} title="Editar nombre y correo">
+                        <button onClick={() => abrirEdicion(g)} className={claseBoton("secundario", "!py-1 !px-2")} title="Editar nombre y correo">
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
                         <button
-                          onClick={() => eliminarVendedor(v)}
+                          onClick={() => eliminarVendedor(g)}
                           disabled={guardando}
                           className={claseBoton("secundario", "!py-1 !px-2 !text-red-600")}
                           title={
@@ -1266,12 +1395,12 @@ export default function EncuestasFabrica() {
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
-                        {sinAvisar.length > 0 && v.email && (
+                        {sinAvisar.length > 0 && g.email && (
                           <button
-                            onClick={() => avisar([v.codigo])}
+                            onClick={() => avisar(g.codigos.map((v) => v.codigo))}
                             disabled={avisando || estadoMail?.configurado === false}
                             className={claseBoton("secundario", "!py-1 !px-2")}
-                            title="Avisarle solo a este vendedor"
+                            title="Avisarle a este vendedor: le llega un solo correo con sus pendientes de las dos sucursales"
                           >
                             <Mail className="h-3.5 w-3.5" />
                           </button>
@@ -1286,6 +1415,7 @@ export default function EncuestasFabrica() {
                         <thead>
                           <tr className="text-left text-xs uppercase tracking-wide text-ink-muted">
                             <th className="py-2 pr-4">Cliente</th>
+                            {variasSucursales && <th className="py-2 pr-4">Sucursal</th>}
                             <th className="py-2 pr-4">Correo</th>
                             <th className="py-2 pr-4">Dominio</th>
                             <th className="py-2 pr-4">Canal</th>
@@ -1308,6 +1438,7 @@ export default function EncuestasFabrica() {
                                   </span>
                                 )}
                               </td>
+                              {variasSucursales && <td className="py-2 pr-4 text-ink-muted">{p.sucursal}</td>}
                               <td className="py-2 pr-4 text-ink-muted">{p.email}</td>
                               <td className="py-2 pr-4 font-mono text-xs">{p.dominio || "—"}</td>
                               <td className="py-2 pr-4 text-ink-muted">{p.canalVentas || "—"}</td>

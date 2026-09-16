@@ -1,4 +1,5 @@
 import { EstadoEncuestaFabrica, TipoUpload, UploadStatus } from "@prisma/client";
+import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { abrirWorkbook } from "./excel.service";
 import {
@@ -11,10 +12,12 @@ import {
 import { ACCIONES } from "./audit.service";
 import {
   ArchivoEncuestaVW,
+  NUMEROS_DE_MOSTRADOR,
   parsearArchivoEncuestaVW,
   periodoDeFecha,
   periodoDeFila,
   resumirPeriodosVW,
+  sucursalDeCodigoVendedor,
 } from "./encuesta-vw.service";
 
 /**
@@ -149,25 +152,29 @@ async function guardar(
   // Se crean los que falten y se completa el nombre si el archivo lo trae. NO se
   // pisa el mail ni un nombre cargado a mano: el Excel de fábrica no los tiene y
   // sobreescribirlos borraría el trabajo de Calidad en cada carga.
+  // La sucursal de una fila: la del PREFIJO de su código de vendedor, que es la
+  // regla estricta (1035 = Mendoza, 1036 = San Juan; ver
+  // marca.refuerzo.sucursalPorCodigoVendedor). La hoja, la columna Suc. Cpa. y el
+  // prefijo a secas quedan solo para un prefijo que no es de ninguna sucursal
+  // conocida, que no debería pasar.
+  //
+  // En el formato interno esto no pierde la sucursal de la venta: el lector ya
+  // armó el código con el prefijo de Suc. Cpa. (un mendocino que vendió en San
+  // Juan llega acá como 1036 + su número).
+  const sucursalDeFila = (f: ArchivoEncuestaVW["filas"][number]): string =>
+    sucursalDeCodigoVendedor(f.codigoVendedor) ??
+    archivo.hojas.find((h) => h.nombre === f.hoja)?.nombreSucursal ??
+    f.sucursalVenta ??
+    f.codigoSucursal;
+
   const porCodigo = new Map<string, { sucursal: string; nombre: string | null }>();
   for (const f of archivo.filas) {
     const previo = porCodigo.get(f.codigoVendedor);
     porCodigo.set(f.codigoVendedor, {
-      // Sucursal del CLIENTE = donde se hizo la venta, no de dónde es el vendedor.
-      // En el archivo de fábrica eso lo dice la hoja; en el interno, la columna
-      // Suc. Cpa. El código del vendedor queda como último recurso.
-      sucursal:
-        archivo.hojas.find((h) => h.nombre === f.hoja)?.nombreSucursal ??
-        f.sucursalVenta ??
-        f.codigoSucursal,
+      sucursal: sucursalDeFila(f),
       nombre: f.nombreVendedor ?? previo?.nombre ?? null,
     });
   }
-
-  // El 002 de cada sucursal es el MOSTRADOR (vende todos los planes de ahorro),
-  // no una persona: el 1035002 y el 1036002 son dos mostradores distintos y no
-  // hay que confundirlos. Cualquier otro número sí identifica a la persona.
-  const NUMEROS_DE_MOSTRADOR = new Set([2]);
 
   let vendedoresNuevos = 0;
   let vendedoresActualizados = 0;
@@ -216,9 +223,15 @@ async function guardar(
       continue;
     }
     idPorCodigo.set(codigo, existente.id);
-    // Solo se completa lo que falta; nunca se pisa lo que ya había.
-    if (!existente.nombre && datos.nombre) {
-      await prisma.vendedorVW.update({ where: { id: existente.id }, data: { nombre: datos.nombre } });
+    // Solo se completa lo que falta; nunca se pisa lo que ya había. La sucursal
+    // es la excepción: no la carga nadie a mano, sale del código, y si quedó mal
+    // de antes (un 1036 figurando en Mendoza) se corrige acá.
+    const cambios = {
+      ...(!existente.nombre && datos.nombre ? { nombre: datos.nombre } : {}),
+      ...(sucursalDeCodigoVendedor(codigo) && existente.sucursal !== datos.sucursal ? { sucursal: datos.sucursal } : {}),
+    };
+    if (Object.keys(cambios).length > 0) {
+      await prisma.vendedorVW.update({ where: { id: existente.id }, data: cambios });
       vendedoresActualizados++;
     }
   }
@@ -237,7 +250,7 @@ async function guardar(
       canalVentas: f.canalVentas,
       area: f.area,
       vendedorId,
-      sucursal: archivo.hojas.find((h) => h.nombre === f.hoja)?.nombreSucursal ?? f.codigoSucursal,
+      sucursal: sucursalDeFila(f),
       observacionesFabrica: f.observacionesFabrica,
       vistaEnUploadId: upload.id,
     };
@@ -333,4 +346,98 @@ async function guardar(
     filasObservadasPorFabrica: archivo.filas.filter((f) => f.observacionesFabrica.length > 0).length,
     avisos: archivo.avisos,
   };
+}
+
+/**
+ * Deja la sucursal de vendedores y clientes como dice su código (regla estricta:
+ * 1035 = Mendoza, 1036 = San Juan; ver marca.refuerzo.sucursalPorCodigoVendedor).
+ *
+ * POR QUÉ CORRE AL ARRANCAR. Hasta el 16-09-2026 la sucursal salía del nombre de
+ * la hoja del Excel: quedaron vendedores 1036 figurando en Mendoza, y los clientes
+ * del formato interno quedaron con "1035" o "1036" a secas, que ningún filtro por
+ * provincia reconocía. Corre siempre y, una vez corregido, no toca nada. En las
+ * marcas sin este Excel el mapa está vacío y no hace nada.
+ *
+ * UN LÍMITE que no se puede salvar desde acá: de esos clientes del formato interno
+ * nunca se guardó la columna Suc. Cpa. Un mendocino que vendió en San Juan quedó
+ * colgado de su 1035 y pasa a Mendoza. Lo que los ubica bien es volver a subir el
+ * último Excel interno (la carga reasigna vendedor y sucursal por chasis, sin tocar
+ * el estado). `internosSinSucursalDeVenta` cuenta cuántos había, para el log.
+ *
+ * Un código con un prefijo que no es de ninguna sucursal conocida no se toca.
+ */
+export async function corregirSucursalesPorCodigo(): Promise<{
+  vendedores: number;
+  clientes: number;
+  internosSinSucursalDeVenta: number;
+}> {
+  const prefijos = Object.keys(marca.refuerzo.sucursalPorCodigoVendedor);
+  // Se cuentan ANTES de corregir: después ya no se distinguen de los demás.
+  const internosSinSucursalDeVenta =
+    prefijos.length === 0
+      ? 0
+      : await prisma.encuestaFabricaVW.count({ where: { origenFormato: "INTERNO", sucursal: { in: prefijos } } });
+  let vendedores = 0;
+  let clientes = 0;
+  for (const [prefijo, nombre] of Object.entries(marca.refuerzo.sucursalPorCodigoVendedor)) {
+    const sucursal = nombre.toUpperCase();
+    vendedores += (
+      await prisma.vendedorVW.updateMany({
+        where: { codigoSucursal: prefijo, NOT: { sucursal } },
+        data: { sucursal },
+      })
+    ).count;
+    clientes += (
+      await prisma.encuestaFabricaVW.updateMany({
+        where: { vendedor: { codigoSucursal: prefijo }, NOT: { sucursal } },
+        data: { sucursal },
+      })
+    ).count;
+  }
+  return { vendedores, clientes, internosSinSucursalDeVenta };
+}
+
+/**
+ * Completa el nombre y el correo que le faltan a un código con los de su otro
+ * código de la MISMA persona (el 1036078 con los del 1035078).
+ *
+ * POR QUÉ. Desde el 16-09-2026 el nombre y el correo son de la persona y se guardan
+ * en todos sus códigos, pero hasta ese día se cargaban de a uno: quedaron códigos
+ * con correo y su gemelo sin. Sin esto, el aviso o el tablero podían tratar a esa
+ * persona como "sin correo" según qué código mirasen.
+ *
+ * Solo COMPLETA lo vacío: nunca pisa un valor cargado. Si los dos códigos tienen
+ * valores distintos no se toca nada y se devuelve para el log. El mostrador (002) es
+ * uno por sucursal y no se empareja. Idempotente; en Ford no hay vendedores VW.
+ */
+export async function completarDatosDePersonas(): Promise<{ completados: number; distintos: string[] }> {
+  const todos = await prisma.vendedorVW.findMany({
+    select: { id: true, codigo: true, numero: true, nombre: true, email: true },
+    orderBy: { codigo: "asc" },
+  });
+  const porNumero = new Map<number, typeof todos>();
+  for (const v of todos) {
+    if (NUMEROS_DE_MOSTRADOR.has(v.numero)) continue;
+    porNumero.set(v.numero, [...(porNumero.get(v.numero) ?? []), v]);
+  }
+
+  let completados = 0;
+  const distintos: string[] = [];
+  for (const grupo of porNumero.values()) {
+    if (grupo.length < 2) continue;
+    for (const campo of ["email", "nombre"] as const) {
+      const valores = [...new Set(grupo.map((v) => (v[campo] ?? "").trim()).filter(Boolean))];
+      if (valores.length > 1) {
+        distintos.push(`${grupo.map((v) => v.codigo).join("/")} ${campo}: ${valores.join(" | ")}`);
+        continue;
+      }
+      if (valores.length === 0) continue;
+      const vacios = grupo.filter((v) => !(v[campo] ?? "").trim()).map((v) => v.id);
+      if (vacios.length === 0) continue;
+      completados += (
+        await prisma.vendedorVW.updateMany({ where: { id: { in: vacios } }, data: { [campo]: valores[0] } })
+      ).count;
+    }
+  }
+  return { completados, distintos };
 }

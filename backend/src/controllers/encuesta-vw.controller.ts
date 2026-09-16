@@ -4,7 +4,15 @@ import { EstadoEncuestaFabrica } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { marca, mensajeSucursalInvalida, sucursalCanonica, SUCURSAL_GENERAL } from "../config/marca";
 import { abrirWorkbook, borrarArchivoTemporal, guardarArchivoTemporal, leerArchivoTemporal } from "../services/excel.service";
-import { nombrePeriodo, parsearArchivoEncuestaVW, resumirPeriodosVW } from "../services/encuesta-vw.service";
+import {
+  clavePersonaVendedor,
+  NUMEROS_DE_MOSTRADOR,
+  nombrePeriodo,
+  parsearArchivoEncuestaVW,
+  resumirPeriodosVW,
+  sucursalDeCodigoVendedor,
+} from "../services/encuesta-vw.service";
+import { claveNormalizada } from "../services/normalizacion.service";
 import { importarEncuestaFabricaVW } from "../services/importacion-encuesta-vw.service";
 import {
   convertirInternoAArchivo,
@@ -73,7 +81,7 @@ export async function previewEncuestaVW(req: Request, res: Response) {
       hojas: [],
       vendedores: [...porVendedor.entries()].map(([codigo, clientes]) => {
         const v = vendedores.find((x) => x.codigo === codigo);
-        return { codigo, nombre: v?.nombre ?? null, sucursal: v?.sucursal ?? "", clientes };
+        return { codigo, nombre: v?.nombre ?? null, sucursal: sucursalDeCodigoVendedor(codigo) ?? v?.sucursal ?? "", clientes };
       }),
       vendedoresSinNombre: [],
       observadasPorFabrica: [],
@@ -102,7 +110,11 @@ export async function previewEncuestaVW(req: Request, res: Response) {
     porVendedor.set(f.codigoVendedor, {
       codigo: f.codigoVendedor,
       nombre: f.nombreVendedor ?? previo?.nombre ?? null,
-      sucursal: archivo.hojas.find((h) => h.nombre === f.hoja)?.nombreSucursal ?? f.codigoSucursal,
+      // La misma regla estricta que la carga: la sucursal la dice el código.
+      sucursal:
+        sucursalDeCodigoVendedor(f.codigoVendedor) ??
+        archivo.hojas.find((h) => h.nombre === f.hoja)?.nombreSucursal ??
+        f.codigoSucursal,
       clientes: (previo?.clientes ?? 0) + 1,
     });
   }
@@ -208,6 +220,10 @@ export async function listarEncuestaVW(req: Request, res: Response) {
     select: {
       id: true,
       codigo: true,
+      // Para juntar en pantalla los códigos de una misma persona (1035078 y
+      // 1036078) cuando se miran las dos provincias.
+      numero: true,
+      codigoSucursal: true,
       nombre: true,
       email: true,
       sucursal: true,
@@ -234,6 +250,9 @@ export async function listarEncuestaVW(req: Request, res: Response) {
           // El mes del cliente para el seguimiento. Sin fechaDominio, es estimado.
           fechaDominio: true,
           periodo: true,
+          // La del CLIENTE (sale del código con el que se vendió): es la que usa
+          // el filtro de sucursal de la pantalla.
+          sucursal: true,
           estado: true,
           avisadoEn: true,
           respondioEn: true,
@@ -257,16 +276,21 @@ export async function listarEncuestaVW(req: Request, res: Response) {
   // contestaron, así que el seguimiento se cortaba al responder.
   const todos = vendedores.flatMap((v) => v.pendientes);
 
+  // Los conteos de vendedores son de PERSONAS: el 1035078 y el 1036078 cuentan uno
+  // solo, y el correo cargado en cualquiera de sus códigos le sirve a los dos.
+  const personasConPendientes = new Set(
+    vendedores
+      .filter((v) => v.pendientes.some((p) => p.estado === EstadoEncuestaFabrica.PENDIENTE))
+      .map(clavePersonaVendedor)
+  );
+  const personasConCorreo = new Set(vendedores.filter((v) => v.email).map(clavePersonaVendedor));
+
   res.json({
-    data: vendedores,
+    data: vendedores.map((v) => ({ ...v, persona: clavePersonaVendedor(v) })),
     resumen: {
       totalPendientes,
-      vendedoresConPendientes: vendedores.filter((v) =>
-        v.pendientes.some((p) => p.estado === EstadoEncuestaFabrica.PENDIENTE)
-      ).length,
-      sinCorreo: vendedores.filter(
-        (v) => !v.email && v.pendientes.some((p) => p.estado === EstadoEncuestaFabrica.PENDIENTE)
-      ).length,
+      vendedoresConPendientes: personasConPendientes.size,
+      sinCorreo: [...personasConPendientes].filter((p) => !personasConCorreo.has(p)).length,
       // Estos tres solo tienen sentido cuando se piden los respondidos: si no, el
       // total es igual a los pendientes.
       totalClientes: todos.length,
@@ -311,12 +335,27 @@ export async function editarVendedorVW(req: Request, res: Response) {
     return res.status(400).json({ message: "Indicá al menos un campo para actualizar." });
   }
 
-  const actualizado = await prisma.vendedorVW.update({ where: { id: existente.id }, data: datos });
+  // Nombre, correo y activo son de la PERSONA, no del código: el 1035078 y el
+  // 1036078 son el mismo vendedor en dos sucursales, y el correo se carga una sola
+  // vez (Calidad de VW, 16-09-2026). Se guardan en todos sus códigos. El mostrador
+  // (002) es uno por sucursal y queda solo.
+  const codigosDeLaPersona = NUMEROS_DE_MOSTRADOR.has(existente.numero)
+    ? [existente.codigo]
+    : (
+        await prisma.vendedorVW.findMany({ where: { numero: existente.numero }, select: { codigo: true } })
+      ).map((v) => v.codigo);
+  await prisma.vendedorVW.updateMany({ where: { codigo: { in: codigosDeLaPersona } }, data: datos });
+  const actualizado = await prisma.vendedorVW.findUniqueOrThrow({ where: { id: existente.id } });
   auditar(req, {
     accion: ACCIONES.VENDEDOR_VW_EDITADO,
     entidad: "VendedorVW",
     entidadId: actualizado.id,
-    detalles: { codigo: actualizado.codigo, antes: { nombre: existente.nombre, email: existente.email, activo: existente.activo }, despues: datos },
+    detalles: {
+      codigo: actualizado.codigo,
+      codigos: codigosDeLaPersona,
+      antes: { nombre: existente.nombre, email: existente.email, activo: existente.activo },
+      despues: datos,
+    },
   });
   res.json({ message: `Vendedor ${actualizado.nombre || actualizado.codigo} actualizado.`, data: actualizado });
 }
@@ -346,16 +385,37 @@ export async function crearVendedorVW(req: Request, res: Response) {
   if (existente) {
     return res.status(409).json({ message: `Ya existe un vendedor con el código ${codigo}.` });
   }
+  // Regla estricta: la sucursal la dice el código. Si se eligió otra, se avisa en
+  // vez de guardar un 1036 en Mendoza, que es justo lo que había que dejar de ver.
+  const sucursalDelCodigo = sucursalDeCodigoVendedor(codigo);
+  if (sucursalDelCodigo && claveNormalizada(sucursalDelCodigo) !== claveNormalizada(sucursal)) {
+    return res.status(400).json({
+      message: `El código ${codigo} es de ${sucursalCanonica(sucursalDelCodigo) ?? sucursalDelCodigo}: los ${codigo.slice(0, 4)} son siempre de esa sucursal.`,
+    });
+  }
+  const numero = Number(codigo.slice(4));
+  // Si la persona ya tiene su código en la otra sucursal, hereda nombre y correo
+  // (se cargan una sola vez). El mostrador es uno por sucursal y no hereda nada.
+  const gemelo = NUMEROS_DE_MOSTRADOR.has(numero)
+    ? null
+    : await prisma.vendedorVW.findFirst({ where: { numero }, orderBy: { codigo: "asc" } });
   const creado = await prisma.vendedorVW.create({
     data: {
       codigo,
       codigoSucursal: codigo.slice(0, 4),
-      numero: Number(codigo.slice(4)),
-      sucursal: sucursal.toUpperCase(),
-      nombre: nombre || null,
-      email: email || null,
+      numero,
+      sucursal: (sucursalDelCodigo ?? sucursal).toUpperCase(),
+      nombre: nombre || gemelo?.nombre || null,
+      email: email || gemelo?.email || null,
     },
   });
+  // Un correo o nombre nuevo cargado acá también vale para su otro código.
+  if (gemelo && (nombre || email)) {
+    await prisma.vendedorVW.updateMany({
+      where: { numero, codigo: { not: codigo } },
+      data: { ...(nombre ? { nombre } : {}), ...(email ? { email } : {}) },
+    });
+  }
   auditar(req, { accion: ACCIONES.VENDEDOR_VW_CREADO, entidad: "VendedorVW", entidadId: creado.id, detalles: { codigo } });
   res.status(201).json({ message: `Vendedor ${creado.nombre || creado.codigo} creado.`, data: creado });
 }

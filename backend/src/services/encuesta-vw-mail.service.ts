@@ -12,6 +12,7 @@ import { EstadoEncuestaFabrica } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { env } from "../config/env";
 import { marca } from "../config/marca";
+import { clavePersonaVendedor, NUMEROS_DE_MOSTRADOR } from "./encuesta-vw.service";
 import { enviarMail, MailError } from "./mail.service";
 
 function fechaCorta(f: Date | null | undefined): string {
@@ -103,15 +104,30 @@ export interface ResultadoAvisoVendedor {
  * dato en vez de dejarlos afuera en silencio.
  */
 export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Promise<ResultadoAvisoVendedor[]> {
+  // Avisarle a UN código es avisarle a la persona: se suman sus otros códigos. Si
+  // no, con el filtro de sucursal puesto el botón del renglón mandaba solo los
+  // clientes de esa sucursal y los de la otra le llegaban en un segundo mail. El
+  // mostrador (002) no se amplía: es uno por sucursal.
+  let codigos = opciones?.codigos;
+  if (codigos?.length) {
+    const elegidos = await prisma.vendedorVW.findMany({ where: { codigo: { in: codigos } }, select: { numero: true } });
+    const numeros = [...new Set(elegidos.map((v) => v.numero).filter((n) => !NUMEROS_DE_MOSTRADOR.has(n)))];
+    if (numeros.length) {
+      const gemelos = await prisma.vendedorVW.findMany({ where: { numero: { in: numeros } }, select: { codigo: true } });
+      codigos = [...new Set([...codigos, ...gemelos.map((g) => g.codigo)])];
+    }
+  }
+
   const vendedores = await prisma.vendedorVW.findMany({
     where: {
       activo: true,
-      ...(opciones?.codigos?.length ? { codigo: { in: opciones.codigos } } : {}),
+      ...(codigos?.length ? { codigo: { in: codigos } } : {}),
       pendientes: { some: { estado: EstadoEncuestaFabrica.PENDIENTE } },
     },
     select: {
       id: true,
       codigo: true,
+      numero: true,
       nombre: true,
       email: true,
       pendientes: {
@@ -127,13 +143,39 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
     orderBy: { codigo: "asc" },
   });
 
+  // UN correo por PERSONA, no por código (Calidad de VW, 16-09-2026): el 1035078 y
+  // el 1036078 son el mismo vendedor en dos sucursales y recibe un solo mail con
+  // los clientes de las dos. El mostrador (002) es uno por sucursal y va aparte.
+  const porPersona = new Map<string, typeof vendedores>();
+  for (const v of vendedores) {
+    const clave = clavePersonaVendedor(v);
+    porPersona.set(clave, [...(porPersona.get(clave) ?? []), v]);
+  }
+
+  // El nombre y el correo se buscan en TODOS los códigos de la persona, no solo en
+  // los que hoy tienen pendientes: el correo pudo haber quedado cargado en el código
+  // cuyos clientes ya se avisaron.
+  const datosDePersona = await prisma.vendedorVW.findMany({
+    where: { numero: { in: [...new Set(vendedores.map((v) => v.numero).filter((n) => !NUMEROS_DE_MOSTRADOR.has(n)))] } },
+    select: { numero: true, nombre: true, email: true },
+    orderBy: { codigo: "asc" },
+  });
+
   const resultados: ResultadoAvisoVendedor[] = [];
 
-  for (const v of vendedores) {
-    const nombre = v.nombre || `Vendedor ${v.codigo}`;
-    const base = { codigo: v.codigo, vendedor: nombre, email: v.email, pendientes: v.pendientes.length };
+  for (const grupo of porPersona.values()) {
+    const codigosDelGrupo = grupo.map((v) => v.codigo);
+    const hermanos = NUMEROS_DE_MOSTRADOR.has(grupo[0].numero)
+      ? []
+      : datosDePersona.filter((d) => d.numero === grupo[0].numero);
+    const nombre = [...grupo, ...hermanos].find((v) => v.nombre)?.nombre || `Vendedor ${codigosDelGrupo[0]}`;
+    const email = [...grupo, ...hermanos].find((v) => v.email?.trim())?.email?.trim() ?? null;
+    const pendientes = grupo
+      .flatMap((v) => v.pendientes)
+      .sort((a, b) => (a.fechaEntrega?.getTime() ?? 0) - (b.fechaEntrega?.getTime() ?? 0));
+    const base = { codigo: codigosDelGrupo.join(" · "), vendedor: nombre, email, pendientes: pendientes.length };
 
-    if (!v.email?.trim()) {
+    if (!email) {
       resultados.push({
         ...base,
         enviado: false,
@@ -142,7 +184,7 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
       continue;
     }
 
-    const clientes: ClientePendiente[] = v.pendientes.map((p) => ({
+    const clientes: ClientePendiente[] = pendientes.map((p) => ({
       nombre: p.nombreCliente,
       email: p.email,
       dominio: p.dominio || "-",
@@ -153,7 +195,7 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
     const { html, texto } = armarCuerpo(nombre, clientes);
     try {
       await enviarMail({
-        para: v.email,
+        para: email,
         asunto: `Encuestas de ${marca.nombre} sin responder: ${clientes.length} cliente(s) tuyos`,
         // Calidad va en copia de todos los avisos a vendedores.
         copia: env.mail.copiaAvisos,
@@ -165,12 +207,12 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
       // sin que nadie los haya visto nunca: desaparecerían del próximo mail y del
       // radar, que es la peor falla posible en esta pantalla.
       const ahora = new Date();
-      await prisma.vendedorVW.update({ where: { id: v.id }, data: { ultimoAvisoEn: ahora } });
+      await prisma.vendedorVW.updateMany({ where: { id: { in: grupo.map((v) => v.id) } }, data: { ultimoAvisoEn: ahora } });
       await prisma.encuestaFabricaVW.updateMany({
         // Por id y no por "todos los pendientes de este vendedor": entre que se
         // armó la lista y salió el correo puede haber entrado un cliente nuevo, y
         // ese no estaba en el mail. Marcarlo sería perderlo.
-        where: { id: { in: v.pendientes.map((p) => p.id) } },
+        where: { id: { in: pendientes.map((p) => p.id) } },
         data: { estado: EstadoEncuestaFabrica.AVISADO, avisadoEn: ahora },
       });
       resultados.push({ ...base, enviado: true, error: null });
