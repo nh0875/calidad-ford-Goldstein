@@ -142,12 +142,13 @@ function Guardar-Estado($estado) {
     try { $estado | ConvertTo-Json | Set-Content -Path $ArchivoEstado -Encoding UTF8 } catch { }
 }
 
-function Mandar-Correo([string]$asunto, [string]$cuerpo) {
+function Mandar-Correo([string]$asunto, [string]$cuerpo, [string]$paraForzado) {
     $servidor = Leer-EnvProd "MAIL_HOST";     if (-not $servidor) { $servidor = "smtp.gmail.com" }
     $puertoM  = Leer-EnvProd "MAIL_PUERTO";   if (-not $puertoM)  { $puertoM = "465" }
     $usuario  = Leer-EnvProd "MAIL_USUARIO"
     $clave    = Leer-EnvProd "MAIL_PASSWORD"
-    $para     = Leer-EnvProd "ALERTA_EMAIL"
+    $para     = $paraForzado
+    if (-not $para) { $para = Leer-EnvProd "ALERTA_EMAIL" }
     if (-not $para) { $para = Leer-EnvProd "MAIL_COPIA_AVISOS" }
     if (-not $para) { $para = $usuario }
     if (-not $usuario -or -not $clave -or -not $para) { return $false }
@@ -163,6 +164,57 @@ function Mandar-Correo([string]$asunto, [string]$cuerpo) {
         Log "ERROR" ("No se pudo mandar el aviso por correo: " + $_.Exception.Message)
         return $false
     }
+}
+
+# ---------------------------------------------------------------------------
+#  Respaldo diario a OneDrive
+# ---------------------------------------------------------------------------
+#  POR QUE LO DISPARA EL VIGILANTE Y NO UNA TAREA PROGRAMADA. El respaldo diario
+#  existe desde agosto y NUNCA corrio solo: en Ford habia que registrar una tarea
+#  a mano (nadie lo hizo: 19 dias sin respaldo, con el estado en verde porque era
+#  la foto vieja del ultimo respaldo manual) y en Volkswagen el bucle lo saltea si
+#  falta un archivo de configuracion que solo deja ese mismo instalador.
+#
+#  El vigilante, en cambio, ya corre cada 5 minutos en LAS DOS PCs, en la sesion
+#  del usuario -que es la unica que llega a Docker- y se actualiza solo con el
+#  pull de las 13:00. Enganchado aca, el respaldo empieza a correr sin que nadie
+#  instale nada y sin permisos de administrador.
+#
+#  A las 12:00, una hora ANTES de la actualizacion automatica: si una
+#  actualizacion sale mal, el respaldo del dia ya esta hecho y es anterior al
+#  problema. Si a esa hora la PC estaba apagada, se reintenta hasta las 19:00.
+$ScriptRespaldo     = Join-Path $PSScriptRoot "Respaldo-Calidad.ps1"
+$EstadoRespaldo     = Join-Path $ProjectDir "Respaldos\ultimo-respaldo.json"
+$AvisoRespaldo      = Join-Path $PSScriptRoot "aviso-respaldo.txt"
+$HoraRespaldo       = 12
+$HoraLimiteRespaldo = 19   # despues de esta hora ya no se intenta, y se avisa si falto
+$HorasSinRespaldo   = 72   # tolera un fin de semana con las PCs apagadas
+
+function Leer-EstadoRespaldo {
+    if (-not (Test-Path $EstadoRespaldo)) { return $null }
+    # El archivo lo escribe Respaldo-Calidad.ps1 sin BOM, pero uno viejo puede
+    # tenerlo: se lo saca antes de parsear o ConvertFrom-Json se queja.
+    try {
+        $crudo = (Get-Content $EstadoRespaldo -Raw -Encoding UTF8) -replace "^\uFEFF", ""
+        return ($crudo | ConvertFrom-Json)
+    } catch { return $null }
+}
+
+function Fecha-De([object]$estado) {
+    if (-not $estado -or -not $estado.fecha) { return $null }
+    try { return [datetime]::Parse($estado.fecha) } catch { return $null }
+}
+
+# A quien avisarle si el respaldo falta o falla. Decision del dueno (17-09-2026):
+# a la usuaria de la PC, que es quien puede fijarse si OneDrive esta con la sesion
+# iniciada. Se puede cambiar por PC con RESPALDO_ALERTA_EMAIL en .env.prod.
+function Destinatario-Respaldo {
+    $para = Leer-EnvProd "RESPALDO_ALERTA_EMAIL"
+    if ($para) { return $para }
+    # MARCA puede no estar escrita en el .env.prod de Ford: el compose asume FORD
+    # cuando falta, y aca se hace lo mismo para no quedarnos sin destinatario.
+    if ((Leer-EnvProd "MARCA").ToUpper() -eq "VOLKSWAGEN") { return "ldip@mariogoldsteinsa.com.ar" }
+    return "yandino@mariogoldsteinsa.com.ar"
 }
 
 # ---------------------------------------------------------------------------
@@ -529,6 +581,116 @@ try {
         for ($k = 0; $k -lt 8 -and -not $ok; $k++) { Start-Sleep -Seconds 5; $ok = Tunel-Ok }
         if ($ok) { Log-Accion "Tunel de ngrok activo en https://$NgrokDomain" }
         else { Log-Error "ngrok se lanzo pero el tunel no responde tras 40s. Revisar el token/dominio (¿otra PC usando el mismo token?)." }
+    }
+
+    # ---------- 4.5) Respaldo diario a OneDrive ----------
+    # Todo adentro de su propio try/catch: un problema del respaldo no puede
+    # dejar sin vigilante a las dos PCs, que es de lo que depende que el sistema
+    # se levante.
+    try {
+        $ahora      = Get-Date
+        $estadoResp = Leer-EstadoRespaldo
+        $fechaResp  = Fecha-De $estadoResp
+        $hechoHoy   = ($estadoResp -and $estadoResp.ok -and $fechaResp -and $fechaResp.Date -eq $ahora.Date)
+        # Si hace un rato que se intento y salio mal, no se reintenta en la pasada
+        # siguiente: se espera a la hora siguiente. Si no, un OneDrive cerrado
+        # haria un dump cada 5 minutos toda la tarde.
+        $reciente   = ($fechaResp -and ((($ahora - $fechaResp).TotalMinutes) -lt 55))
+
+        if ((Test-Path $ScriptRespaldo) -and -not $hechoHoy -and -not $reciente -and
+            $ahora.Hour -ge $HoraRespaldo -and $ahora.Hour -lt $HoraLimiteRespaldo) {
+            Log-Accion "Toca el respaldo diario: corriendo Respaldo-Calidad.ps1."
+            # El candado del vigilante se da por huerfano a los 20 minutos, y un
+            # dump grande mas la copia a OneDrive puede tardar mas que eso: si no
+            # se refresca, la pasada siguiente entra en paralelo y se ponen a
+            # reiniciar contenedores dos vigilantes a la vez.
+            try { (Get-Item $lock).LastWriteTime = Get-Date } catch { }
+            # Sincronico y con & : nunca Start-Process. En Ford el vigilante es
+            # hijo de una tarea programada, y Windows se lleva a los hijos cuando
+            # la tarea termina (es el motivo por el que ngrok necesito tarea propia).
+            & powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden `
+                -ExecutionPolicy Bypass -File $ScriptRespaldo -SoloSiFalta 2>&1 | Out-Null
+            try { (Get-Item $lock).LastWriteTime = Get-Date } catch { }
+
+            $estadoResp = Leer-EstadoRespaldo
+            $fechaResp  = Fecha-De $estadoResp
+            if ($estadoResp -and $estadoResp.ok) {
+                Log "ACCION" ("Respaldo diario OK: {0} -> {1}" -f $estadoResp.archivo, ($estadoResp.destinosOffsite -join ", "))
+            } else {
+                $porque = if ($estadoResp -and $estadoResp.error) { $estadoResp.error } else { "no quedo estado del respaldo (ver Respaldos\respaldo.log)" }
+                # Se anota, pero NO con Log-Error: el circuito de correo del
+                # vigilante avisa de otra cosa (el sistema caido) y a otra
+                # direccion. El respaldo tiene su propio aviso, mas abajo.
+                Log "ERROR" ("El respaldo diario no salio de esta PC: " + $porque)
+            }
+        }
+
+        # Aviso por correo: UNA vez por dia, a la tarde, si el ultimo respaldo
+        # bueno quedo viejo. Antes de esto, que el respaldo faltara no se lo decia
+        # nadie a nadie: se descubrio 19 dias despues, mirando un archivo.
+        # El aviso se evalua despues de las 19:00 (ya paso toda la ventana de
+        # reintentos) y tambien TEMPRANO A LA MAÑANA, antes de las 12: si la PC se
+        # apaga a las 18:30 los viernes, con la ventana de la tarde sola no saldria
+        # nunca un correo y volveria el silencio que esto viene a romper.
+        if (($ahora.Hour -ge $HoraLimiteRespaldo) -or ($ahora.Hour -lt $HoraRespaldo)) {
+            $horas = 9999
+            if ($estadoResp -and $estadoResp.ok -and $fechaResp) { $horas = ($ahora - $fechaResp).TotalHours }
+            if ($horas -gt $HorasSinRespaldo) {
+                $avisado = ""
+                if (Test-Path $AvisoRespaldo) { try { $avisado = (Get-Content $AvisoRespaldo -Raw -ErrorAction SilentlyContinue).Trim() } catch { } }
+                if ($avisado -ne $ahora.ToString("yyyy-MM-dd")) {
+                    $detalle = if ($estadoResp -and $estadoResp.error) { $estadoResp.error } else { "no hay ningun registro de respaldo en esta PC." }
+                    # OJO: la fecha del estado puede ser la de un intento FALLIDO de
+                    # hoy. Como "ultimo respaldo que salio" solo vale una fecha con
+                    # ok=true; si no, se usa el sello que el respaldo escribe solo
+                    # cuando la copia sale de la PC. Poner la del intento fallido
+                    # era mandar un mail con una fecha de hoy que tranquiliza y no
+                    # corresponde: el mismo falso verde que esto viene a terminar.
+                    $cuando = "nunca"
+                    if ($estadoResp -and $estadoResp.ok -and $fechaResp) {
+                        $cuando = $fechaResp.ToString("dd/MM/yyyy HH:mm")
+                    } elseif (Test-Path (Join-Path $PSScriptRoot "ultimo-respaldo.txt")) {
+                        try {
+                            $t = (Get-Content (Join-Path $PSScriptRoot "ultimo-respaldo.txt") -Raw -ErrorAction SilentlyContinue).Trim()
+                            if ($t) { $cuando = $t }
+                        } catch { }
+                    }
+                    $ultimoIntento = if ($fechaResp) { $fechaResp.ToString("dd/MM/yyyy HH:mm") } else { "sin registro" }
+                    $cuerpoR = @"
+El Sistema de Calidad no esta pudiendo guardar la copia de seguridad diaria.
+
+Equipo        : $env:COMPUTERNAME
+Usuario       : $env:USERNAME
+Ultimo respaldo que salio de la PC: $cuando
+Ultimo intento: $ultimoIntento
+Motivo        : $detalle
+
+Que hacer:
+  1. Fijarse que OneDrive este abierto y con la sesion iniciada (el icono de la
+     nube al lado del reloj, sin cruz roja ni "Iniciar sesion").
+  2. Dejar la PC prendida al mediodia: el respaldo se hace a las 12:00 y
+     reintenta hasta las 19:00.
+  3. Si sigue igual, mandarle esto a Ignacio junto con el archivo
+     $ProjectDir\Respaldos\respaldo.log
+
+Mientras tanto la base sigue teniendo una copia en esta misma PC, pero si el
+disco falla se pierde con ella.
+"@
+                    if (Mandar-Correo "[Calidad $env:COMPUTERNAME] Falta la copia de seguridad" $cuerpoR (Destinatario-Respaldo)) {
+                        Log "ACCION" "Se aviso por correo que falta el respaldo diario."
+                    }
+                    # Se anota igual aunque el correo no salga: si no, cada pasada
+                    # reintentaria mandarlo hasta las 24:00.
+                    try { Set-Content -Path $AvisoRespaldo -Value $ahora.ToString("yyyy-MM-dd") -Encoding UTF8 } catch { }
+                }
+            } elseif (Test-Path $AvisoRespaldo) {
+                # Volvio a andar: se limpia la marca para que el proximo problema
+                # vuelva a avisar.
+                Remove-Item $AvisoRespaldo -Force -ErrorAction SilentlyContinue
+            }
+        }
+    } catch {
+        Log "ERROR" ("Fallo el bloque del respaldo diario: " + $_.Exception.Message)
     }
 
     # ---------- 5) Latido: una linea por dia si todo esta OK ----------

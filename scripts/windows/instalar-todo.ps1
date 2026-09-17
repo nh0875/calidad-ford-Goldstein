@@ -480,23 +480,32 @@ Write-Host ""
 
 # 3) EL RESPALDO A LA NUBE.
 #
-# Este instalador NO lo registra, y no puede: necesita la ruta de la carpeta que
-# OneDrive sincroniza con SharePoint, y esa carpeta hay que sincronizarla a mano
-# antes (README, paso 7). Pero hasta ahora tampoco lo NOMBRABA en esta lista, y
-# asi fue como se salteo en la PC de Ford: el unico recordatorio vivia en el
-# README. Resultado: la tarea nunca se instalo, el ultimo respaldo quedo del
-# 14-ago-2026, y ninguna pantalla avisaba nada — el ultimo-respaldo.json seguia
-# diciendo "ok" porque era la foto de aquel dia.
-$hayRespaldo = $false
-schtasks /query /TN "Respaldo Calidad M365" 2>&1 | Out-Null
-$hayRespaldo = ($LASTEXITCODE -eq 0)
-if ($hayRespaldo) {
-  Write-Host "  3) Respaldo diario a la nube: YA está instalado en esta PC." -ForegroundColor White
+# Ya no hay ninguna tarea que instalar: lo dispara el vigilante que este mismo
+# instalador acaba de registrar, todos los dias a las 12:00, y la carpeta de
+# destino la detecta solo (la de OneDrive de la empresa del usuario de esta PC).
+# Antes habia que instalarlo a mano y era el paso que siempre se salteaba: en la
+# PC de Ford el ultimo respaldo quedo del 14-ago-2026 y ninguna pantalla avisaba,
+# porque el ultimo-respaldo.json seguia diciendo "ok" de aquel dia.
+#
+# Lo unico que puede faltar es que el usuario no tenga iniciada la sesion de
+# OneDrive, y eso se puede mirar desde aca (esta fase corre en SU sesion).
+$hayOneDrive = $false
+if ($env:OneDriveCommercial -and (Test-Path $env:OneDriveCommercial)) { $hayOneDrive = $true }
+else {
+  foreach ($cuentaOD in @("Business1", "Business2", "Business3")) {
+    try {
+      $carpetaOD = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\OneDrive\Accounts\$cuentaOD" -Name "UserFolder" -ErrorAction Stop).UserFolder
+      if ($carpetaOD -and (Test-Path $carpetaOD)) { $hayOneDrive = $true }
+    } catch { }
+  }
+}
+if ($hayOneDrive) {
+  Write-Host "  3) Respaldo diario a OneDrive: anda solo, lo hace el vigilante a las 12:00." -ForegroundColor White
+  Write-Host "     No hay ninguna tarea que instalar. Se ve en el Dashboard, tarjeta 'Estado de los backups'." -ForegroundColor Gray
 } else {
-  Write-Host "  3) RESPALDO DIARIO A LA NUBE: TODAVÍA NO ESTÁ." -ForegroundColor Yellow
-  Write-Host "     Sin esto, el día que falle el disco se pierde TODO." -ForegroundColor Yellow
-  Write-Host "     Sincronizá la carpeta de OneDrive/SharePoint (README, paso 7) y corré:" -ForegroundColor Yellow
-  Write-Host "       powershell -ExecutionPolicy Bypass -File `"$PSScriptRoot\Instalar-Respaldo-Diario.ps1`" -CarpetaNube `"<la ruta que quedó>`"" -ForegroundColor Gray
+  Write-Host "  3) RESPALDO DIARIO: FALTA INICIAR SESIÓN EN ONEDRIVE." -ForegroundColor Yellow
+  Write-Host "     El respaldo se hace igual, pero queda en ESTA PC: si falla el disco se pierde." -ForegroundColor Yellow
+  Write-Host "     Abrí OneDrive, iniciá sesión con la cuenta de la empresa y listo (no hay que tocar nada más)." -ForegroundColor Yellow
 }
 Write-Host ""
 Write-Host "  Para probar que anda solo: reiniciá, iniciá sesión y esperá 2-3 min." -ForegroundColor White

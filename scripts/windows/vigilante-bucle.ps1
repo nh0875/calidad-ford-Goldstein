@@ -72,15 +72,11 @@ $HoraActualizar = 13     # 13:00, hora del almuerzo: la PC esta prendida y no ha
 $MargenHoras    = 3      # hasta las 16:00; mas tarde se deja para manana
 $SelloUltima    = Join-Path $PSScriptRoot "ultima-actualizacion.txt"
 
-# Respaldo diario, tambien enganchado aca y por el mismo motivo. Corre a las
-# 12:00, UNA HORA ANTES que la actualizacion, a proposito: si una actualizacion
-# sale mal, el respaldo de ese dia ya esta hecho y es anterior al problema.
-# Solo corre si el respaldo esta configurado (Respaldo-Config.json, que lo deja
-# Instalar-Respaldo-Diario.ps1 con la carpeta de OneDrive).
-$Respaldo       = Join-Path $PSScriptRoot "Respaldo-Calidad.ps1"
-$RespaldoConfig = Join-Path $PSScriptRoot "Respaldo-Config.json"
-$HoraRespaldo   = 12
-$SelloRespaldo  = Join-Path $PSScriptRoot "ultimo-respaldo.txt"
+# El RESPALDO DIARIO ya no se dispara desde aca (17-09-2026). Lo hace el propio
+# vigilante, que este bucle llama en cada pasada y que ademas corre en la PC de
+# Ford, donde este bucle no existe. Aca solo corria si estaba Respaldo-Config.json,
+# un archivo que deja un instalador que nadie corrio: por eso en Volkswagen no
+# hubo respaldo nunca y el log no decia ni una palabra.
 
 # El log va en la carpeta del script, pero si no se puede escribir ahi (pasa
 # cuando la carpeta la creo OTRA cuenta, por ejemplo un administrador que hizo el
@@ -176,24 +172,7 @@ function Pasada {
             if ($ultima -ne $ahora.ToString("yyyy-MM-dd")) { $tocaActualizar = $true }
         }
 
-        # Respaldo antes que actualizacion: si hoy toca respaldar, se hace primero.
-        $tocaRespaldar = $false
-        if ((Test-Path $Respaldo) -and (Test-Path $RespaldoConfig) -and
-            ($ahora.Hour -ge $HoraRespaldo) -and ($ahora.Hour -lt ($HoraRespaldo + $MargenHoras))) {
-            $ultimoR = ""
-            if (Test-Path $SelloRespaldo) { $ultimoR = (Get-Content $SelloRespaldo -Raw -EA SilentlyContinue).Trim() }
-            if ($ultimoR -ne $ahora.ToString("yyyy-MM-dd")) { $tocaRespaldar = $true }
-        }
-
-        if ($tocaRespaldar) {
-            # El sello va ANTES, igual que con la actualizacion: si el respaldo
-            # falla no queremos reintentarlo cada 5 minutos toda la tarde.
-            Set-Content -Path $SelloRespaldo -Value $ahora.ToString("yyyy-MM-dd") -Encoding UTF8
-            Anotar "Toca el respaldo diario."
-            & powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden `
-                -ExecutionPolicy Bypass -File $Respaldo 2>&1 | Out-Null
-            Anotar "Respaldo diario terminado."
-        } elseif ($tocaActualizar) {
+        if ($tocaActualizar) {
             # El sello se escribe ANTES de correr, no despues: si la actualizacion
             # falla, no queremos que el bucle la reintente cada 5 minutos toda la
             # tarde. Se reintenta manana, y el problema queda en el log.

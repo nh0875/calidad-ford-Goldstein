@@ -1,0 +1,3 @@
+Acá deja el respaldo diario de Windows sus .dump, su log y ultimo-respaldo.json.
+El compose monta esta carpeta en el backend (solo lectura) para que el Dashboard
+pueda mostrar cuándo fue el último respaldo que salió de la PC.

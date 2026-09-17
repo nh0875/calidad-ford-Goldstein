@@ -137,6 +137,10 @@ export const env = {
   // Archivo JSON de estado del backup, escrito por el contenedor de backup y
   // leído por el endpoint /api/sistema/estado-backup (volumen compartido).
   backupStatusFile: process.env.BACKUP_STATUS_FILE ?? "/var/backup-status/status.json",
+  // Archivo JSON del respaldo diario a OneDrive, que escribe el script de Windows
+  // en <proyecto>\Respaldos y el compose monta en solo lectura. Es el respaldo que
+  // sale de la PC: el del contenedor de backup copia al mismo disco.
+  respaldoWindowsFile: process.env.RESPALDO_WINDOWS_FILE ?? "/var/respaldo-windows/ultimo-respaldo.json",
   // Clave para cifrar secretos guardados en la tabla Configuracion (credenciales
   // de Meta cargadas desde /configuracion). 32 bytes en hex (64 chars) o base64.
   // Generar con: openssl rand -hex 32. OJO: si la rotás, los secretos ya

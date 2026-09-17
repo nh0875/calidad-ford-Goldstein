@@ -1,19 +1,31 @@
 ﻿# ============================================================================
 # Instalar-Respaldo-Diario.ps1
-# Deja el respaldo diario a la nube (M365 / SharePoint) andando SOLO.
-# Se corre UNA vez, como administrador, DESPUÉS de sincronizar la biblioteca de
-# SharePoint en esta PC (ver README, "Respaldo automático a la nube").
+# Registra una TAREA PROGRAMADA de Windows para el respaldo diario a la nube.
+#
+# YA NO HACE FALTA CORRER ESTO (17-09-2026). El respaldo lo dispara solo el
+# VIGILANTE, que ya corre cada 5 minutos en la sesión de la persona en las dos
+# PCs: 12:00, con reintentos hasta las 19:00 si la PC estaba apagada, y sin
+# repetir el del día si ya salió bien (ver el Paso 7 del README). Justamente esa
+# tarea que había que registrar a mano es lo que nunca se registró en Ford.
+#
+# Queda para casos especiales: otra hora, un destino de red UNC, o una PC donde
+# se quiera la tarea igual. Lo que sí sigue valiendo es el Respaldo-Config.json
+# que deja este script: si existe, MANDA sobre la detección automática.
+#
+# Si lo corrés desde un PowerShell ELEVADO, pasale -Usuario <cuenta de la
+# persona>: si no, la tarea queda a nombre del administrador, y un proceso
+# elevado NO llega a Docker (Docker Desktop corre en la sesión del usuario).
 #
 # Ejemplo:
 #   powershell -ExecutionPolicy Bypass -File .\Instalar-Respaldo-Diario.ps1 `
-#     -CarpetaNube "C:\Users\vanina\Goldstein Automotores\Calidad - Respaldos"
+#     -CarpetaNube "C:\Users\vanina\Goldstein Automotores\Calidad - Respaldos" -Usuario vanina
 # ============================================================================
 [CmdletBinding()]
 param(
   # Carpeta LOCAL que OneDrive sincroniza con SharePoint (la que aparece en el
   # Explorador después de tocar "Sincronizar" en la biblioteca del sitio).
   [Parameter(Mandatory = $true)][string]$CarpetaNube,
-  [string]$Hora = "13:30",       # hora diaria del respaldo (PC prendida y con sesión iniciada)
+  [string]$Hora = "12:00",       # la misma hora a la que ya lo dispara el vigilante (ver cabecera)
   [int]$Retencion = 14,          # copias diarias a conservar
   [string]$DestinoRed,           # carpeta de red UNC adicional (opcional)
   [string]$Proyecto,             # carpeta del sistema (si no, se detecta sola)
@@ -73,7 +85,10 @@ Write-Host "Config guardada en: $cfgPath"
 #    esa sesion iniciada, que es justo lo que se necesita: sin sesion no hay
 #    OneDrive sincronizando ni acceso a Docker.
 $taskName = "Respaldo Calidad M365"
-$tr = "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command & '$respaldoPs1'"
+# -SoloSiFalta: si el vigilante ya hizo el respaldo del dia, la tarea no hace un
+# segundo dump. Sin esto, en una PC con la tarea instalada salian dos por dia y la
+# retencion pasaba a durar la mitad de los dias.
+$tr = "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command & '$respaldoPs1' -SoloSiFalta"
 $propio = (-not $Usuario) -or ($Usuario -eq "$env:USERDOMAIN\$env:USERNAME")
 
 # schtasks escribe por la salida de ERRORES cosas que no siempre son errores, y

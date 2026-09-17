@@ -28,6 +28,13 @@ backups/
 *.sql.gz
 *.dump
 
+# La carpeta del respaldo diario de Windows: los dumps y el estado son datos de
+# esta PC y no van al repo, pero la CARPETA sí se versiona (con su LEEME), porque
+# el compose la monta en el backend para mostrar el estado en el Dashboard. Sin
+# el archivo adentro, git no puede versionar una carpeta vacía.
+Respaldos/*
+!Respaldos/LEEME.txt
+
 # Copia local de datos/credenciales traídos de la PC de Vanina (NUNCA al repo:
 # tiene el dump con datos reales y el env.prod con las claves).
 pcvanina/

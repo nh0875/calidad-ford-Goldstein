@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 #  Arreglar el arranque automatico de la PC de FORD
 # ============================================================================
 #  Doble clic en Arreglar-Arranque-Ford.bat, con la sesion de Yesica abierta y
@@ -386,12 +386,29 @@ else {
     # que es donde responde Docker.
     Info "   powershell -ExecutionPolicy Bypass -File `"$ScriptDir\Instalar-Actualizacion-Automatica.ps1`" -Usuario $cuenta"
 }
-if ($hayTareaRespaldo) { Bien "tarea de respaldo diario: existe" }
-else {
-    Aviso "Falta la tarea de respaldo diario. La instala Ignacio una vez, COMO ADMINISTRADOR, despues de sincronizar la carpeta de respaldos de SharePoint:"
-    # -Hora 12:00 a proposito: el valor por defecto (13:30) cae DESPUES de la
-    # actualizacion de las 13:00, y el respaldo tiene que ser anterior.
-    Info "   powershell -ExecutionPolicy Bypass -File `"$ScriptDir\Instalar-Respaldo-Diario.ps1`" -CarpetaNube `"<carpeta sincronizada>`" -Hora 12:00 -Usuario $cuenta"
+# El respaldo diario YA NO va por tarea programada: lo dispara el vigilante a las
+# 12:00 (y reintenta hasta las 19:00). Antes, este bloque avisaba "falta la tarea"
+# para siempre y mandaba a instalarla; eso ahora crearia un segundo respaldo y un
+# Respaldo-Config.json que manda sobre la deteccion automatica de la carpeta.
+# Lo que si hay que mirar es el ESTADO del ultimo respaldo.
+$estadoRespaldo = Join-Path $ProjectDir "Respaldos\ultimo-respaldo.json"
+if (Test-Path $estadoRespaldo) {
+    $er = $null
+    try { $er = ((Get-Content $estadoRespaldo -Raw -Encoding UTF8) -replace "^\uFEFF", "") | ConvertFrom-Json } catch { }
+    $cuandoR = $null
+    if ($er -and $er.fecha) { try { $cuandoR = [datetime]::Parse($er.fecha) } catch { } }
+    $horasR = if ($cuandoR) { ((Get-Date) - $cuandoR).TotalHours } else { 9999 }
+    if ($er -and $er.ok -and $horasR -le 72) {
+        Bien ("respaldo diario a OneDrive: ultimo OK el " + $cuandoR.ToString("dd/MM/yyyy HH:mm"))
+    } elseif ($er) {
+        Mal ("el respaldo diario no esta saliendo de la PC: " + $(if ($er.error) { $er.error } else { "ultimo OK hace mas de 3 dias" }))
+        Info "   Lo dispara el vigilante a las 12:00. Fijate que OneDrive tenga la sesion iniciada y que la PC quede prendida al mediodia."
+    }
+} else {
+    Aviso "Todavia no hay ningun respaldo registrado. Lo hace el vigilante a las 12:00; para probarlo ahora: doble clic en Respaldo-AHORA.bat."
+}
+if ($hayTareaRespaldo) {
+    Aviso "Quedo instalada la tarea vieja 'Respaldo Calidad M365'. No hace falta (ya respalda el vigilante) y se puede borrar: schtasks /delete /TN `"Respaldo Calidad M365`" /F"
 }
 
 # ---------------------------------------------------- 4. arrancar ya ----

@@ -204,67 +204,119 @@ levanta el sistema, y lo pone a arrancar solo y a repararse cada 5 minutos.
 
 ---
 
-## Paso 7 — Respaldo automático a la nube (M365 / SharePoint)
+## Paso 7 — Respaldo diario a OneDrive (ya viene andando: no hay nada que instalar)
 
 > **Para qué:** el sistema ya hace una copia de la base todas las noches, pero esa
 > copia vive en **el mismo disco** que el sistema. Si el disco de esta PC se rompe,
-> se pierde todo junto. Este paso deja que la copia se **suba sola todos los días a
-> una carpeta de la empresa en SharePoint** (M365, que ya pagan). Si la PC muere, la
-> copia ya está en la nube. Se hace **una sola vez**.
+> se pierden los datos y las copias juntos. Este respaldo saca una copia **fuera de
+> la PC**: la deja en la carpeta de **OneDrive de la empresa** del usuario que está
+> usando la máquina, y OneDrive la sube sola a la nube. Si la PC muere, la copia ya
+> está arriba.
 
-### A) Una sola vez: sincronizar la carpeta de SharePoint en esta PC
+**No hay que instalar ninguna tarea ni ser administrador.** Lo dispara el
+**vigilante**, que ya corre cada 5 minutos en las dos PCs, dentro de la sesión de la
+persona. Antes había que registrar a mano una tarea programada, y eso es justo lo que
+nunca se hizo: Ford estuvo **19 días sin respaldo** con el estado en verde.
 
-1. Confirmá que **OneDrive esté iniciado con la cuenta de M365 de la empresa** en la
-   sesión de Windows de Vanina (el ícono de la nube, abajo a la derecha, en azul/blanco).
-   Si no, abrí "OneDrive" del menú Inicio e iniciá sesión con la cuenta de la empresa.
-2. En el navegador, entrá al **sitio de SharePoint / Teams del equipo** donde van a
-   vivir los respaldos. En **"Documentos"**, creá una carpeta llamada, por ejemplo,
-   **`Respaldos Calidad`**.
-3. Con esa carpeta abierta, tocá el botón **"Sincronizar"** de la barra de arriba.
-   Se abre un aviso del navegador para abrir OneDrive: aceptá. OneDrive empieza a
-   sincronizarla.
-4. Ahora esa carpeta **aparece en el Explorador de archivos** (panel izquierdo, bajo
-   el nombre de la empresa), con una ruta parecida a:
-   `C:\Users\vanina\Goldstein Automotores S.A.C.I\Calidad - Respaldos Calidad`
-5. **Copiá esa ruta completa**: abrí la carpeta en el Explorador, hacé **clic derecho
-   con Shift** sobre ella → **"Copiar como ruta de acceso"** (te la copia con comillas).
+- Corre **a las 12:00** (mediodía: la PC está prendida y no hay nadie trabajando).
+- Si a esa hora la PC estaba apagada, **reintenta en cada pasada hasta las 19:00**.
+- Si el del día **ya salió bien, no lo repite**.
+- El destino lo **encuentra solo**: la carpeta de OneDrive **de la empresa** de la
+  sesión abierta (la que se llama `OneDrive - <empresa>`), subcarpeta
+  **`Respaldos Calidad`**, que el script crea si no está.
+- Conserva las **últimas 7 copias en OneDrive** y las **últimas 14 en la PC**.
+- Si **una** base falla (por ejemplo la de Volkswagen), igual copia las que sí
+  salieron y deja anotado cuál faltó (campo `basesFallidas`).
 
-### B) Una sola vez: instalar el respaldo diario
+> **Lo único que tiene que pasar en esta PC:** que **OneDrive esté con la sesión
+> iniciada** con la cuenta de M365 de la empresa (el ícono de la nube, abajo a la
+> derecha, en azul/blanco). Sin eso no hay carpeta a dónde copiar y el respaldo queda
+> en el mismo disco que la base, que es lo mismo que no tener respaldo.
 
-En **PowerShell como administrador**, en la carpeta del proyecto, pegá esto
-**reemplazando la ruta por la que copiaste** (dejá las comillas):
+### A) Cómo verificar que anduvo
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\Instalar-Respaldo-Diario.ps1 -CarpetaNube "C:\Users\vanina\Goldstein Automotores S.A.C.I\Calidad - Respaldos Calidad"
+1. **El Dashboard** (es la forma de siempre y la que conviene mirar). En la tarjeta
+   **"Estado de los backups"**, arriba de todo está la casilla **"Copia diaria a
+   OneDrive"**:
+   - **verde / "OK"**: salió, y muestra cuándo, a qué destino, cuántas bases y cuánto pesó;
+   - **rojo / "Falló" o "Atrasado"**: ver el punto **B**;
+   - **"Sin datos"**: todavía no corrió ninguno en esta PC (recién instalada, o nunca
+     llegó el mediodía con la PC prendida).
+2. **La carpeta de OneDrive**, desde el Explorador o desde el navegador: tiene que
+   haber **un archivo por base**, con la fecha en el nombre —
+   `calidad_ford_AAAA-MM-DD_hhmm.dump` y, si Volkswagen está en uso,
+   `calidad_vw_AAAA-MM-DD_hhmm.dump`.
+3. **El detalle de cada corrida** queda en `Respaldos\respaldo.log` de la carpeta del
+   proyecto, y el resultado de la última en `Respaldos\ultimo-respaldo.json` (ese
+   archivo es el que lee el Dashboard; `"ok": true` significa que la copia **salió de
+   esta PC**, no solo que el dump se generó).
+
+> El respaldo también se puede correr **en el momento**, sin esperar al mediodía:
+> doble clic en **`Respaldo-AHORA.bat`**. Usa la misma configuración, no hay que
+> escribir nada.
+
+### B) Si el Dashboard muestra la casilla en rojo
+
+Rojo quiere decir una de dos cosas: el último respaldo **falló**, o el último bueno
+quedó **más viejo que 72 horas** (tres días, para que un fin de semana con las PCs
+apagadas no dispare la alarma). Qué mirar, en orden:
+
+1. **¿OneDrive tiene la sesión iniciada?** Es la causa más común. Abrí "OneDrive"
+   del menú Inicio y entrá con la cuenta de la empresa.
+2. **¿La PC estuvo prendida entre las 12:00 y las 19:00?** Si estuvo apagada todo ese
+   rato, el respaldo del día no llegó a correr. Alcanza con dejarla prendida al
+   mediodía; si querés uno ya, doble clic en `Respaldo-AHORA.bat`.
+3. **Leé el motivo**: la propia casilla lo muestra en rojo, y el detalle largo está en
+   `Respaldos\respaldo.log`.
+4. Si dice que **no encontró ninguna carpeta de OneDrive**, forzala a mano (punto **C**).
+
+> **Además avisa por correo.** Si pasan más de **72 horas** sin un respaldo bueno, el
+> vigilante manda **un** mail después de las 19:00. Por decisión del dueño va a la
+> usuaria de la PC, que es quien puede fijarse si OneDrive está con la sesión
+> iniciada: Ford → `yandino@mariogoldsteinsa.com.ar`, Volkswagen →
+> `ldip@mariogoldsteinsa.com.ar`. Se cambia con `RESPALDO_ALERTA_EMAIL`. Para que ese
+> mail pueda salir, el `.env.prod` de esa PC tiene que tener cargados `MAIL_USUARIO`
+> y `MAIL_PASSWORD`.
+
+### C) Forzar la carpeta de destino (y el resto de las variables)
+
+Todas estas variables son **opcionales**: sin tocar nada el respaldo funciona. Van en
+el **`.env.prod` de esa PC**, que es el lugar natural para algo que cambia por
+máquina: está fuera del repo, la actualización de las 13:00 no lo pisa y se edita sin
+ser administrador. No hay que reiniciar nada: la próxima corrida las lee.
+
+| Variable | Para qué |
+|---|---|
+| `RESPALDO_DESTINO_NUBE` | Carpeta a dónde copiar, cuando la detección automática no acierta (por ejemplo, una biblioteca de SharePoint sincronizada aparte). Se pega la ruta tal cual la muestra el Explorador, **sin comillas**. |
+| `RESPALDO_RETENCION_NUBE` | Cuántas copias quedan en OneDrive (por defecto **7**). En la PC siguen 14. |
+| `RESPALDO_SIN_CLAVE` | `true` = **no** subir la copia del `.env.prod` a la nube (ver el recuadro de abajo). |
+| `RESPALDO_ALERTA_EMAIL` | A quién avisarle si falta el respaldo, en vez de la usuaria de la PC. |
+
+Ejemplo de la primera (una sola línea, al final del `.env.prod`):
+
+```ini
+RESPALDO_DESTINO_NUBE=C:\Users\vanina\OneDrive - Goldstein Automotores\Respaldos Calidad
 ```
 
-Eso:
-- programa el respaldo **todos los días a las 13:30** (se puede cambiar con `-Hora "20:00"`),
-- **hace un respaldo de prueba en el momento** para confirmar que todo el circuito anda,
-- conserva las **últimas 14 copias** (rota las viejas).
-
-### C) Verificar que quedó
-
-1. Esperá **1-2 minutos** después de la prueba.
-2. En el **navegador**, entrá al SharePoint → `Respaldos Calidad`. Tiene que aparecer
-   un archivo **`calidad_AAAA-MM-DD_hhmm.dump`**. Si está: **quedó andando** ✅.
-3. El detalle de cada corrida queda en `C:\Calidad\Vanina\Respaldos\respaldo.log` y el
-   estado de la última en `Respaldos\ultimo-respaldo.json` (`"ok": true`).
+> Si en esta PC alguna vez se corrió el instalador viejo, quedó el archivo
+> `scripts\windows\Respaldo-Config.json` y **eso manda** sobre lo detectado y sobre el
+> `.env.prod`. Es la única razón para acordarse de que ese archivo existe: si el
+> respaldo se empeña en ir a una carpeta rara, fijate ahí.
 
 > ### 🔒 Importante — quién puede ver esa carpeta
 > El respaldo tiene **datos reales de clientes** (nombres, teléfonos, patentes). En
-> SharePoint, dale acceso a esa biblioteca **solo a quien lo necesite** (Sistemas +
-> gerencia). Además, junto a los dumps se guarda una subcarpeta
+> OneDrive / SharePoint, esa carpeta tiene que estar compartida **solo con quien lo
+> necesite** (Sistemas + gerencia). Además, junto a los dumps se guarda una subcarpeta
 > **`_RESTAURAR-NO-BORRAR`** con una copia del `.env.prod` (la clave que descifra el
 > token de WhatsApp): esa subcarpeta es la más sensible, restringila especialmente.
-> *(Si preferís no subir la clave a la nube y guardarla aparte, agregá `-SinClave` en
-> el comando del respaldo: los datos igual se respaldan, pero al restaurar vas a tener
-> que reponer el token de Meta a mano.)*
+> *(Si preferís no subir la clave a la nube y guardarla aparte, poné
+> `RESPALDO_SIN_CLAVE=true` en el `.env.prod`: los datos igual se respaldan, pero al
+> restaurar vas a tener que reponer el token de Meta a mano.)*
 
 ### D) Si esta PC se rompe: restaurar en una PC nueva
 
 1. Instalá el sistema en la PC nueva (Pasos 0 a 6). La base arranca **vacía**.
-2. Descargá de SharePoint el **último dump de CADA marca** y el archivo
+2. Descargá de OneDrive el **último dump de CADA marca** y el archivo
    `_RESTAURAR-NO-BORRAR\env.prod.copia`. Hay un archivo por base, con la fecha
    en el nombre:
    - `calidad_ford_AAAA-MM-DD_hhmm.dump`
@@ -288,12 +340,18 @@ Eso:
 5. Entrá a `http://localhost` (y a `http://localhost:8080` si usás Volkswagen) y
    verificá que estén los casos. Listo.
 
-> **Cómo saber si el respaldo cubre TODAS las marcas:** abrí el archivo
-> `Respaldos\ultimo-respaldo.json`. La lista `"bases"` tiene que tener una entrada
-> por cada marca en uso. Si un día aparece una sola, algo pasó con la otra base.
+> **Cómo saber si el respaldo cubre TODAS las marcas:** la casilla del Dashboard dice
+> cuántas bases entraron en la última copia. Con más detalle, en
+> `Respaldos\ultimo-respaldo.json` la lista `"bases"` tiene que tener una entrada por
+> cada marca en uso, y `"basesFallidas"` tiene que estar vacía. Si un día aparece una
+> sola base, algo pasó con la otra.
 
-> El respaldo también se puede correr a mano cuando quieras con **`Respaldo-AHORA.bat`**
-> (doble clic): usa la misma configuración, sin escribir nada.
+> **`Instalar-Respaldo-Diario.ps1` sigue existiendo, pero ya NO es el camino
+> normal.** Lo que hacía era registrar la tarea programada, que es justo el paso que
+> nadie corrió nunca. Queda para casos especiales (por ejemplo fijar otra hora o un
+> destino de red UNC). Si se corre desde un PowerShell **elevado**, hay que pasarle
+> `-Usuario <cuenta de la persona>`: si no, la tarea queda a nombre del administrador
+> y ese proceso no llega a Docker.
 
 ---
 
@@ -367,7 +425,7 @@ sistema no responde, las vuelve a poner y levanta la versión de antes.
 Todo queda escrito con fecha y hora en:
 
 ```
-scripts\windowsctualizacion-automatica.log
+scripts\windows\actualizacion-automatica.log
 ```
 
 Para cambiar la hora, o para desactivarla:
@@ -414,7 +472,7 @@ registro) y avisa cuál sobrevivió al antivirus.
 **Para arrancarlo sin reiniciar:**
 
 ```powershell
-Start-Process powershell -ArgumentList "-NoProfile","-NonInteractive","-WindowStyle","Hidden","-ExecutionPolicy","Bypass","-File","C:\Calidad\Volkswagen\scripts\windowsigilante-bucle.ps1" -WindowStyle Hidden
+Start-Process powershell -ArgumentList "-NoProfile","-NonInteractive","-WindowStyle","Hidden","-ExecutionPolicy","Bypass","-File","C:\Calidad\Volkswagen\scripts\windows\vigilante-bucle.ps1" -WindowStyle Hidden
 ```
 
 **Para cerrar el que esté corriendo** (hace falta antes de arrancar uno nuevo: el
@@ -426,10 +484,12 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 ```
 
-**Para ver qué está haciendo:** `scripts\windowsigilante-bucle.log`
+**Para ver qué está haciendo:** `scripts\windows\vigilante-bucle.log`
 
-Ahí van enganchados también el respaldo diario (12:00) y la actualización
-automática (13:00), que en esas PCs tampoco se pueden instalar como tarea.
+Ahí va enganchada también la actualización automática (13:00), que en esas PCs
+tampoco se puede instalar como tarea. El **respaldo diario (12:00)** ya no cuelga
+del bucle: lo dispara el vigilante (ver el Paso 7), así que corre igual en las dos
+PCs, con bucle o con tarea.
 
 **Si nada de esto sobrevive**, queda el botón manual:
 `scripts\windows\Crear-Boton-Escritorio.ps1` deja en el escritorio un acceso
@@ -471,6 +531,7 @@ contraseña, rol, área y provincia).
 | **El checklist dice FALTA Docker** | Abrí Docker Desktop a mano y esperá "Engine running"; después corré el instalador de nuevo. |
 | **No llegan los WhatsApp** | Verificá que ngrok tenga el token correcto (Paso 2) y que la PC no esté suspendida. El vigilante reintenta solo cada 5 min. |
 | **PC de Ford: localhost anda pero el link de afuera no** | Doble clic en `scripts\windows\Arreglar-Arranque-Ford.bat` (con la sesión de Yesica, **sin** administrador). Si queda en rojo, `Diagnosticar-Ngrok-Ford.bat`: frena ngrok, lo corre con registro y anota el error exacto (token, versión, cuenta). Los dos dejan un informe en el Escritorio para mandar; el token de ngrok sale tapado. En la PC de Volkswagen no corren. |
+| **El Dashboard muestra en rojo "Copia diaria a OneDrive"** | Ver el Paso 7 (B). Casi siempre es OneDrive sin la sesión iniciada, o la PC apagada del mediodía a las 19:00. |
 | **Docker se queja de virtualización** | Ver Paso 2.5. |
 | **Quiero ver qué está haciendo el sistema** | Abrí `C:\Calidad\Vanina\scripts\windows\vigilante.log` (dice qué reparó y cuándo). |
 
@@ -491,7 +552,7 @@ dónde está la carpeta, así que se puede copiar a cualquier ruta sin editar na
 | Script | Cuándo corre | Para qué |
 |---|---|---|
 | `configurar-pc.ps1` | Una vez, al instalar (como admin) | Deja todo listo y verificado en un paso. Imprime un checklist. |
-| `vigilante.ps1` | Cada 5 minutos (lo registra el instalador) | Detecta y repara: Docker caído, contenedores caídos, API sin responder, ngrok caído. |
+| `vigilante.ps1` | Cada 5 minutos (lo registra el instalador) | Detecta y repara: Docker caído, contenedores caídos, API sin responder, ngrok caído. Y dispara el **respaldo diario** del mediodía (Paso 7). |
 | `iniciar-sistema.bat` | Al iniciar Windows (opcional) | Levanta el stack + ngrok. Con el vigilante registrado es opcional. |
 
 ## Qué hace el vigilante en cada corrida
@@ -506,7 +567,12 @@ dónde está la carpeta, así que se puede copiar a cualquier ruta sin editar na
    backend que todavía está arrancando.
 4. **ngrok**: si el proceso no está, o está pero sin el túnel del dominio, lo
    relanza.
-5. **Log**: `scripts/windows/vigilante.log`. Es silencioso: si todo está bien
+5. **Respaldo diario**: entre las **12:00 y las 19:00**, si el del día todavía no
+   salió bien, corre `Respaldo-Calidad.ps1` (Paso 7). Y después de las 19:00, si
+   hace más de 72 h que no hay un respaldo bueno, manda **un** correo de aviso.
+   Todo eso va en su propio try/catch: un problema del respaldo no puede dejar de
+   vigilar el sistema.
+6. **Log**: `scripts/windows/vigilante.log`. Es silencioso: si todo está bien
    escribe **una línea `[OK]` por día**; solo escribe cuando repara algo o falla.
 
 ## Memoria de WSL2 según la RAM de la PC

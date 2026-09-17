@@ -60,6 +60,14 @@ x-backend-comun: &backend-comun
   volumes:
     # Solo lectura: el backend lee el estado que escribe el contenedor de backup
     - backup_status:/var/backup-status:ro
+    # Y el estado del RESPALDO DIARIO A ONEDRIVE, que lo escribe un script de
+    # Windows (scripts\windows\Respaldo-Calidad.ps1) fuera de Docker. Es el
+    # respaldo que de verdad sale de la PC, y hasta ahora el Dashboard no lo veia:
+    # mostraba solo el del contenedor de backup, que copia al mismo disco.
+    # Se monta la CARPETA y no el archivo a proposito: si se montara el archivo y
+    # todavia no existiera, Docker crearia un DIRECTORIO con ese nombre y el
+    # script no podria escribir el estado nunca mas.
+    - ./Respaldos:/var/respaldo-windows:ro
   healthcheck:
     test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
     interval: 15s
@@ -113,6 +121,8 @@ x-backend-env-comun: &backend-env-comun
   MAIL_PASSWORD: ${MAIL_PASSWORD:-}
   # Estado del backup para /api/sistema/estado-backup (volumen compartido)
   BACKUP_STATUS_FILE: /var/backup-status/status.json
+  # Estado del respaldo diario a OneDrive (lo escribe el script de Windows)
+  RESPALDO_WINDOWS_FILE: /var/respaldo-windows/ultimo-respaldo.json
 
 services:
   postgres:

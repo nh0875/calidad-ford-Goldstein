@@ -625,6 +625,28 @@ interface EstadoBackup {
   mensaje?: string;
   ultimoBackup: { fecha: string; ok: boolean; archivo: string | null; tamanoBytes: number; subidoAOffsite: boolean; mensaje: string } | null;
   ultimaVerificacion: { fecha: string; ok: boolean; filasCaso: number; mensaje: string } | null;
+  // El respaldo diario a OneDrive: el único que deja la copia FUERA de esta PC.
+  respaldoNube: {
+    fecha: string | null;
+    ok: boolean;
+    archivo: string | null;
+    bytes: number;
+    bases: Array<{ base: string; archivo: string; bytes: number }>;
+    destinos: string[];
+    rutas: string[];
+    error: string | null;
+    horas: number | null;
+    vencido: boolean;
+  } | null;
+  mensajeRespaldoNube?: string;
+}
+
+function haceCuanto(horas: number | null): string {
+  if (horas === null) return "";
+  if (horas < 1) return "recién";
+  if (horas < 24) return `hace ${horas} h`;
+  const dias = Math.round(horas / 24);
+  return `hace ${dias} día${dias === 1 ? "" : "s"}`;
 }
 
 function fechaHoraCorta(iso: string | null | undefined): string {
@@ -648,6 +670,7 @@ function EstadoBackupCard() {
 
   const b = estado.ultimoBackup;
   const v = estado.ultimaVerificacion;
+  const n = estado.respaldoNube;
 
   return (
     <Card>
@@ -655,6 +678,47 @@ function EstadoBackupCard() {
         <DatabaseBackup className="h-4 w-4 text-accent" aria-hidden="true" />
         Estado de los backups
       </h3>
+
+      {/* PRIMERO el respaldo a OneDrive: es el único que sobrevive a que se rompa
+          el disco de esta PC. El de abajo (contenedor de Docker) copia al mismo
+          disco, y durante meses fue lo único que se mostraba acá: el Dashboard
+          decía "no hay registros" mientras el respaldo de verdad estaba muerto. */}
+      <div
+        className={`mb-3 rounded-md border p-3 ${
+          n && !n.vencido ? "border-gray-100" : "border-red-200 bg-red-50"
+        }`}
+      >
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold uppercase text-ink-muted">Copia diaria a OneDrive</span>
+          <Badge tono={n && !n.vencido ? "verde" : "rojo"}>
+            {!n ? "Sin datos" : n.ok ? (n.vencido ? "Atrasado" : "OK") : "Falló"}
+          </Badge>
+        </div>
+        {n ? (
+          <>
+            <div className="mt-1 text-sm text-ink">
+              {fechaHoraCorta(n.fecha)} {n.horas !== null && <span className="text-ink-muted">({haceCuanto(n.horas)})</span>}
+            </div>
+            <div className="text-xs text-ink-muted">
+              {n.ok
+                ? `${n.destinos.join(" y ")} · ${n.bases.length} base(s) · ${(n.bytes / 1_048_576).toFixed(1)} MB`
+                : "La copia NO salió de esta PC."}
+            </div>
+            {n.error && <div className="mt-1 text-xs text-red-700">{n.error}</div>}
+            {n.ok && n.vencido && (
+              <div className="mt-1 text-xs text-red-700">
+                Pasaron más de 3 días desde el último respaldo. Fijate que la PC quede prendida al mediodía y que
+                OneDrive tenga la sesión iniciada.
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="mt-1 text-sm text-ink-muted">
+            {estado.mensajeRespaldoNube ?? "Todavía no hay ningún registro del respaldo diario."}
+          </p>
+        )}
+      </div>
+
       {!estado.configurado && !b ? (
         <p className="text-sm text-ink-muted">
           {estado.mensaje ?? "Todavía no hay registros de backup."}

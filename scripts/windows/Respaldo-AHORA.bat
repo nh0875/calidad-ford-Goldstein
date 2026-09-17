@@ -13,15 +13,22 @@ REM  viaja con el y PowerShell falla con un error que no explica nada.
 REM ------------------------------------------------------------------
 set "PS1=%~dp0Respaldo-Calidad.ps1"
 if not exist "%PS1%" set "PS1=%~dp0scripts\windows\Respaldo-Calidad.ps1"
+
+REM  Ultimo recurso: las dos carpetas conocidas. Cada marca corre en su propia PC
+REM  y en su propia carpeta (Ford en ...\Vanina, Volkswagen en ...\Volkswagen).
+REM  Antes aca estaba SOLO la de Ford, asi que una copia suelta de este .bat en la
+REM  PC de Volkswagen no encontraba nada y parecia que el sistema no estaba.
 if not exist "%PS1%" set "PS1=C:\Calidad\Vanina\scripts\windows\Respaldo-Calidad.ps1"
+if not exist "%PS1%" set "PS1=C:\Calidad\Volkswagen\scripts\windows\Respaldo-Calidad.ps1"
 
 if not exist "%PS1%" (
   echo   No encuentro el sistema desde aca.
   echo.
   echo   Este archivo parece ser una COPIA suelta. Abri el ORIGINAL, que vive en
-  echo   la carpeta del sistema, normalmente:
+  echo   la carpeta del sistema de ESTA PC (la que tiene adentro
+  echo   docker-compose.prod.yml), en:
   echo.
-  echo       C:\Calidad\Vanina\scripts\windows\Respaldo-AHORA.bat
+  echo       ...\scripts\windows\Respaldo-AHORA.bat
   echo.
   echo   Para tenerlo a mano en el Escritorio NO lo copies: clic derecho sobre el
   echo   original y "Enviar a" ^> "Escritorio (crear acceso directo)".
