@@ -77,7 +77,7 @@ export function periodoDelServicio(fecha: Date | null | undefined): string | nul
  * eliminar. La sucursal se compara con todas sus variantes escritas ("MENDOZA",
  * "Mendoza "): Postgres no pliega tildes ni mayúsculas.
  */
-async function whereCasoDeLaLista(): Promise<Prisma.CasoWhereInput> {
+export async function whereCasoDeLaLista(): Promise<Prisma.CasoWhereInput> {
   const sucursal = marca.encuestaFabricaPV.sucursal;
   const variantes = sucursal ? await variantesDeSucursal(sucursal) : [];
   return { eliminadoEn: null, area: AreaTrabajo.POSVENTA, sucursal: { in: variantes } };
@@ -101,8 +101,11 @@ export async function sincronizarPromotoresPV(opciones: { siPasaronMs?: number }
   // Los pendientes se leen ANTES que los análisis. Si otra sincronización que corre
   // a la vez inserta un promotor recién calificado, esta no lo ve acá y no lo borra
   // por no haberlo visto también entre los candidatos.
+  // Los de un MES CERRADO no se tocan: quedan como estaban para consultarlos, aunque
+  // la nota del caso haya cambiado (decisión del 17-09-2026). Tampoco se duplican:
+  // el índice único de casoId los sigue cubriendo en el createMany de abajo.
   const pendientes = await prisma.encuestaFabricaPV.findMany({
-    where: { estado: EstadoEncuestaFabrica.PENDIENTE },
+    where: { estado: EstadoEncuestaFabrica.PENDIENTE, cerradoEn: null },
     select: { id: true, casoId: true },
   });
 
@@ -153,7 +156,7 @@ export async function sincronizarPromotoresPV(opciones: { siPasaronMs?: number }
     // El estado va también en el where: si justo alguien lo animó entre la lectura
     // y el borrado, ya no es un pendiente y se queda.
     await prisma.encuestaFabricaPV.deleteMany({
-      where: { id: { in: sobran }, estado: EstadoEncuestaFabrica.PENDIENTE },
+      where: { id: { in: sobran }, estado: EstadoEncuestaFabrica.PENDIENTE, cerradoEn: null },
     });
   }
 
@@ -239,35 +242,30 @@ const ORDEN_ESTADO: Record<EstadoEncuestaFabrica, number> = {
   RESPONDIO: 2,
 };
 
-export async function listarPromotoresPV(): Promise<{
-  data: PromotorPV[];
-  resumen: { pendientes: number; animados: number; respondieron: number; total: number };
-}> {
-  await sincronizarPromotoresPV();
-
-  const filas = await prisma.encuestaFabricaPV.findMany({
-    where: { caso: await whereCasoDeLaLista() },
-    include: {
-      caso: {
-        select: {
-          id: true,
-          numeroOrden: true,
-          nombrePropietario: true,
-          whatsapp: true,
-          celular: true,
-          modelo: true,
-          patente: true,
-          asesor: true,
-          sucursal: true,
-          fechaSalida: true,
-          fechaProgramacion: true,
-        },
-      },
+const INCLUDE_CASO = {
+  caso: {
+    select: {
+      id: true,
+      numeroOrden: true,
+      nombrePropietario: true,
+      whatsapp: true,
+      celular: true,
+      modelo: true,
+      patente: true,
+      asesor: true,
+      sucursal: true,
+      fechaSalida: true,
+      fechaProgramacion: true,
     },
-  });
-  const notas = await notasActuales(filas.map((f) => f.casoId));
+  },
+} satisfies Prisma.EncuestaFabricaPVInclude;
 
-  const data: PromotorPV[] = filas
+type FilaPV = Prisma.EncuestaFabricaPVGetPayload<{ include: typeof INCLUDE_CASO }>;
+
+/** Las filas como las muestra la pantalla, en el orden de trabajo. */
+async function aPromotores(filas: FilaPV[]): Promise<PromotorPV[]> {
+  const notas = await notasActuales(filas.map((f) => f.casoId));
+  return filas
     .map((f) => {
       const fechaServicio = f.caso.fechaSalida ?? f.caso.fechaProgramacion ?? null;
       const nota = notas.get(f.casoId);
@@ -280,7 +278,9 @@ export async function listarPromotoresPV(): Promise<{
         detectadaEn: f.detectadaEn,
         animadoEn: f.animadoEn,
         respondioEn: f.respondioEn,
-        periodo: periodoDelServicio(fechaServicio),
+        // Un cliente cerrado queda en el mes en que se cerró, aunque después se
+        // corrija la fecha del caso.
+        periodo: f.cerradoEn ? f.periodoCierre : periodoDelServicio(fechaServicio),
         sigueSiendoPromotor: estrellas === ESTRELLAS_PROMOTOR && !enRevision,
         estrellasActuales: estrellas,
         notaEnRevision: enRevision,
@@ -304,6 +304,20 @@ export async function listarPromotoresPV(): Promise<{
       if (e !== 0) return e;
       return (b.calificadoEn?.getTime() ?? 0) - (a.calificadoEn?.getTime() ?? 0);
     });
+}
+
+/** La lista de trabajo: sin los clientes de los meses cerrados. */
+export async function listarPromotoresPV(): Promise<{
+  data: PromotorPV[];
+  resumen: { pendientes: number; animados: number; respondieron: number; total: number };
+}> {
+  await sincronizarPromotoresPV();
+
+  const filas = await prisma.encuestaFabricaPV.findMany({
+    where: { caso: await whereCasoDeLaLista(), cerradoEn: null },
+    include: INCLUDE_CASO,
+  });
+  const data = await aPromotores(filas);
 
   return {
     data,
@@ -316,11 +330,20 @@ export async function listarPromotoresPV(): Promise<{
   };
 }
 
+/** Los clientes de un mes cerrado, para consultarlos. */
+export async function listarPromotoresCerradosPV(periodo: string): Promise<PromotorPV[]> {
+  const filas = await prisma.encuestaFabricaPV.findMany({
+    where: { caso: await whereCasoDeLaLista(), cerradoEn: { not: null }, periodoCierre: periodo },
+    include: INCLUDE_CASO,
+  });
+  return aPromotores(filas);
+}
+
 /** Pendientes de animar, para el contador del menú. Mismo criterio que el resumen de la lista. */
 export async function contarPendientesPV(): Promise<number> {
   await sincronizarPromotoresPV({ siPasaronMs: 30_000 });
   return prisma.encuestaFabricaPV.count({
-    where: { estado: EstadoEncuestaFabrica.PENDIENTE, caso: await whereCasoDeLaLista() },
+    where: { estado: EstadoEncuestaFabrica.PENDIENTE, cerradoEn: null, caso: await whereCasoDeLaLista() },
   });
 }
 
@@ -339,6 +362,8 @@ export async function seguimientoEncuestasPV(opciones: { periodo: string | null 
     select: {
       estado: true,
       animadoEn: true,
+      cerradoEn: true,
+      periodoCierre: true,
       caso: { select: { asesor: true, sucursal: true, fechaSalida: true, fechaProgramacion: true } },
     },
   });
@@ -351,7 +376,9 @@ export async function seguimientoEncuestasPV(opciones: { periodo: string | null 
     // La sucursal como la escribe la marca ("Mendoza"), no como vino en el Excel.
     const sucursal = sucursalCanonica(f.caso.sucursal) ?? f.caso.sucursal;
     return {
-      periodo: periodoDelServicio(fecha),
+      // Un cliente cerrado cuenta en el mes en que se cerró, igual que en la lista y
+      // en el panel de cierre, aunque después se corrija la fecha del caso.
+      periodo: f.cerradoEn ? f.periodoCierre : periodoDelServicio(fecha),
       // En Ventas este campo distingue el mes real del estimado. Acá el mes sale
       // siempre de una fecha del caso, así que nunca es una estimación.
       fechaDominio: fecha,

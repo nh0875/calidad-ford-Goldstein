@@ -10,6 +10,7 @@ import {
   resolverVendedores,
 } from "./encuesta-interna-vw.service";
 import { ACCIONES } from "./audit.service";
+import { claveNormalizada } from "./normalizacion.service";
 import {
   ArchivoEncuestaVW,
   NUMEROS_DE_MOSTRADOR,
@@ -57,6 +58,12 @@ export interface ResumenImportacionVW {
   pendientesNuevos: number;
   /** Clientes que ya estaban en la lista: se actualizan sus datos, NO su estado. */
   pendientesQueSiguen: number;
+  /** Clientes que ya estaban en un mes cerrado y siguen ahí: se corrigen sus datos, no su estado. */
+  clientesDeMesesCerrados: number;
+  /** Clientes cerrados que, con el mes o la provincia corregidos, caen en un mes abierto: vuelven a la lista. */
+  cerradosQueVolvieron: number;
+  /** Clientes NUEVOS cuyo mes ya estaba cerrado: entran a la lista, marcados. */
+  nuevosEnMesesCerrados: number;
   filasRechazadas: Array<{ hoja: string; numeroFilaExcel: number; motivo: string }>;
   filasObservadasPorFabrica: number;
   /**
@@ -239,6 +246,20 @@ async function guardar(
   // ---- 2. Pendientes -------------------------------------------------------
   let pendientesNuevos = 0;
   let pendientesQueSiguen = 0;
+  let clientesDeMesesCerrados = 0;
+  let cerradosQueVolvieron = 0;
+  let nuevosEnMesesCerrados = 0;
+  // Los meses ya cerrados: para contar a los nuevos que llegan tarde a uno, y para
+  // saber si un cliente cerrado sigue en un mes cerrado después de corregirle el mes
+  // o la provincia.
+  const cerrados = new Set(
+    (
+      await prisma.cierrePeriodo.findMany({
+        where: { lista: "ENCUESTA_VENTAS", reabiertoEn: null },
+        select: { periodo: true, sucursal: true },
+      })
+    ).map((c) => `${c.periodo}|${claveNormalizada(c.sucursal)}`)
+  );
 
   for (const f of archivo.filas) {
     const vendedorId = idPorCodigo.get(f.codigoVendedor)!;
@@ -275,11 +296,28 @@ async function guardar(
         : !existente.periodo && mes.periodo
           ? { periodo: mes.periodo }
           : {};
+
+      // Un cliente de un MES CERRADO también recibe los datos corregidos (el estado
+      // no se toca: eso solo lo hace una persona reabriendo el mes). Importa porque
+      // lo que se cerró al instalar el cierre puede traer la provincia o el mes mal
+      // cargados, y el Excel es lo que los corrige. Queda cerrado mientras su mes y
+      // su provincia (ya corregidos) estén cerrados; si caen en un mes abierto,
+      // vuelve a la lista, porque ese mes todavía se trabaja.
+      let cierre: { cerradoEn?: null } = {};
+      if (existente.cerradoEn) {
+        const periodoFinal = "periodo" in mesActualizado ? mesActualizado.periodo : existente.periodo;
+        if (periodoFinal && cerrados.has(`${periodoFinal}|${claveNormalizada(datos.sucursal)}`)) {
+          clientesDeMesesCerrados++;
+        } else {
+          cierre = { cerradoEn: null };
+          cerradosQueVolvieron++;
+        }
+      }
       await prisma.encuestaFabricaVW.update({
         where: { chasis: f.chasis },
-        data: { ...datos, ...mesActualizado },
+        data: { ...datos, ...mesActualizado, ...cierre },
       });
-      pendientesQueSiguen++;
+      if (!existente.cerradoEn) pendientesQueSiguen++;
     } else {
       // Un cliente NUEVO entra siempre como Pendiente. Esto no es "cambiar un
       // estado": es el que tiene al nacer.
@@ -295,6 +333,7 @@ async function guardar(
         },
       });
       pendientesNuevos++;
+      if (mes.periodo && cerrados.has(`${mes.periodo}|${claveNormalizada(datos.sucursal)}`)) nuevosEnMesesCerrados++;
     }
   }
 
@@ -341,6 +380,9 @@ async function guardar(
     })),
     pendientesNuevos,
     pendientesQueSiguen,
+    clientesDeMesesCerrados,
+    cerradosQueVolvieron,
+    nuevosEnMesesCerrados,
     vendedoresDeOtraSucursal,
     filasRechazadas: archivo.rechazadas,
     filasObservadasPorFabrica: archivo.filas.filter((f) => f.observacionesFabrica.length > 0).length,

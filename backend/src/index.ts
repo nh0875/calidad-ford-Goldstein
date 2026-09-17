@@ -7,6 +7,8 @@ import { seedAdmin } from "./scripts/seedAdmin";
 import { detenerLatido, iniciarLatido } from "./services/latido.service";
 import { limpiarCausasRaizFueraDeLista } from "./services/causa-raiz.service";
 import { completarDatosDePersonas, corregirSucursalesPorCodigo } from "./services/importacion-encuesta-vw.service";
+import { cierreAutomaticoDePeriodos, listasHabilitadas } from "./services/cierre-periodo.service";
+import { sembrarHistoricoCem } from "./services/indicadores-cem.service";
 
 const app = createApp();
 
@@ -61,7 +63,32 @@ corregirSucursalesPorCodigo()
     if (r?.completados) console.log(`[encuesta-vw] ${r.completados} dato(s) de vendedor completados con su otro código`);
     if (r?.distintos.length) console.warn(`[encuesta-vw] vendedores con datos distintos en sus dos códigos: ${r.distintos.join("; ")}`);
   })
-  .catch((err) => console.error("[encuesta-vw] no se pudieron corregir las sucursales:", err));
+  .catch((err) => console.error("[encuesta-vw] no se pudieron corregir las sucursales:", err))
+  // Recién con las sucursales corregidas se cierran meses: el cierre es por provincia.
+  .then(() => correrCierreAutomatico());
+
+// Cierre automático de meses de las encuestas de fábrica (VW): el día 19 se cierra el
+// mes anterior. Corre al arrancar (si el 19 la PC estaba apagada, lo hace ahora) y
+// una vez por hora. Casi siempre no hace nada. En Ford no hay listas: ni se agenda.
+async function correrCierreAutomatico(): Promise<void> {
+  try {
+    for (const c of await cierreAutomaticoDePeriodos()) {
+      // Los meses que se cierran sin clientes no ensucian el log.
+      if (c.cerrados > 0) console.log(`[cierre] ${c.lista} ${c.periodo} ${c.sucursal}: cerrado solo, ${c.cerrados} cliente(s)`);
+    }
+  } catch (err) {
+    console.error("[cierre] el cierre automático de meses falló:", err);
+  }
+}
+const relojCierre = listasHabilitadas().length ? setInterval(() => void correrCierreAutomatico(), 60 * 60 * 1000) : null;
+relojCierre?.unref();
+
+// Indicadores CEM (VW): la primera vez, se carga lo que tenía la planilla "Q 2026".
+sembrarHistoricoCem()
+  .then((sembrado) => {
+    if (sembrado) console.log("[indicadores-cem] cargado el histórico de la planilla Q 2026");
+  })
+  .catch((err) => console.error("[indicadores-cem] no se pudo cargar el histórico:", err));
 
 // Latido: deja constancia de que el sistema esta vivo, y al arrancar mide cuanto
 // estuvo caido. Importa porque los mensajes entrantes de WhatsApp llegan SOLO

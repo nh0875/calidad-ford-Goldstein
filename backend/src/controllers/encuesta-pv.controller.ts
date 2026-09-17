@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
-import { AreaTrabajo, EstadoEncuestaFabrica } from "@prisma/client";
+import { AreaTrabajo, EstadoEncuestaFabrica, ListaCierre } from "@prisma/client";
+import { periodosCerrados } from "../services/cierre-periodo.service";
 import { prisma } from "../config/prisma";
 import { marca } from "../config/marca";
 import { ACCIONES, auditar } from "../services/audit.service";
@@ -26,7 +27,7 @@ import {
 //    Volkswagen.
 
 /** Por qué este usuario no trabaja la lista, o null si puede. */
-function motivoSinAcceso(req: Request): string | null {
+export function motivoSinAccesoPV(req: Request): string | null {
   const sucursal = marca.encuestaFabricaPV.sucursal ?? "";
   if (areaPermitida(req.usuario!) === AreaTrabajo.VENTAS) {
     return "Esta lista es del área de Posventa. Los gráficos mes a mes sí los podés ver.";
@@ -40,16 +41,22 @@ function motivoSinAcceso(req: Request): string | null {
 
 // ---------- GET /api/encuesta-pv ----------
 export async function listarEncuestaPV(req: Request, res: Response) {
-  const motivo = motivoSinAcceso(req);
+  const motivo = motivoSinAccesoPV(req);
   if (motivo) return res.status(403).json({ message: motivo });
-  res.json({ ...(await listarPromotoresPV()), sucursal: marca.encuestaFabricaPV.sucursal });
+  res.json({
+    ...(await listarPromotoresPV()),
+    sucursal: marca.encuestaFabricaPV.sucursal,
+    // Los meses cerrados: un cliente de esos meses que está en la lista llegó
+    // después del cierre, y la pantalla lo marca.
+    periodosCerrados: await periodosCerrados(ListaCierre.ENCUESTA_PV),
+  });
 }
 
 // ---------- GET /api/encuesta-pv/pendientes ----------
 // Para el contador del menú. A quien no trabaja la lista le devuelve 0 en vez de
 // un 403: el menú lo pide seguido y un error ahí solo ensucia.
 export async function pendientesEncuestaPV(req: Request, res: Response) {
-  if (motivoSinAcceso(req)) return res.json({ pendientes: 0 });
+  if (motivoSinAccesoPV(req)) return res.json({ pendientes: 0 });
   res.json({ pendientes: await contarPendientesPV() });
 }
 
@@ -62,7 +69,7 @@ const estadoSchema = z.object({
 });
 
 export async function editarEstadoEncuestaPV(req: Request, res: Response) {
-  const motivo = motivoSinAcceso(req);
+  const motivo = motivoSinAccesoPV(req);
   if (motivo) return res.status(403).json({ message: motivo });
 
   const parseo = estadoSchema.safeParse(req.body);
@@ -77,6 +84,10 @@ export async function editarEstadoEncuestaPV(req: Request, res: Response) {
     include: { caso: { select: { nombrePropietario: true, numeroOrden: true } } },
   });
   if (!fila) return res.status(404).json({ message: "No se encontró ese cliente. Actualizá la lista." });
+  // Un cliente de un mes cerrado solo se consulta (decisión del 17-09-2026).
+  if (fila.cerradoEn) {
+    return res.status(409).json({ message: "Ese cliente es de un mes cerrado: solo se consulta. Para cambiarlo, un administrador tiene que reabrir el mes." });
+  }
   // Un caso eliminado o corregido (ya no es de Posventa de la sucursal) no se lista:
   // tampoco se le cambia el estado desde una pantalla vieja.
   if (!(await casoEsDeLaLista(fila.casoId))) {

@@ -700,19 +700,19 @@ enum TipoAviso {
 }
 
 model Aviso {
-  id      String      @id @default(cuid())
-  tipo    TipoAviso
+  id       String      @id @default(cuid())
+  tipo     TipoAviso
   // Área del caso: un usuario restringido solo ve los avisos de la suya.
-  area    AreaTrabajo @default(POSVENTA)
+  area     AreaTrabajo @default(POSVENTA)
   // Provincia del caso: un usuario acotado a una provincia solo ve los suyos.
   // null = sin provincia conocida; ese aviso lo ve todo el mundo.
   sucursal String?
-  casoId  String?
-  caso    Caso?       @relation(fields: [casoId], references: [id], onDelete: Cascade)
-  rqrId   String?
-  rqr     RQR?        @relation(fields: [rqrId], references: [id], onDelete: Cascade)
-  titulo  String
-  detalle String      @db.Text
+  casoId   String?
+  caso     Caso?       @relation(fields: [casoId], references: [id], onDelete: Cascade)
+  rqrId    String?
+  rqr      RQR?        @relation(fields: [rqrId], references: [id], onDelete: Cascade)
+  titulo   String
+  detalle  String      @db.Text
 
   creadoEn   DateTime  @default(now())
   // Se apaga a mano ("Marcar visto") o solo cuando el RQR asociado se cierra.
@@ -822,14 +822,14 @@ model EncuestaFabricaVW {
   // Cargada a mano por Calidad. Se EXCLUYE de la barrida que da por respondido
   // todo lo que no venga en el Excel nuevo: como nunca va a venir en ese
   // archivo, sin esto desaparecería sola en la siguiente carga.
-  esManual        Boolean     @default(false)
+  esManual Boolean @default(false)
 
   // De qué archivo salió: "FABRICA" (el que baja de la plataforma de VW) o
   // "INTERNO" (el export de la concesionaria). Los dos alimentan la misma lista,
   // pero la barrida que da por respondidos SOLO puede cerrar a los de su propio
   // origen: si no, una carga del interno cerraría en silencio a todos los de
   // fábrica.
-  origenFormato   String      @default("FABRICA")
+  origenFormato String @default("FABRICA")
 
   detectadaEn DateTime  @default(now())
   avisadoEn   DateTime? // cuándo salió el mail al vendedor con este cliente adentro
@@ -848,11 +848,17 @@ model EncuestaFabricaVW {
   // cuenta sobre este caso.
   observacionCalidad String?
 
+  // Cuándo quedó en un MES CERRADO (ver CierrePeriodo). Con fecha, el cliente sale
+  // de la lista de trabajo y de los avisos, y solo se consulta; los gráficos lo
+  // siguen contando. null = está en la lista.
+  cerradoEn DateTime?
+
   @@index([estado, vendedorId])
   @@index([sucursal, estado])
   @@index([origenFormato])
   @@index([vistaEnUploadId])
   @@index([periodo])
+  @@index([cerradoEn])
 }
 
 // ---------------------------------------------------------------------------
@@ -927,5 +933,112 @@ model EncuestaFabricaPV {
   animadoEn    DateTime?
   respondioEn  DateTime?
 
+  // Mes cerrado (ver CierrePeriodo). A diferencia de Ventas, acá el mes no se
+  // guarda: sale de las fechas del caso, que se pueden corregir. Por eso se anota
+  // en qué mes quedó cerrado, y la consulta y la reapertura usan ese.
+  cerradoEn     DateTime?
+  periodoCierre String?
+
   @@index([estado])
+  @@index([cerradoEn])
+}
+
+// ---------------------------------------------------------------------------
+// Cierre de meses (Volkswagen, 17-09-2026)
+// ---------------------------------------------------------------------------
+// Los clientes de un mes se CIERRAN: salen de la lista de trabajo (ocupaban lugar
+// y confundían) y quedan para consultar. Se cierra por mes y por provincia, con un
+// botón (Calidad) o solo el día 19 del mes siguiente. Reabre un administrador.
+
+enum ListaCierre {
+  ENCUESTA_VENTAS // Encuestas de fábrica (EncuestaFabricaVW)
+  ENCUESTA_PV // Encuestas de fábrica PV (EncuestaFabricaPV)
+}
+
+enum OrigenCierre {
+  MANUAL
+  AUTOMATICO
+}
+
+model CierrePeriodo {
+  id       String       @id @default(cuid())
+  lista    ListaCierre
+  periodo  String // "AAAA-MM"
+  sucursal String // como la escribe la marca: "Mendoza", "San Juan"
+  origen   OrigenCierre
+
+  cerradoEn        DateTime @default(now())
+  cerradoPorId     String?
+  cerradoPorNombre String?
+  // Cuántos clientes quedaron cerrados en este mes (se recuenta en cada cierre).
+  clientesCerrados Int      @default(0)
+
+  // Un administrador lo reabrió. La fila queda: el cierre automático la ve y no
+  // vuelve a cerrar un mes que alguien abrió a propósito.
+  reabiertoEn        DateTime?
+  reabiertoPorId     String?
+  reabiertoPorNombre String?
+
+  @@unique([lista, periodo, sucursal])
+}
+
+// ---------------------------------------------------------------------------
+// Indicadores CEM por trimestre (Volkswagen, 17-09-2026)
+// ---------------------------------------------------------------------------
+// Reemplaza la planilla "Q 2026" de Calidad. Los números se cargan a mano (vienen
+// de fábrica y del DMS, no del sistema); los porcentajes, totales y la comparación
+// con los objetivos los calcula el sistema (indicadores-cem.service.ts).
+
+model IndicadorCemMes {
+  id       String @id @default(cuid())
+  periodo  String // "AAAA-MM"
+  sucursal String // "Mendoza", "San Juan"
+
+  patentamientos     Int?
+  baseCem            Int?
+  baseCemTradicional Int?
+  baseCemAutoahorro  Int?
+  encuestasEfectivas Int?
+  baseSinDuplicados  Int?
+  mailOk             Int?
+  // OS del mes, como lo publica fábrica (4,86).
+  os                 Float?
+
+  actualizadoEn        DateTime @updatedAt
+  actualizadoPorNombre String?
+
+  @@unique([periodo, sucursal])
+}
+
+model IndicadorCemTrimestre {
+  id        String @id @default(cuid())
+  anio      Int
+  trimestre Int // 1 a 4
+  sucursal  String
+
+  // El OS del trimestre lo publica fábrica: NO es el promedio de los tres meses.
+  os                 Float?
+  // "Resultado auditoría", en porcentaje (88,10).
+  resultadoAuditoria Float?
+
+  actualizadoEn        DateTime @updatedAt
+  actualizadoPorNombre String?
+
+  @@unique([anio, trimestre, sucursal])
+}
+
+// Los objetivos cambian de un trimestre a otro y valen para las dos provincias.
+model ObjetivoCemTrimestre {
+  id        String @id @default(cuid())
+  anio      Int
+  trimestre Int
+
+  os          Float?
+  cargas      Float? // % de carga mínimo (base CEM / patentamientos)
+  mailValidos Float? // % de mails válidos mínimo
+
+  actualizadoEn        DateTime @updatedAt
+  actualizadoPorNombre String?
+
+  @@unique([anio, trimestre])
 }

@@ -122,7 +122,8 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
     where: {
       activo: true,
       ...(codigos?.length ? { codigo: { in: codigos } } : {}),
-      pendientes: { some: { estado: EstadoEncuestaFabrica.PENDIENTE } },
+      // Los de un mes cerrado no se avisan (decisión del 17-09-2026).
+      pendientes: { some: { estado: EstadoEncuestaFabrica.PENDIENTE, cerradoEn: null } },
     },
     select: {
       id: true,
@@ -135,7 +136,7 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
         // vuelven a entrar acá: es lo que impide que al vendedor le llegue el
         // mismo cliente dos veces. Antes, cada aviso le mandaba de nuevo la lista
         // completa y el vendedor no podía distinguir lo nuevo de lo ya visto.
-        where: { estado: EstadoEncuestaFabrica.PENDIENTE },
+        where: { estado: EstadoEncuestaFabrica.PENDIENTE, cerradoEn: null },
         select: { id: true, nombreCliente: true, email: true, dominio: true, canalVentas: true, fechaEntrega: true },
         orderBy: { fechaEntrega: "asc" },
       },
@@ -212,7 +213,7 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
         // Por id y no por "todos los pendientes de este vendedor": entre que se
         // armó la lista y salió el correo puede haber entrado un cliente nuevo, y
         // ese no estaba en el mail. Marcarlo sería perderlo.
-        where: { id: { in: pendientes.map((p) => p.id) } },
+        where: { id: { in: pendientes.map((p) => p.id) }, cerradoEn: null },
         data: { estado: EstadoEncuestaFabrica.AVISADO, avisadoEn: ahora },
       });
       resultados.push({ ...base, enviado: true, error: null });

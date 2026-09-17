@@ -22,6 +22,7 @@ import configuracionRoutes from "./configuracion.routes";
 import refuerzoRoutes from "./refuerzo.routes";
 import encuestaVwRoutes from "./encuesta-vw.routes";
 import encuestaPvRoutes from "./encuesta-pv.routes";
+import indicadoresCemRoutes from "./indicadores-cem.routes";
 import posventaRoutes from "./posventa.routes";
 import supresionRoutes from "./supresion.routes";
 import normalizacionRoutes from "./normalizacion.routes";
@@ -31,6 +32,7 @@ import {
   requireEncuestaPV,
   requireEncuestaVW,
   requireFidelizacion,
+  requireIndicadoresCem,
   requirePosventaPorItems,
   requireRefuerzo,
 } from "../middlewares/marca";
@@ -88,6 +90,8 @@ router.use("/encuesta-vw", requireEncuestaVW, encuestaVwRoutes);
 // Encuestas de fábrica de Posventa (Volkswagen): los promotores de 5 estrellas de
 // la sucursal configurada, que Calidad anima a responder la encuesta.
 router.use("/encuesta-pv", requireEncuestaPV, encuestaPvRoutes);
+// Indicadores CEM por trimestre (Volkswagen): la planilla "Q" de Calidad.
+router.use("/indicadores-cem", requireIndicadoresCem, indicadoresCemRoutes);
 // Desempeño de Posventa por ítems (trato, organización, reparación, lavado y
 // satisfacción general), con su exportación a Excel y Word.
 router.use("/posventa", requirePosventaPorItems, posventaRoutes);

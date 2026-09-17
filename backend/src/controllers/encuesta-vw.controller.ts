@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
-import { EstadoEncuestaFabrica } from "@prisma/client";
+import { EstadoEncuestaFabrica, ListaCierre } from "@prisma/client";
+import { periodosCerrados } from "../services/cierre-periodo.service";
 import { prisma } from "../config/prisma";
 import { marca, mensajeSucursalInvalida, sucursalCanonica, SUCURSAL_GENERAL } from "../config/marca";
 import { abrirWorkbook, borrarArchivoTemporal, guardarArchivoTemporal, leerArchivoTemporal } from "../services/excel.service";
@@ -184,6 +185,19 @@ export async function confirmEncuestaVW(req: Request, res: Response) {
     // pasaba, y quien sube el archivo tiene que poder quedarse tranquilo.
     `${resumen.pendientesQueSiguen} que ya estaban (conservan su estado)`,
   ];
+  if (resumen.clientesDeMesesCerrados) {
+    partes.push(`${resumen.clientesDeMesesCerrados} de meses ya cerrados (se corrigieron sus datos, siguen cerrados)`);
+  }
+  if (resumen.cerradosQueVolvieron) {
+    partes.push(
+      `${resumen.cerradosQueVolvieron} que estaban cerrados volvieron a la lista: con el mes o la provincia corregidos, su mes está abierto`
+    );
+  }
+  if (resumen.nuevosEnMesesCerrados) {
+    partes.push(
+      `${resumen.nuevosEnMesesCerrados} nuevo(s) de un mes ya cerrado: quedan en la lista marcados, para trabajarlos`
+    );
+  }
   if (resumen.vendedoresNuevos) partes.push(`${resumen.vendedoresNuevos} vendedor(es) nuevo(s)`);
   // Se avisa explícitamente: es una decisión del sistema (dos códigos = una
   // persona) y conviene que quede a la vista para poder desmentirla si se
@@ -234,9 +248,11 @@ export async function listarEncuestaVW(req: Request, res: Response) {
         // se le avisó, pero el cliente todavía no contestó y Calidad lo tiene que
         // seguir viendo. Si acá quedara solo PENDIENTE, avisar haría desaparecer
         // clientes de la pantalla.
+        // Los de un MES CERRADO no están en la lista de trabajo: se consultan desde
+        // el mes cerrado (ver cierre-periodo.service.ts).
         where: incluirRespondidos
-          ? {}
-          : { estado: { in: [EstadoEncuestaFabrica.PENDIENTE, EstadoEncuestaFabrica.AVISADO] } },
+          ? { cerradoEn: null }
+          : { cerradoEn: null, estado: { in: [EstadoEncuestaFabrica.PENDIENTE, EstadoEncuestaFabrica.AVISADO] } },
         orderBy: { fechaEntrega: "asc" },
         select: {
           id: true,
@@ -299,6 +315,9 @@ export async function listarEncuestaVW(req: Request, res: Response) {
       totalManuales: todos.filter((p) => p.esManual).length,
       totalVendedores: vendedores.length,
     },
+    // Los meses cerrados: un cliente de esos meses que está en la lista llegó
+    // después del cierre, y la pantalla lo marca.
+    periodosCerrados: await periodosCerrados(ListaCierre.ENCUESTA_VENTAS),
   });
 }
 
@@ -542,6 +561,15 @@ export async function crearEncuestaManualVW(req: Request, res: Response) {
   // El chasis identifica la unidad y es único: si ya está, no se duplica.
   const chasis = d.chasis.toUpperCase();
   const yaEsta = await prisma.encuestaFabricaVW.findUnique({ where: { chasis } });
+  if (yaEsta?.cerradoEn) {
+    // No está en la lista de trabajo: decir "ya está en la lista" haría buscarlo donde no aparece.
+    return res.status(409).json({
+      message:
+        `Ese chasis ya está cargado (${yaEsta.nombreCliente}), en un mes cerrado: ` +
+        `${nombrePeriodo(yaEsta.periodo ?? "")} de ${sucursalCanonica(yaEsta.sucursal) ?? yaEsta.sucursal}. ` +
+        `Se consulta desde Cierre de meses; para trabajarlo, un administrador tiene que reabrir el mes.`,
+    });
+  }
   if (yaEsta) {
     return res.status(409).json({
       message:
@@ -613,6 +641,8 @@ export async function editarEstadoEncuestaVW(req: Request, res: Response) {
     include: { vendedor: { select: { codigo: true, nombre: true } } },
   });
   if (!encuesta) return res.status(404).json({ message: "No se encontró ese cliente." });
+  // Un cliente de un mes cerrado solo se consulta (decisión del 17-09-2026).
+  if (encuesta.cerradoEn) return res.status(409).json({ message: "Ese cliente es de un mes cerrado: solo se consulta. Para cambiarlo, un administrador tiene que reabrir el mes." });
 
   const estadoNuevo = cambios.estado ?? encuesta.estado;
 
@@ -668,6 +698,7 @@ export async function eliminarEncuestaVW(req: Request, res: Response) {
     include: { vendedor: { select: { codigo: true, nombre: true } } },
   });
   if (!encuesta) return res.status(404).json({ message: "No se encontró ese cliente." });
+  if (encuesta.cerradoEn) return res.status(409).json({ message: "Ese cliente es de un mes cerrado: solo se consulta. Para cambiarlo, un administrador tiene que reabrir el mes." });
 
   await prisma.encuestaFabricaVW.delete({ where: { id: encuesta.id } });
 

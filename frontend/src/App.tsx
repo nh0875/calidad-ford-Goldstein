@@ -19,6 +19,7 @@ import Configuracion from "./pages/Configuracion";
 import Refuerzos from "./pages/Refuerzos";
 import EncuestasFabrica from "./pages/EncuestasFabrica";
 import EncuestasFabricaPV from "./pages/EncuestasFabricaPV";
+import IndicadoresCem from "./pages/IndicadoresCem";
 import DesempenoPosventa from "./pages/DesempenoPosventa";
 import Fidelizacion from "./pages/Fidelizacion";
 import ClientesFidelizacion from "./pages/ClientesFidelizacion";
@@ -58,6 +59,7 @@ export default function App() {
           <Route path="/refuerzos" element={<Refuerzos />} />
           <Route path="/encuestas-fabrica" element={<EncuestasFabrica />} />
           <Route path="/encuestas-fabrica-pv" element={<EncuestasFabricaPV />} />
+          <Route path="/indicadores-cem" element={<IndicadoresCem />} />
           <Route path="/desempeno-posventa" element={<DesempenoPosventa />} />
           <Route path="/fidelizacion" element={<Fidelizacion />} />
           <Route path="/fidelizacion/clientes" element={<ClientesFidelizacion />} />

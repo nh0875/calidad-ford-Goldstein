@@ -61,6 +61,15 @@ export async function apiPatchJson<T>(url: string, data: unknown): Promise<T> {
   return manejarRespuesta<T>(res);
 }
 
+export async function apiPutJson<T>(url: string, data: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: conAuth({ "Content-Type": "application/json" }),
+    body: JSON.stringify(data),
+  });
+  return manejarRespuesta<T>(res);
+}
+
 export async function apiPostForm<T>(url: string, form: FormData): Promise<T> {
   const res = await fetch(url, { method: "POST", headers: conAuth(), body: form });
   return manejarRespuesta<T>(res);

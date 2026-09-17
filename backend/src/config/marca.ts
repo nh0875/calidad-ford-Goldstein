@@ -118,6 +118,12 @@ export interface PerfilMarca {
     sucursal: string | null;
   };
   /**
+   * Indicadores CEM por trimestre: la planilla "Q" de Calidad de VW (patentamientos,
+   * base CEM, encuestas efectivas, mails válidos, OS y auditoría, con sus objetivos).
+   * Los números se cargan a mano. En Ford no existe esa planilla.
+   */
+  indicadoresCem: boolean;
+  /**
    * La separación por PROVINCIA se aplica en TODO el sistema (listados, tableros,
    * reportes, campañas) además de por área.
    *
@@ -193,6 +199,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     refuerzo: { habilitado: true, notificarPorMail: false, formatoExcel: "FORD", sucursalPorCodigoVendedor: {} },
     // Sin estrellas no hay promotores de 5: la pestaña no aplica.
     encuestaFabricaPV: { habilitado: false, sucursal: null },
+    indicadoresCem: false,
     visibilidadPorProvincia: false,
     avisoPosibleDuplicado: false,
     segundoContacto: false,
@@ -231,6 +238,8 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     },
     // Pedido de Calidad del 16-09-2026: los promotores de Posventa MENDOZA.
     encuestaFabricaPV: { habilitado: true, sucursal: "Mendoza" },
+    // Pedido de Calidad del 17-09-2026: la planilla "Q 2026" adentro del sistema.
+    indicadoresCem: true,
     visibilidadPorProvincia: true,
     avisoPosibleDuplicado: true,
     segundoContacto: true,

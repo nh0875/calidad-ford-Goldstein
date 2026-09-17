@@ -26,6 +26,8 @@ export interface InfoMarca {
     encuestaFabrica: boolean;
     // Encuestas de fábrica de Posventa: los promotores de 5 estrellas (Volkswagen).
     encuestaFabricaPV: boolean;
+    // Indicadores CEM por trimestre: la planilla "Q" de Calidad (Volkswagen).
+    indicadoresCem: boolean;
     // Pantalla de desempeño de Posventa por ítems (Volkswagen).
     desempenoPosventa: boolean;
     // Circuito de insistencia: 2° contacto por WhatsApp y 3° por llamada.
@@ -75,6 +77,7 @@ const POR_DEFECTO: InfoMarca = {
     refuerzo: true,
     encuestaFabrica: false,
     encuestaFabricaPV: false,
+    indicadoresCem: false,
     desempenoPosventa: false,
     segundoContacto: false,
   },

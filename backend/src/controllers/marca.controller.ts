@@ -33,6 +33,8 @@ export function infoMarca(_req: Request, res: Response) {
       encuestaFabrica: marca.refuerzo.habilitado && marca.refuerzo.formatoExcel === "VW",
       // Encuestas de fábrica de Posventa: los promotores de 5 estrellas.
       encuestaFabricaPV: marca.encuestaFabricaPV.habilitado && !!marca.encuestaFabricaPV.sucursal,
+      // Indicadores CEM por trimestre (la planilla "Q" de Calidad).
+      indicadoresCem: marca.indicadoresCem,
       // Pantalla de desempeño de Posventa por ítems.
       desempenoPosventa: marca.posventaPorItems,
       // El circuito de insistencia (2° contacto + llamada). La pantalla lo usa

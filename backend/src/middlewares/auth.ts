@@ -71,6 +71,9 @@ const RUTAS_FIDELIZACION = [
   /^\/encuesta-vw\/seguimiento$/,
   // Lo mismo para los graficos de Encuestas de fabrica de Posventa.
   /^\/encuesta-pv\/seguimiento$/,
+  // Los Indicadores CEM los ve cualquier perfil (17-09-2026). Solo la lectura: la
+  // carga (/mes, /trimestre, /objetivos) no calza con el patron y queda cerrada.
+  /^\/indicadores-cem\/?$/,
 ];
 
 /**

@@ -51,6 +51,8 @@ export interface ClienteSeguimiento {
   estado: EstadoEncuestaFabrica;
   avisadoEn: Date | null;
   sucursal: string;
+  /** Es de un mes cerrado: cuenta en los gráficos, pero no en lo que falta trabajar. */
+  cerrado?: boolean;
   vendedor: {
     codigo: string;
     nombre: string | null;
@@ -256,11 +258,13 @@ export async function traerClientesSeguimiento(sucursal: string | null): Promise
       estado: true,
       avisadoEn: true,
       sucursal: true,
+      cerradoEn: true,
       vendedor: { select: { codigo: true, numero: true, nombre: true, sucursal: true, email: true } },
     },
   });
-  const clientes: ClienteSeguimiento[] = filas.map(({ vendedor: { numero, ...vendedor }, ...f }) => ({
+  const clientes: ClienteSeguimiento[] = filas.map(({ vendedor: { numero, ...vendedor }, cerradoEn, ...f }) => ({
     ...f,
+    cerrado: !!cerradoEn,
     vendedor: { ...vendedor, persona: clavePersonaVendedor({ codigo: vendedor.codigo, numero }) },
   }));
   if (!sucursal) return clientes;

@@ -57,6 +57,14 @@ export function requireEncuestaPV(_req: Request, res: Response, next: NextFuncti
   next();
 }
 
+/** Indicadores CEM por trimestre: solo en las marcas que usan esa planilla. */
+export function requireIndicadoresCem(_req: Request, res: Response, next: NextFunction) {
+  if (!marca.indicadoresCem) {
+    return res.status(404).json({ message: `Los indicadores CEM no están disponibles en ${marca.nombre}.` });
+  }
+  next();
+}
+
 /**
  * Encuesta de Posventa medida por ítems. Solo en las marcas que la usan: en las
  * demás el área se clasifica con una nota sola y estas pantallas no existen.

@@ -15,6 +15,9 @@ import {
   seguimientoEncuestaVW,
 } from "../controllers/encuesta-vw.controller";
 import { estadoMailRefuerzo } from "../controllers/refuerzo.controller";
+import { cerrarMes, clientesDelMesCerrado, listarMeses, reabrirMes } from "../controllers/cierre-periodo.controller";
+import { requireAdmin } from "../middlewares/auth";
+import { ListaCierre } from "@prisma/client";
 
 const router = Router();
 
@@ -69,5 +72,13 @@ router.patch("/clientes/:id", asyncHandler(editarEstadoEncuestaVW));
 // Saca un cliente de la lista. Si vino del Excel de fabrica y sigue figurando
 // ahi, la proxima carga lo vuelve a traer; los cargados a mano no vuelven.
 router.delete("/clientes/:id", asyncHandler(eliminarEncuestaVW));
+
+// Cierre de meses (ver services/cierre-periodo.service.ts). Cierra Calidad; REABRIR
+// sí es solo de administradores (decisión del 17-09-2026), la única excepción a lo
+// de arriba.
+router.get("/cierres", asyncHandler(listarMeses(ListaCierre.ENCUESTA_VENTAS)));
+router.post("/cierres", asyncHandler(cerrarMes(ListaCierre.ENCUESTA_VENTAS)));
+router.post("/cierres/reabrir", requireAdmin, asyncHandler(reabrirMes(ListaCierre.ENCUESTA_VENTAS)));
+router.get("/cierres/clientes", asyncHandler(clientesDelMesCerrado(ListaCierre.ENCUESTA_VENTAS)));
 
 export default router;

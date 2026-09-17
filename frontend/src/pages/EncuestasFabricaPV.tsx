@@ -21,6 +21,7 @@ import { Input, Select } from "../components/ui/Field";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 import { Desplegable } from "../components/ui/Desplegable";
+import CierreDeMeses, { esDeMesCerrado } from "../components/CierreDeMeses";
 import {
   BarrasAnimacionPorMes,
   etiquetaMes,
@@ -86,6 +87,8 @@ interface RespuestaLista {
   data: Promotor[];
   resumen: { pendientes: number; animados: number; respondieron: number; total: number };
   sucursal: string | null;
+  /** Los meses cerrados: un promotor de esos meses que sigue en la lista llegó tarde. */
+  periodosCerrados?: Array<{ periodo: string; sucursal: string }>;
 }
 
 type SeguimientoPV = SeguimientoEncuestas & { sucursal: string | null };
@@ -387,6 +390,50 @@ export default function EncuestasFabricaPV() {
       {cargando && !lista && !sinAcceso && <SkeletonBlock className="h-64 w-full" />}
 
       {lista && (
+        <CierreDeMeses<Promotor>
+          base="/api/encuesta-pv"
+          cambio={version}
+          onCambio={cargar}
+          renderClientes={(promotores) => (
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                  <th className="px-5 py-2">Cliente</th>
+                  <th className="px-3 py-2">Vehículo</th>
+                  <th className="px-3 py-2">Asesor</th>
+                  <th className="px-3 py-2">Servicio</th>
+                  <th className="px-5 py-2">Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {promotores.map((p) => (
+                  <tr key={p.id} className="border-b border-gray-100">
+                    <td className="px-5 py-2">
+                      <div className="font-medium text-ink">{p.caso.nombrePropietario}</div>
+                      <div className="text-xs text-ink-muted">{p.caso.telefono || "sin teléfono"}</div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="text-ink">{p.caso.modelo}</div>
+                      <div className="text-xs text-ink-muted">
+                        {p.caso.patente} · OR {p.caso.numeroOrden}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-ink">{p.caso.asesor || "—"}</td>
+                    <td className="px-3 py-2 text-ink">{fechaCorta(p.caso.fechaServicio)}</td>
+                    <td className="px-5 py-2">
+                      <Badge tono={p.estado === "RESPONDIO" ? "verde" : p.estado === "AVISADO" ? "azul" : "amarillo"}>
+                        {ETIQUETA_ESTADO[p.estado]}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        />
+      )}
+
+      {lista && (
         <Card padding="p-0">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-5 py-3">
             <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">
@@ -463,6 +510,14 @@ export default function EncuestasFabricaPV() {
                       <td className="px-3 py-2.5">
                         <div className="text-ink">{fechaCorta(p.caso.fechaServicio)}</div>
                         <div className="text-xs text-ink-muted">{p.periodo ? etiquetaMes(p.periodo) : "sin mes"}</div>
+                        {esDeMesCerrado(p.periodo, p.caso.sucursal, lista.periodosCerrados) && (
+                          <span
+                            className="mt-0.5 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                            title="Su mes ya estaba cerrado cuando entró a la lista. Trabajalo, o guardalo desde Cierre de meses."
+                          >
+                            MES CERRADO
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2.5">
                         <div className="text-ink">{fechaCorta(p.calificadoEn)}</div>

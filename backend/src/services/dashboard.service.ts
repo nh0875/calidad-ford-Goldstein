@@ -46,12 +46,15 @@ async function resumenEncuestaFabrica(sucursal: string | null, sucursalGraficos:
 
   const clientes = await traerClientesSeguimiento(sucursal);
   const conEstado = (e: EstadoEncuestaFabrica) => clientes.filter((c) => c.estado === e);
-  const sinAvisar = conEstado(EstadoEncuestaFabrica.PENDIENTE);
-  const esperandoRespuesta = conEstado(EstadoEncuestaFabrica.AVISADO).length;
+  // Lo que FALTA TRABAJAR no incluye los meses cerrados: esos clientes ya no se
+  // avisan ni se tocan. El total, los respondidos y la tasa sí los cuentan: son
+  // la historia, como en los gráficos.
+  const sinAvisar = conEstado(EstadoEncuestaFabrica.PENDIENTE).filter((c) => !c.cerrado);
+  const esperandoRespuesta = conEstado(EstadoEncuestaFabrica.AVISADO).filter((c) => !c.cerrado).length;
   const respondieron = conEstado(EstadoEncuestaFabrica.RESPONDIO).length;
   // "Sin responder" son los pendientes Y los avisados: al avisado ya se le mandó
   // el correo al vendedor, pero el cliente todavía no contestó.
-  const sinResponder = clientes.filter((c) => c.estado !== EstadoEncuestaFabrica.RESPONDIO);
+  const sinResponder = clientes.filter((c) => c.estado !== EstadoEncuestaFabrica.RESPONDIO && !c.cerrado);
 
   // Un renglón por PERSONA: el 1035078 y el 1036078 son el mismo vendedor en dos
   // sucursales y se suman, igual que en la pantalla de Encuestas de fábrica.

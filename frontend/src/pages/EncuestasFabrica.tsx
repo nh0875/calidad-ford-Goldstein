@@ -21,6 +21,7 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 import { SelectorSucursal } from "../components/ui/SelectorSucursal";
 import { Desplegable } from "../components/ui/Desplegable";
+import CierreDeMeses, { esDeMesCerrado } from "../components/CierreDeMeses";
 import {
   BarrasAnimacionPorMes,
   etiquetaMes,
@@ -155,6 +156,18 @@ interface Vendedor {
   pendientes: Pendiente[];
 }
 
+/** Un cliente de un mes cerrado, como lo devuelve la consulta (solo lectura). */
+interface ClienteCerradoVentas {
+  id: string;
+  chasis: string;
+  dominio: string | null;
+  nombreCliente: string;
+  email: string;
+  fechaEntrega: string | null;
+  estado: EstadoCliente;
+  vendedor: { codigo: string; nombre: string | null } | null;
+}
+
 interface Resumen {
   totalPendientes: number;
   vendedoresConPendientes: number;
@@ -244,6 +257,8 @@ export default function EncuestasFabrica() {
   const soloGraficos = esSoloFidelizacion(getUsuario());
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
   const [resumen, setResumen] = useState<Resumen | null>(null);
+  // Los meses cerrados: un cliente de esos meses que sigue en la lista llegó tarde.
+  const [periodosCerrados, setPeriodosCerrados] = useState<Array<{ periodo: string; sucursal: string }>>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
@@ -276,11 +291,14 @@ export default function EncuestasFabrica() {
       const [r, m] = await Promise.all([
         // Se piden tambien los respondidos: si no, el cliente desaparecia de la
         // pantalla apenas contestaba y no habia forma de hacerle seguimiento.
-        apiGet<{ data: Vendedor[]; resumen: Resumen }>("/api/encuesta-vw?incluirRespondidos=true"),
+        apiGet<{ data: Vendedor[]; resumen: Resumen; periodosCerrados?: Array<{ periodo: string; sucursal: string }> }>(
+          "/api/encuesta-vw?incluirRespondidos=true"
+        ),
         apiGet<EstadoMail>("/api/encuesta-vw/estado-mail").catch(() => null),
       ]);
       setVendedores(r.data);
       setResumen(r.resumen);
+      setPeriodosCerrados(r.periodosCerrados ?? []);
       setEstadoMail(m);
       setVersion((v) => v + 1);
       setError(null);
@@ -1010,6 +1028,54 @@ export default function EncuestasFabrica() {
       )}
       {bloqueSeguimiento}
 
+      {/* Cierre de meses: los clientes de un mes cerrado salen de la lista de abajo
+          y se consultan desde acá. */}
+      <CierreDeMeses<ClienteCerradoVentas>
+        base="/api/encuesta-vw"
+        sucursalFiltro={sucursalGraficos}
+        cambio={version}
+        onCambio={cargar}
+        renderClientes={(lista) => (
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 text-left text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                <th className="px-5 py-2">Cliente</th>
+                <th className="px-3 py-2">Chasis / Dominio</th>
+                <th className="px-3 py-2">Vendedor</th>
+                <th className="px-3 py-2">Entrega</th>
+                <th className="px-5 py-2">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map((c) => (
+                <tr key={c.id} className="border-b border-gray-100">
+                  <td className="max-w-[15rem] px-5 py-2">
+                    <div className="truncate font-medium text-ink" title={c.nombreCliente}>
+                      {c.nombreCliente}
+                    </div>
+                    <div className="truncate text-xs text-ink-muted">{c.email || "sin correo"}</div>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2">
+                    <div className="font-mono text-[11px] text-ink-muted">{c.chasis}</div>
+                    <div className="font-mono text-[11px] font-semibold text-ink">{c.dominio || "—"}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="text-ink">{c.vendedor?.nombre || c.vendedor?.codigo}</div>
+                    <div className="text-xs text-ink-muted">{c.vendedor?.codigo}</div>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-ink-muted">{fechaCorta(c.fechaEntrega)}</td>
+                  <td className="px-5 py-2">
+                    <Badge tono={c.estado === "RESPONDIO" ? "verde" : c.estado === "AVISADO" ? "azul" : "amarillo"}>
+                      {ETIQUETA_ESTADO[c.estado]}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      />
+
       {/* Clientes cargados */}
       <Card padding="p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-5 py-3">
@@ -1079,6 +1145,16 @@ export default function EncuestasFabrica() {
                           {c.esManual && (
                             <span className="ml-2 rounded bg-gray-200 px-1.5 py-0.5 align-middle text-[10px] font-semibold text-gray-700">
                               A MANO
+                            </span>
+                          )}
+                          {/* Su mes ya está cerrado: llegó después del cierre y hay que
+                              trabajarlo (o guardarlo con "Guardar los que llegaron"). */}
+                          {esDeMesCerrado(c.periodo, c.sucursal, periodosCerrados) && (
+                            <span
+                              className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 align-middle text-[10px] font-semibold text-amber-800"
+                              title="Su mes ya estaba cerrado cuando llegó. Trabajalo, o guardalo desde Cierre de meses."
+                            >
+                              MES CERRADO
                             </span>
                           )}
                         </div>

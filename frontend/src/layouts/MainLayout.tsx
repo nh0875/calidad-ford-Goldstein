@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Award,
+  Gauge,
   ClipboardCheck,
   ClipboardList,
   GitBranch,
@@ -46,7 +47,7 @@ const navItems: Array<{
   label: string;
   icono: LucideIcon;
   exacto?: boolean;
-  modulo?: "fidelizacion" | "refuerzo" | "encuestaFabrica" | "encuestaFabricaPV" | "desempenoPosventa";
+  modulo?: "fidelizacion" | "refuerzo" | "encuestaFabrica" | "encuestaFabricaPV" | "indicadoresCem" | "desempenoPosventa";
 }> = [
   { to: "/dashboard", label: "Dashboard", icono: LayoutDashboard },
   { to: "/upload", label: "Carga de Excel", icono: UploadCloud },
@@ -59,6 +60,7 @@ const navItems: Array<{
   { to: "/refuerzos", label: "Refuerzo de encuesta", icono: ClipboardCheck, modulo: "refuerzo" },
   { to: "/encuestas-fabrica", label: "Encuestas de fábrica", icono: MailCheck, modulo: "encuestaFabrica" },
   { to: "/encuestas-fabrica-pv", label: "Encuestas de fábrica PV", icono: Award, modulo: "encuestaFabricaPV" },
+  { to: "/indicadores-cem", label: "Indicadores CEM", icono: Gauge, modulo: "indicadoresCem" },
   // Fidelización solo existe en las marcas que la usan (ver modulo abajo).
   { to: "/fidelizacion", label: "Fidelización", icono: Gift, exacto: true, modulo: "fidelizacion" },
   { to: "/fidelizacion/clientes", label: "Clientes de fidelización", icono: HeartHandshake, modulo: "fidelizacion" },
@@ -81,6 +83,7 @@ const pageTitles: Record<string, string> = {
   "/refuerzos": "Refuerzo de la encuesta de fábrica",
   "/encuestas-fabrica": "Encuestas de fábrica — pendientes por vendedor",
   "/encuestas-fabrica-pv": "Encuestas de fábrica PV — promotores de Posventa",
+  "/indicadores-cem": "Indicadores CEM — por trimestre",
   "/fidelizacion": "Fidelización — carga de planillas",
   "/fidelizacion/clientes": "Clientes de fidelización",
   "/cambiar-password": "Cambiar mi contraseña",
@@ -161,6 +164,7 @@ export default function MainLayout() {
     "/seguimiento",
     "/encuestas-fabrica",
     "/encuestas-fabrica-pv",
+    "/indicadores-cem",
   ];
   const soloFidelizacion = esSoloFidelizacion(usuario);
   const itemsDeLaMarca = navItems

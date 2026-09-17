@@ -64,6 +64,12 @@ export const ACCIONES = {
   // Lo mismo en la pestaña de Posventa (promotores de 5 estrellas): Calidad
   // declara que animó al cliente o que ya respondió la encuesta de fábrica.
   ENCUESTA_PV_ESTADO_CAMBIADO: "ENCUESTA_PV_ESTADO_CAMBIADO",
+  // Cierre de meses de las encuestas de fábrica: saca clientes de la lista de
+  // trabajo. El automático del día 19 se audita sin usuario.
+  PERIODO_CERRADO: "PERIODO_CERRADO",
+  PERIODO_REABIERTO: "PERIODO_REABIERTO",
+  // Indicadores CEM: números que después se informan a fábrica.
+  INDICADORES_CEM_EDITADOS: "INDICADORES_CEM_EDITADOS",
   // El circuito de insistencia. Las tres se auditan porque las tres terminan
   // en algo que le pasa a un cliente real: un WhatsApp que sale, o un caso que
   // se da por respondido sin que haya quedado ni un mensaje escrito.
