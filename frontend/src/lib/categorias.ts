@@ -44,6 +44,15 @@ export function etiquetaCategoria(categoria: string | null): string {
   return causasRaiz().find((c) => c.codigo === categoria)?.etiqueta ?? categoria;
 }
 
+/**
+ * Las causas de un RQR en pantalla, separadas por coma. Un RQR puede tener varias
+ * desde el 17-09-2026; sin ninguna es una tarea pendiente (FALTA_CLASIFICAR).
+ */
+export function etiquetasCategorias(codigos: string[] | null | undefined): string {
+  if (!codigos || codigos.length === 0) return FALTA_CLASIFICAR;
+  return codigos.map((c) => etiquetaCategoria(c)).join(", ");
+}
+
 export function fechaCorta(iso: string | null | undefined): string {
   if (!iso) return "-";
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);

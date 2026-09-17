@@ -213,7 +213,7 @@ export async function dashboardResumen(f: FiltrosReporte, sucursalGraficos: stri
       modelo: r.caso?.modelo ?? r.modeloManual ?? "—",
       // El asesor que quedó en el RQR al abrirlo (pedido de Calidad, 16-09-2026).
       asesor: r.asesor,
-      causaRaiz: r.causaRaiz,
+      causasRaiz: r.causasRaiz,
       estado: r.estado,
       diasAbierto: diasAbierto(r.fechaApertura),
     })),

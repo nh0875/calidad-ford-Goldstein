@@ -1,5 +1,6 @@
 import { AreaTrabajo, Caso, EstadoRQR, Prisma, SentimentAnalysis } from "@prisma/client";
 import { prisma } from "../config/prisma";
+import { etiquetasCausasRaiz } from "./causa-raiz.service";
 import { ACCIONES, auditar } from "./audit.service";
 
 function fechaHora(d: Date): string {
@@ -70,7 +71,10 @@ export async function crearRqrAutomatico(params: {
         if (abierto) {
           const linea =
             `[${fechaHora(new Date())}] Nueva respuesta del cliente que ameritaba RQR ` +
-            `(semáforo ${analisis.semaforo ?? "s/d"}, severidad ${analisis.severidad ?? "s/d"}): ` +
+            `(semáforo ${analisis.semaforo ?? "s/d"}, severidad ${analisis.severidad ?? "s/d"}` +
+            // Las causas que vio la IA en ESTA respuesta quedan anotadas, pero no se
+            // agregan solas al RQR: las causas del RQR las confirma Calidad.
+            `${analisis.categoriasCausaRaiz.length ? `, causas sugeridas: ${etiquetasCausasRaiz(analisis.categoriasCausaRaiz)}` : ""}): ` +
             `"${textoCliente}"`;
           const actualizado = await tx.rQR.update({
             where: { id: abierto.id },
@@ -92,7 +96,9 @@ export async function crearRqrAutomatico(params: {
         let descripcionReclamo =
           `[Generado automáticamente, revisar y ajustar]\n\n` +
           `Resumen del análisis: ${analisis.resumenIA}\n` +
-          `Causa raíz sugerida: ${analisis.categoriaCausaRaiz ?? "sin categoría"}\n\n` +
+          `Causas raíz sugeridas: ${
+            analisis.categoriasCausaRaiz.length ? etiquetasCausasRaiz(analisis.categoriasCausaRaiz) : "sin categoría"
+          }\n\n` +
           `Respuesta original del cliente por WhatsApp:\n"${textoCliente}"`;
         if (cerrado) {
           descripcionReclamo +=
@@ -112,7 +118,7 @@ export async function crearRqrAutomatico(params: {
             areaOrigen: "Taller",
             asesor: caso.asesor,
             descripcionReclamo,
-            causaRaiz: analisis.categoriaCausaRaiz,
+            causasRaiz: analisis.categoriasCausaRaiz,
             estado: EstadoRQR.ABIERTO,
           },
         });
@@ -158,7 +164,7 @@ export interface DatosRqrManual {
   areaAfectada?: string;
   asesor: string;
   descripcionReclamo: string;
-  causaRaiz?: string;
+  causasRaiz?: string[];
   tratamientoBitacora?: string;
   observaciones?: string;
   area: AreaTrabajo;
@@ -195,7 +201,7 @@ export async function crearRqrManual(datos: DatosRqrManual) {
             areaAfectada: datos.areaAfectada ?? null,
             asesor: datos.asesor,
             descripcionReclamo: datos.descripcionReclamo,
-            causaRaiz: datos.causaRaiz ?? null,
+            causasRaiz: datos.causasRaiz ?? [],
             tratamientoBitacora: datos.tratamientoBitacora ?? null,
             observaciones: datos.observaciones ?? null,
             creadoPorId: datos.creadoPorId ?? null,

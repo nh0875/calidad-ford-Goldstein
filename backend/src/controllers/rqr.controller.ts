@@ -24,7 +24,7 @@ import {
   whereVisible,
 } from "../services/area.service";
 import { importarFormulariosRqr } from "../services/rqr-import.service";
-import { zCausaRaiz } from "../services/causa-raiz.service";
+import { zCausaRaiz, zCausasRaiz } from "../services/causa-raiz.service";
 import { wordRqr } from "../services/exportacion.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 
@@ -70,7 +70,8 @@ export async function listRqr(req: Request, res: Response) {
     ...(visible.area ? { area: visible.area } : {}), // restricción por área
     ...filtroProvincia,
     ...(q.estado ? { estado: q.estado } : {}),
-    ...(q.categoria ? { causaRaiz: q.categoria } : {}),
+    // Un RQR con varias causas aparece al filtrar por cualquiera de ellas.
+    ...(q.categoria ? { causasRaiz: { has: q.categoria } } : {}),
     ...(q.asesor ? { asesor: { contains: q.asesor, mode: "insensitive" } } : {}),
     ...(q.sucursal ? { caso: { sucursal: { equals: q.sucursal, mode: "insensitive" } } } : {}),
     ...(q.fechaDesde || q.fechaHasta
@@ -200,10 +201,11 @@ const createSchema = z
     areaAfectada: z.string().trim().min(1).optional(),
     asesor: z.string().trim().min(1, "Indicá el asesor del reclamo."),
     descripcionReclamo: z.string().trim().min(1, "La descripción del reclamo no puede estar vacía."),
-    // OBLIGATORIA. Un RQR sin causa raíz no suma a ningún lado: el reporte de
-    // causas es lo único que dice dónde está fallando el proceso, y un RQR que
-    // no entra ahí es trabajo de Calidad que no se convierte en información.
-    causaRaiz: zCausaRaiz,
+    // OBLIGATORIA, al menos una. Un RQR sin causa raíz no suma a ningún lado: el
+    // reporte de causas es lo único que dice dónde está fallando el proceso, y un
+    // RQR que no entra ahí es trabajo de Calidad que no se convierte en información.
+    // Varias desde el 17-09-2026: un mismo reclamo puede tener más de una causa.
+    causasRaiz: zCausasRaiz,
     tratamientoBitacora: z.string().trim().min(1).optional(),
     observaciones: z.string().trim().min(1).optional(),
     area: z.nativeEnum(AreaTrabajo).optional(), // solo para RQR manual sin caso
@@ -424,7 +426,7 @@ const patchSchema = z
     // Antes acá entraba cualquier texto —ni siquiera se validaba contra la
     // lista—, así que un pedido armado a mano dejaba en la base una causa que
     // ninguna pantalla podía mostrar ni filtrar.
-    causaRaiz: zCausaRaiz.optional(),
+    causasRaiz: zCausasRaiz.optional(),
     // Campos de Volkswagen: se pueden corregir después de creado el RQR.
     ...camposVW,
     // Se completa sola al pasar a CERRADO, pero Calidad puede corregirla
@@ -492,7 +494,7 @@ export async function patchRqr(req: Request, res: Response) {
   // entendimos y lo resolvimos". Un RQR cerrado sin causa no entra en el reporte
   // de causas, y ese reporte es lo único que dice dónde está fallando el
   // proceso: se pierde justo el trabajo que más costó.
-  if (seCierra && !(cambios.causaRaiz ?? existente.causaRaiz)) {
+  if (seCierra && (cambios.causasRaiz ?? existente.causasRaiz).length === 0) {
     return res.status(400).json({
       message:
         "Antes de cerrar el RQR hay que indicar la causa raíz. Es lo que después aparece en el reporte de causas: " +

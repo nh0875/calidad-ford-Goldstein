@@ -61,7 +61,9 @@ function construirWhere(
     // cliente mandó después) no se listan como si fueran casos distintos.
     esSeguimiento: false,
     ...(q.semaforo ? { semaforo: q.semaforo } : {}),
-    ...(q.categoriaCausaRaiz ? { categoriaCausaRaiz: q.categoriaCausaRaiz } : {}),
+    // El parámetro sigue llamándose categoriaCausaRaiz; un análisis con varias
+    // causas aparece al filtrar por cualquiera de ellas.
+    ...(q.categoriaCausaRaiz ? { categoriasCausaRaiz: { has: q.categoriaCausaRaiz } } : {}),
     ...(q.requiereRevisionManual !== undefined
       ? { requiereRevisionManual: q.requiereRevisionManual }
       : {}),
@@ -161,12 +163,18 @@ const patchSchema = z
     // y la severidad se recalculan a partir del puntaje: son la misma opinión
     // en dos escalas y no pueden quedar contradiciéndose.
     estrellas: z.number().int().min(1).max(5).nullable().optional(),
+    // Las causas, varias desde el 17-09-2026 (lista vacía = ninguna). Se acepta
+    // también la forma vieja, una sola en categoriaCausaRaiz (null = ninguna).
+    categoriasCausaRaiz: z
+      .array(zCausaRaiz)
+      .transform((lista) => [...new Set(lista)])
+      .optional(),
     categoriaCausaRaiz: zCausaRaiz.nullable().optional(),
     requiereRevisionManual: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message:
-      "Indicá al menos un campo para corregir (semaforo, estrellas, categoriaCausaRaiz o requiereRevisionManual).",
+      "Indicá al menos un campo para corregir (semaforo, estrellas, categoriasCausaRaiz o requiereRevisionManual).",
   });
 
 export async function patchSentimentAnalysis(req: Request, res: Response) {
@@ -201,9 +209,11 @@ export async function patchSentimentAnalysis(req: Request, res: Response) {
         : cambios.semaforo !== undefined
           ? { semaforo: cambios.semaforo }
           : {}),
-      ...(cambios.categoriaCausaRaiz !== undefined
-        ? { categoriaCausaRaiz: cambios.categoriaCausaRaiz }
-        : {}),
+      ...(cambios.categoriasCausaRaiz !== undefined
+        ? { categoriasCausaRaiz: cambios.categoriasCausaRaiz }
+        : cambios.categoriaCausaRaiz !== undefined
+          ? { categoriasCausaRaiz: cambios.categoriaCausaRaiz ? [cambios.categoriaCausaRaiz] : [] }
+          : {}),
       // Al corregir a mano, salvo que se pida lo contrario, el caso deja de estar pendiente de revisión
       requiereRevisionManual: cambios.requiereRevisionManual ?? false,
     },
@@ -242,8 +252,8 @@ export async function patchSentimentAnalysis(req: Request, res: Response) {
       semaforoDespues: actualizado.semaforo,
       estrellasAntes: existente.estrellas,
       estrellasDespues: actualizado.estrellas,
-      categoriaAntes: existente.categoriaCausaRaiz,
-      categoriaDespues: actualizado.categoriaCausaRaiz,
+      categoriasAntes: existente.categoriasCausaRaiz,
+      categoriasDespues: actualizado.categoriasCausaRaiz,
     },
   });
 

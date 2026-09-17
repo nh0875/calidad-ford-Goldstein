@@ -45,7 +45,24 @@ export const zCausaRaiz = z
   });
 
 /**
- * Borra las causas raíz que ya no están en la lista de la marca.
+ * Las causas raíz de un RQR: una o varias, todas de ESTA marca, sin repetir.
+ *
+ * VARIAS desde el 17-09-2026 (pedido del dueño, las dos marcas): un mismo reclamo
+ * puede tener más de una causa, todas valen igual y en los reportes el RQR suma en
+ * cada una. Al menos una: un RQR sin causa no enseña nada (ver FALTA_CLASIFICAR).
+ */
+export const zCausasRaiz = z
+  .array(zCausaRaiz)
+  .min(1, "Indicá al menos una causa raíz.")
+  .transform((lista) => [...new Set(lista)]);
+
+/** Las etiquetas de una lista de causas, para textos ("Demora, Trato inadecuado"). */
+export function etiquetasCausasRaiz(codigos: string[]): string {
+  return codigos.map((c) => marca.causasRaiz.find((x) => x.codigo === c)?.etiqueta ?? c).join(", ");
+}
+
+/**
+ * Saca de las listas las causas raíz que ya no están en la lista de la marca.
  *
  * POR QUÉ EXISTE. En septiembre de 2026 Calidad de Volkswagen reemplazó su lista
  * entera: las siete de antes (demora, mal trato, precio, calidad, comunicación,
@@ -64,41 +81,37 @@ export const zCausaRaiz = z
  * Corre en cada arranque y es idempotente: después de la primera vez encuentra
  * cero. Además deja el sistema a salvo de la próxima vez que se cambie la lista.
  *
- * SOLO PONE EN NULL. No borra RQR ni análisis: lo que se pierde es la
- * clasificación, no el caso ni lo que dijo el cliente.
+ * SOLO SACA LAS INVÁLIDAS de cada lista: las otras causas del mismo RQR quedan. No
+ * borra RQR ni análisis: lo que se pierde es la clasificación, no el caso ni lo que
+ * dijo el cliente.
  */
 export async function limpiarCausasRaizFueraDeLista(): Promise<void> {
   const validas = causasRaizValidas();
 
-  // Antes de borrar, contar qué había. Sin esto la corrida no deja ni rastro de
+  // Antes de sacar, contar qué había. Sin esto la corrida no deja ni rastro de
   // qué se perdió, y "se borraron 240 causas" sin decir de cuáles es un dato que
   // no sirve para nada si después hay que explicarlo.
-  const previas = await prisma.rQR.groupBy({
-    by: ["causaRaiz"],
-    where: { causaRaiz: { notIn: validas } },
-    _count: { _all: true },
-  });
+  const previas = await prisma.$queryRaw<Array<{ codigo: string; cantidad: bigint }>>`
+    SELECT c AS codigo, COUNT(*) AS cantidad
+    FROM "RQR", unnest("causasRaiz") AS c
+    WHERE NOT (c = ANY(${validas}::text[]))
+    GROUP BY c`;
 
-  const [rqr, analisis] = await prisma.$transaction([
-    prisma.rQR.updateMany({
-      where: { causaRaiz: { notIn: validas } },
-      data: { causaRaiz: null },
-    }),
-    prisma.sentimentAnalysis.updateMany({
-      where: { categoriaCausaRaiz: { notIn: validas } },
-      data: { categoriaCausaRaiz: null },
-    }),
-  ]);
+  const rqr = await prisma.$executeRaw`
+    UPDATE "RQR"
+    SET "causasRaiz" = ARRAY(SELECT c FROM unnest("causasRaiz") AS c WHERE c = ANY(${validas}::text[]))
+    WHERE NOT ("causasRaiz" <@ ${validas}::text[])`;
+  const analisis = await prisma.$executeRaw`
+    UPDATE "SentimentAnalysis"
+    SET "categoriasCausaRaiz" = ARRAY(SELECT c FROM unnest("categoriasCausaRaiz") AS c WHERE c = ANY(${validas}::text[]))
+    WHERE NOT ("categoriasCausaRaiz" <@ ${validas}::text[])`;
 
-  if (rqr.count === 0 && analisis.count === 0) return;
+  if (rqr === 0 && analisis === 0) return;
 
-  const detalle = previas
-    .filter((p) => p.causaRaiz)
-    .map((p) => `${p.causaRaiz} (${p._count._all})`)
-    .join(", ");
+  const detalle = previas.map((p) => `${p.codigo} (${Number(p.cantidad)})`).join(", ");
   console.log(
-    `[causa-raiz] se vaciaron ${rqr.count} RQR y ${analisis.count} análisis que tenían una causa que ya no existe en ${marca.nombre}.` +
+    `[causa-raiz] se sacaron causas que ya no existen en ${marca.nombre} de ${rqr} RQR y ${analisis} análisis.` +
       (detalle ? ` Eran: ${detalle}.` : "") +
-      " Hay que volver a clasificarlos desde la pantalla de RQR."
+      " Los que quedaron sin ninguna hay que volver a clasificarlos desde la pantalla de RQR."
   );
 }

@@ -436,7 +436,9 @@ model SentimentAnalysis {
   // andando igual sin tocar nada, y las pantallas muestran las estrellas.
   estrellas              Int?
   confianza              Float
-  categoriaCausaRaiz     String?
+  // Las causas raíz que ve la IA (o que corrigió una persona). Una LISTA desde el
+  // 17-09-2026: un cliente se puede quejar de más de una cosa. Vacía = sin causa.
+  categoriasCausaRaiz    String[]         @default([])
   resumenIA              String           @db.Text
   respuestaCrudaIA       Json
   requiereRQR            Boolean          @default(false)
@@ -510,7 +512,10 @@ model RQR {
   fechaCierre         DateTime?
   observaciones       String?            @db.Text
   responsableCierre   String?
-  causaRaiz           String? // sugerida por IA, confirmable/editable por Calidad
+  // Las causas raíz del reclamo: sugeridas por la IA, confirmables y editables por
+  // Calidad. Varias desde el 17-09-2026 (pedido del dueño, las dos marcas): todas
+  // valen igual y en los reportes el RQR suma en cada una. Vacía = sin clasificar.
+  causasRaiz          String[]           @default([])
   estado              EstadoRQR          @default(ABIERTO)
 
   // ---- Campos del RQR de Volkswagen (quedan null en Ford) ----

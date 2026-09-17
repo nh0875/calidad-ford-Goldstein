@@ -95,6 +95,25 @@ function causaRaizReconocida(valor: string | null | undefined): string | null {
   return null;
 }
 
+/**
+ * Las causas que devolvió el modelo, las válidas y sin repetir. Toma la lista nueva
+ * y, si el modelo contestó con el formato viejo (una sola causa), esa.
+ *
+ * Acepta cualquier forma y no solo la pedida: una lista, un texto suelto (o varios
+ * separados por coma), null, o una lista con algo que no es texto. Una causa mal
+ * armada no puede tumbar el análisis entero: sin él, un reclamo se queda sin
+ * semáforo y sin RQR automático por un detalle que una persona corrige después.
+ */
+export function causasRaizReconocidas(lista: unknown, suelta?: unknown): string[] {
+  const textos = (valor: unknown): string[] => {
+    if (typeof valor === "string") return valor.split(",");
+    if (Array.isArray(valor)) return valor.flatMap((v) => (typeof v === "string" ? [v] : []));
+    return [];
+  };
+  const todas = [...textos(lista), ...textos(suelta)].map((c) => c.trim().toUpperCase()).filter(Boolean);
+  return [...new Set(todas.map((c) => causaRaizReconocida(c)).filter((c): c is string => c !== null))];
+}
+
 // ---------- Tipos ----------
 
 export interface ContextoCaso {
@@ -113,7 +132,8 @@ export interface ResultadoAnalisis {
   // ellas: son el mismo hecho expresado en dos escalas, no dos opiniones.
   estrellas: number | null;
   confianza: number;
-  categoriaCausaRaiz: string | null;
+  // Todas las causas raíz que vio la IA (vacía = ninguna). Ver causasRaizReconocidas.
+  categoriasCausaRaiz: string[];
   resumen: string;
   requiereRQR: boolean;
   requiereRevisionManual: boolean;
@@ -187,16 +207,24 @@ const esquemaRespuestaIA = z.object({
   // Puede venir null/omitido: el parseo aplica un default defensivo por semáforo
   severidad: z.enum(["LEVE", "MODERADA", "GRAVE"]).nullish(),
   confianza: z.number().min(0).max(1),
-  // String suelto y no una lista cerrada: si el modelo inventa una categoría, se
-  // descarta ESA (ver causaRaizReconocida) en vez de perder todo el análisis.
-  categoriaCausaRaiz: z.string().nullable(),
+  // Strings sueltos y no una lista cerrada: si el modelo inventa una categoría, se
+  // descarta ESA (ver causasRaizReconocidas) en vez de perder todo el análisis.
+  // Una LISTA desde el 17-09-2026: un cliente se puede quejar de más de una cosa.
+  // Se acepta también el formato viejo (una sola, en categoriaCausaRaiz), así un
+  // modelo que conteste como antes no pierde el análisis. Sin tipo acá a propósito:
+  // la forma la arregla causasRaizReconocidas, para que no invalide el resto.
+  categoriasCausaRaiz: z.unknown().optional(),
+  categoriaCausaRaiz: z.unknown().optional(),
   resumen: z.string().min(1),
   // El modelo ya no decide el RQR (lo hace la regla en código); si lo manda igual, se ignora
   requiereRQR: z.boolean().nullish(),
   requiereRevisionManual: z.boolean(),
 });
 
-type RespuestaIA = z.infer<typeof esquemaRespuestaIA>;
+// Ya normalizada: las causas siempre en una lista de códigos válidos.
+type RespuestaIA = Omit<z.infer<typeof esquemaRespuestaIA>, "categoriaCausaRaiz" | "categoriasCausaRaiz"> & {
+  categoriasCausaRaiz: string[];
+};
 
 // Volkswagen puntúa de 1 a 5 estrellas en vez de semáforo. El resto de los
 // campos (causa raíz, resumen, confianza, revisión manual) son idénticos: lo
@@ -206,12 +234,15 @@ const esquemaRespuestaEstrellas = z.object({
   // forzar uno ensucia el promedio de la marca.
   estrellas: z.number().int().min(1).max(5).nullable(),
   confianza: z.number().min(0).max(1),
-  categoriaCausaRaiz: z.string().nullable(),
+  categoriasCausaRaiz: z.unknown().optional(),
+  categoriaCausaRaiz: z.unknown().optional(),
   resumen: z.string().min(1),
   requiereRevisionManual: z.boolean(),
 });
 
-type RespuestaEstrellasIA = z.infer<typeof esquemaRespuestaEstrellas>;
+type RespuestaEstrellasIA = Omit<z.infer<typeof esquemaRespuestaEstrellas>, "categoriaCausaRaiz" | "categoriasCausaRaiz"> & {
+  categoriasCausaRaiz: string[];
+};
 
 function parsearJsonSeguro(texto: string): RespuestaIA | null {
   // El prompt pide JSON puro, pero por las dudas se tolera un bloque ```json ... ```
@@ -223,7 +254,8 @@ function parsearJsonSeguro(texto: string): RespuestaIA | null {
     const objeto = JSON.parse(limpio);
     const validado = esquemaRespuestaIA.safeParse(objeto);
     if (!validado.success) return null;
-    return { ...validado.data, categoriaCausaRaiz: causaRaizReconocida(validado.data.categoriaCausaRaiz) };
+    const { categoriaCausaRaiz, categoriasCausaRaiz, ...resto } = validado.data;
+    return { ...resto, categoriasCausaRaiz: causasRaizReconocidas(categoriasCausaRaiz, categoriaCausaRaiz) };
   } catch {
     return null;
   }
@@ -237,7 +269,8 @@ function parsearJsonEstrellas(texto: string): RespuestaEstrellasIA | null {
   try {
     const validado = esquemaRespuestaEstrellas.safeParse(JSON.parse(limpio));
     if (!validado.success) return null;
-    return { ...validado.data, categoriaCausaRaiz: causaRaizReconocida(validado.data.categoriaCausaRaiz) };
+    const { categoriaCausaRaiz, categoriasCausaRaiz, ...resto } = validado.data;
+    return { ...resto, categoriasCausaRaiz: causasRaizReconocidas(categoriasCausaRaiz, categoriaCausaRaiz) };
   } catch {
     return null;
   }
@@ -248,8 +281,8 @@ type ParseadoAnalisis =
   | { tipo: "semaforo"; datos: RespuestaIA }
   | { tipo: "estrellas"; datos: RespuestaEstrellasIA };
 
-/** Parsea la respuesta del modelo con el esquema que corresponde a la marca. */
-function parsearSegunMarca(texto: string): ParseadoAnalisis | null {
+/** Parsea la respuesta del modelo con el esquema que corresponde a la marca. Exportada para las pruebas. */
+export function parsearSegunMarca(texto: string): ParseadoAnalisis | null {
   if (usaEstrellas()) {
     const datos = parsearJsonEstrellas(texto);
     return datos ? { tipo: "estrellas", datos } : null;
@@ -278,8 +311,9 @@ TONO / PALABRAS QUE ELEVAN LA GRAVEDAD:
 - Queja de precio percibido como excesivo o injusto → mínimo AMARILLO MODERADA (categoría PRECIO_FACTURACION); con indignación ("robo"/"estafa") → ROJO.
 - Que digan que NO le hicieron algo que correspondía y le cobraron igual → ROJO o AMARILLO GRAVE (según el enojo).
 
-CATEGORÍAS DE CAUSA RAÍZ (usá exclusivamente una de estas, o null si el semáforo es VERDE o no hay causa identificable):
+CATEGORÍAS DE CAUSA RAÍZ (campo "categoriasCausaRaiz", una LISTA de códigos; usá exclusivamente estos, y la lista vacía [] si el semáforo es VERDE o no hay causa identificable):
 ${bloqueCausasRaiz()}
+Si el cliente se queja de DOS O MÁS cosas distintas (por ejemplo, el precio y además un trabajo que no le hicieron), poné TODAS las causas que correspondan, sin repetir. Si es una sola queja, una sola causa: no agregues causas que el cliente no planteó.
 
 SEVERIDAD DEL MALESTAR (campo "severidad": "LEVE" | "MODERADA" | "GRAVE"):
 Mide qué tan grave es el malestar del cliente, INDEPENDIENTE de qué tan seguro estás de la clasificación. Es distinto de "confianza": podés estar 100% seguro de que algo es AMARILLO y aun así ser un malestar LEVE.
@@ -307,28 +341,28 @@ REGLAS:
 
 EJEMPLOS (muestran el formato de salida exacto):
 Cliente: "Excelente atención, el auto quedó impecable. Muchas gracias!"
-Salida: {"semaforo":"VERDE","severidad":null,"confianza":0.97,"categoriaCausaRaiz":null,"resumen":"Cliente muy conforme con la atención y el trabajo.","requiereRevisionManual":false}
+Salida: {"semaforo":"VERDE","severidad":null,"confianza":0.97,"categoriasCausaRaiz":[],"resumen":"Cliente muy conforme con la atención y el trabajo.","requiereRevisionManual":false}
 
 Cliente: "Todo bien, pero tardaron más de lo que me habían dicho."
-Salida: {"semaforo":"AMARILLO","severidad":"LEVE","confianza":0.85,"categoriaCausaRaiz":"DEMORA_SERVICIO","resumen":"Conforme en general, con una objeción por demora respecto a lo prometido.","requiereRevisionManual":false}
+Salida: {"semaforo":"AMARILLO","severidad":"LEVE","confianza":0.85,"categoriasCausaRaiz":["DEMORA_SERVICIO"],"resumen":"Conforme en general, con una objeción por demora respecto a lo prometido.","requiereRevisionManual":false}
 
 Cliente: "Me parece un robo que cobren casi $500.000 y ni siquiera cambiaron el filtro de aire y combustible. Igual Eugenia de recepción y el de repuestos, 10 puntos ambos."
-Salida: {"semaforo":"ROJO","severidad":"GRAVE","confianza":0.9,"categoriaCausaRaiz":"PRECIO_FACTURACION","resumen":"Indignado por el precio (lo llama un robo) y porque no le habrían cambiado filtros que esperaba. Elogia al personal de recepción y repuestos, pero la queja de precio/trabajo es la que define el caso.","requiereRevisionManual":false}
+Salida: {"semaforo":"ROJO","severidad":"GRAVE","confianza":0.9,"categoriasCausaRaiz":["PRECIO_FACTURACION","CALIDAD_TRABAJO"],"resumen":"Indignado por el precio (lo llama un robo) y porque no le habrían cambiado filtros que esperaba. Elogia al personal de recepción y repuestos, pero la queja de precio/trabajo es la que define el caso.","requiereRevisionManual":false}
 
 Cliente: "Un desastre. Llevé el auto por un ruido y me lo devolvieron igual, no lo solucionó nadie."
-Salida: {"semaforo":"ROJO","severidad":"GRAVE","confianza":0.95,"categoriaCausaRaiz":"CALIDAD_TRABAJO","resumen":"Problema sin resolver: llevó el auto por un ruido y se lo devolvieron igual.","requiereRevisionManual":false}
+Salida: {"semaforo":"ROJO","severidad":"GRAVE","confianza":0.95,"categoriasCausaRaiz":["CALIDAD_TRABAJO"],"resumen":"Problema sin resolver: llevó el auto por un ruido y se lo devolvieron igual.","requiereRevisionManual":false}
 
 Cliente: "Buen día"
-Salida: {"semaforo":null,"severidad":null,"confianza":0.2,"categoriaCausaRaiz":null,"resumen":"El cliente solo saludó, todavía no dio una opinión sobre el servicio.","requiereRevisionManual":true}
+Salida: {"semaforo":null,"severidad":null,"confianza":0.2,"categoriasCausaRaiz":[],"resumen":"El cliente solo saludó, todavía no dio una opinión sobre el servicio.","requiereRevisionManual":true}
 
 Cliente: "Cuando vaya, lo charlamos, gracias!"
-Salida: {"semaforo":null,"severidad":null,"confianza":0.25,"categoriaCausaRaiz":null,"resumen":"El cliente deja la conversación para cuando vaya al taller; todavía no dijo nada sobre el servicio.","requiereRevisionManual":true}
+Salida: {"semaforo":null,"severidad":null,"confianza":0.25,"categoriasCausaRaiz":[],"resumen":"El cliente deja la conversación para cuando vaya al taller; todavía no dijo nada sobre el servicio.","requiereRevisionManual":true}
 
 Cliente: "Ok, gracias, cualquier cosa te aviso"
-Salida: {"semaforo":null,"severidad":null,"confianza":0.2,"categoriaCausaRaiz":null,"resumen":"Acuse de recibo amable, sin opinión sobre la atención.","requiereRevisionManual":true}
+Salida: {"semaforo":null,"severidad":null,"confianza":0.2,"categoriasCausaRaiz":[],"resumen":"Acuse de recibo amable, sin opinión sobre la atención.","requiereRevisionManual":true}
 
 Respondé ÚNICAMENTE con un objeto JSON válido con esta forma exacta, sin texto adicional antes ni después:
-{"semaforo": "VERDE" | "AMARILLO" | "ROJO" | null, "severidad": "LEVE" | "MODERADA" | "GRAVE" | null, "confianza": number, "categoriaCausaRaiz": string | null, "resumen": string, "requiereRevisionManual": boolean}`;
+{"semaforo": "VERDE" | "AMARILLO" | "ROJO" | null, "severidad": "LEVE" | "MODERADA" | "GRAVE" | null, "confianza": number, "categoriasCausaRaiz": string[], "resumen": string, "requiereRevisionManual": boolean}`;
 
 const PROMPT_ESTRELLAS = `Sos el analista de calidad de una concesionaria ${marca.nombre}. Analizás respuestas de WhatsApp de clientes y las puntuás para el área de Calidad.
 
@@ -350,8 +384,9 @@ TONO / PALABRAS QUE BAJAN EL PUNTAJE:
 - Queja de precio percibido como excesivo o injusto → 3 o menos; con indignación → 1. (La categoría de causa raíz elegila de la lista de abajo: no inventes una de precio si no está.)
 - Que digan que NO le hicieron algo que correspondía y le cobraron igual → 1 o 2.
 
-CATEGORÍAS DE CAUSA RAÍZ (usá exclusivamente una de estas):
-Con 5 estrellas va null. Si NO son 5 estrellas, elegí SIEMPRE una: ese caso abre un reclamo formal, y un reclamo sin causa no entra en el reporte de causas y queda esperando a que alguien lo complete a mano. Si dudás entre dos, quedate con la que mejor explique por qué el cliente quedó disconforme.
+CATEGORÍAS DE CAUSA RAÍZ (campo "categoriasCausaRaiz", una LISTA de códigos; usá exclusivamente estos):
+Con 5 estrellas va la lista vacía []. Si NO son 5 estrellas, poné SIEMPRE al menos una: ese caso abre un reclamo formal, y un reclamo sin causa no entra en el reporte de causas y queda esperando a que alguien lo complete a mano.
+Si el cliente se queja de DOS O MÁS cosas distintas (por ejemplo, la demora y además el trato), poné TODAS las causas que correspondan, sin repetir. Si es una sola queja, una sola causa: no agregues causas por las dudas, y si dudás entre dos para la MISMA queja, quedate con la que mejor la explique.
 ${bloqueCausasRaiz()}
 
 LAS 5 ESTRELLAS SE GANAN, NO SE REGALAN (regla dura, la más importante):
@@ -373,28 +408,31 @@ REGLAS:
 
 EJEMPLOS (muestran el formato de salida exacto):
 Cliente: "Excelente atención, el auto quedó impecable. Muchas gracias!"
-Salida: {"estrellas":5,"confianza":0.97,"categoriaCausaRaiz":null,"resumen":"Cliente muy conforme con la atención y el trabajo.","requiereRevisionManual":false}
+Salida: {"estrellas":5,"confianza":0.97,"categoriasCausaRaiz":[],"resumen":"Cliente muy conforme con la atención y el trabajo.","requiereRevisionManual":false}
 
 Cliente: "Todo bien, pero tardaron más de lo que me habían dicho."
-Salida: {"estrellas":4,"confianza":0.85,"categoriaCausaRaiz":"DEMORA_INCUMPLIMIENTO_PLAZO","resumen":"Conforme en general, con una objeción por demora respecto a lo prometido.","requiereRevisionManual":false}
+Salida: {"estrellas":4,"confianza":0.85,"categoriasCausaRaiz":["DEMORA_INCUMPLIMIENTO_PLAZO"],"resumen":"Conforme en general, con una objeción por demora respecto a lo prometido.","requiereRevisionManual":false}
 
 Cliente: "Me parece un robo que cobren casi $500.000 y ni siquiera cambiaron el filtro de aire. Igual Eugenia de recepción, 10 puntos."
-Salida: {"estrellas":1,"confianza":0.9,"categoriaCausaRaiz":"INFORMACION_INCORRECTA","resumen":"Indignado por el precio (lo llama un robo) y porque esperaba que el filtro estuviera incluido y no se lo cambiaron. Elogia a la recepcionista, pero la queja define el caso.","requiereRevisionManual":false}
+Salida: {"estrellas":1,"confianza":0.9,"categoriasCausaRaiz":["INFORMACION_INCORRECTA"],"resumen":"Indignado por el precio (lo llama un robo) y porque esperaba que el filtro estuviera incluido y no se lo cambiaron. Elogia a la recepcionista, pero la queja define el caso.","requiereRevisionManual":false}
 
 Cliente: "Un desastre. Llevé el auto por un ruido y me lo devolvieron igual, no lo solucionó nadie."
-Salida: {"estrellas":1,"confianza":0.95,"categoriaCausaRaiz":"ERROR_TECNICO","resumen":"Problema sin resolver: llevó el auto por un ruido y se lo devolvieron igual.","requiereRevisionManual":false}
+Salida: {"estrellas":1,"confianza":0.95,"categoriasCausaRaiz":["ERROR_TECNICO"],"resumen":"Problema sin resolver: llevó el auto por un ruido y se lo devolvieron igual.","requiereRevisionManual":false}
+
+Cliente: "Me lo entregaron una semana después de lo prometido y encima el asesor me contestó de mala manera."
+Salida: {"estrellas":2,"confianza":0.9,"categoriasCausaRaiz":["DEMORA_INCUMPLIMIENTO_PLAZO","TRATO_INADECUADO"],"resumen":"Dos quejas: la entrega se atrasó una semana respecto de lo prometido y el asesor lo trató mal.","requiereRevisionManual":false}
 
 Cliente: "Buen día"
-Salida: {"estrellas":null,"confianza":0.2,"categoriaCausaRaiz":null,"resumen":"El cliente solo saludó, todavía no dio una opinión sobre el servicio.","requiereRevisionManual":true}
+Salida: {"estrellas":null,"confianza":0.2,"categoriasCausaRaiz":[],"resumen":"El cliente solo saludó, todavía no dio una opinión sobre el servicio.","requiereRevisionManual":true}
 
 Cliente: "Cuando vaya, lo charlamos, gracias!"
-Salida: {"estrellas":null,"confianza":0.25,"categoriaCausaRaiz":null,"resumen":"El cliente deja la conversación para cuando vaya; todavía no dijo nada sobre el servicio.","requiereRevisionManual":true}
+Salida: {"estrellas":null,"confianza":0.25,"categoriasCausaRaiz":[],"resumen":"El cliente deja la conversación para cuando vaya; todavía no dijo nada sobre el servicio.","requiereRevisionManual":true}
 
 Cliente: "Ok, gracias, cualquier cosa te aviso"
-Salida: {"estrellas":null,"confianza":0.2,"categoriaCausaRaiz":null,"resumen":"Acuse de recibo amable, sin opinión sobre la atención.","requiereRevisionManual":true}
+Salida: {"estrellas":null,"confianza":0.2,"categoriasCausaRaiz":[],"resumen":"Acuse de recibo amable, sin opinión sobre la atención.","requiereRevisionManual":true}
 
 Respondé ÚNICAMENTE con un objeto JSON válido con esta forma exacta, sin texto adicional antes ni después:
-{"estrellas": 1 | 2 | 3 | 4 | 5 | null, "confianza": number, "categoriaCausaRaiz": string | null, "resumen": string, "requiereRevisionManual": boolean}`;
+{"estrellas": 1 | 2 | 3 | 4 | 5 | null, "confianza": number, "categoriasCausaRaiz": string[], "resumen": string, "requiereRevisionManual": boolean}`;
 
 /**
  * Prompt del sistema segun la marca de esta instancia. Ford clasifica por
@@ -621,7 +659,7 @@ async function analizarConIA(
       severidad: null,
       estrellas: null,
       confianza: 0,
-      categoriaCausaRaiz: null,
+      categoriasCausaRaiz: [],
       resumen:
         "La IA no pudo clasificar esta respuesta (no devolvió un resultado interpretable). Requiere revisión manual de Calidad.",
       requiereRQR: false,
@@ -634,7 +672,7 @@ async function analizarConIA(
   // DERIVAN de ese puntaje para que el resto del sistema (avisos, agradecimientos,
   // filtros, apertura de RQR, reportes) siga funcionando sin cambios.
   if (parseado.tipo === "estrellas") {
-    const { estrellas, confianza, categoriaCausaRaiz, resumen, requiereRevisionManual } = parseado.datos;
+    const { estrellas, confianza, categoriasCausaRaiz, resumen, requiereRevisionManual } = parseado.datos;
     // Sin puntaje = el modelo dijo que no es una opinión (un saludo suelto).
     // Queda sin clasificar y para revisión manual: no suma al promedio ni abre RQR.
     if (estrellas === null) {
@@ -643,7 +681,7 @@ async function analizarConIA(
         severidad: null,
         estrellas: null,
         confianza,
-        categoriaCausaRaiz,
+        categoriasCausaRaiz,
         resumen,
         requiereRQR: false,
         requiereRevisionManual: true,
@@ -656,7 +694,7 @@ async function analizarConIA(
       severidad,
       estrellas,
       confianza,
-      categoriaCausaRaiz,
+      categoriasCausaRaiz,
       resumen,
       // Con el mapeo de derivarDeEstrellas, "todo lo que no sea 5" cae en
       // AMARILLO o ROJO, asi que la regla de VW sale de la regla general.
@@ -674,7 +712,7 @@ async function analizarConIA(
       severidad: null,
       estrellas: null,
       confianza: datos.confianza,
-      categoriaCausaRaiz: datos.categoriaCausaRaiz,
+      categoriasCausaRaiz: datos.categoriasCausaRaiz,
       resumen: datos.resumen,
       requiereRQR: false,
       requiereRevisionManual: true,
@@ -694,7 +732,7 @@ async function analizarConIA(
     severidad,
     estrellas: null,
     confianza: datos.confianza,
-    categoriaCausaRaiz: datos.categoriaCausaRaiz,
+    categoriasCausaRaiz: datos.categoriasCausaRaiz,
     resumen: datos.resumen,
     requiereRQR: aplicarReglaRQR(semaforo, severidad),
     requiereRevisionManual: datos.requiereRevisionManual,
@@ -723,7 +761,7 @@ function analizarMock(texto: string): ResultadoAnalisis {
     semaforo: Semaforo | null,
     severidad: Severidad | null,
     confianza: number,
-    categoria: string | null,
+    categorias: Array<string | null>,
     resumen: string,
     revisionManual = false
   ): ResultadoAnalisis => ({
@@ -731,7 +769,7 @@ function analizarMock(texto: string): ResultadoAnalisis {
     severidad,
     estrellas: estrellasDesde(semaforo, severidad),
     confianza,
-    categoriaCausaRaiz: categoria,
+    categoriasCausaRaiz: [...new Set(categorias.filter((c): c is string => c !== null))],
     resumen: `[MOCK] ${resumen}`,
     requiereRQR: aplicarReglaRQR(semaforo, severidad),
     requiereRevisionManual: revisionManual,
@@ -740,19 +778,27 @@ function analizarMock(texto: string): ResultadoAnalisis {
 
   // Ambiguo / demasiado corto -> revisión manual
   if (t.trim().length < 5 || ["ok", "si", "sí", "no", "👍"].includes(t.trim())) {
-    return armar(null, null, 0, null, "Respuesta demasiado corta o ambigua para clasificar.", true);
+    return armar(null, null, 0, [], "Respuesta demasiado corta o ambigua para clasificar.", true);
   }
 
   // Negativo claro -> ROJO (severidad GRAVE)
   if (/(pésim|pesim|queja|reclamo|desastre|nunca más|mal trato|sin resolver|sucio|roto)/.test(t)) {
-    let categoria = causaMock("CALIDAD_TRABAJO", "ERROR_TECNICO");
-    if (/(cobr|precio|factur|caro)/.test(t)) categoria = causaMock("PRECIO_FACTURACION", "INFORMACION_INCORRECTA");
-    else if (/(trato|atendieron mal|mala atención)/.test(t)) categoria = causaMock("MAL_TRATO_PERSONAL", "TRATO_INADECUADO");
-    else if (/(demora|tard|esper)/.test(t)) categoria = causaMock("DEMORA_SERVICIO", "DEMORA_INCUMPLIMIENTO_PLAZO");
-    else if (/(repuesto)/.test(t)) categoria = causaMock("REPUESTOS");
-    else if (/(no me avisaron|no informaron|no me llamaron)/.test(t))
-      categoria = causaMock("FALTA_COMUNICACION", "FALTA_INFORMACION");
-    return armar(Semaforo.ROJO, Severidad.GRAVE, 0.9, categoria, "Cliente claramente insatisfecho, corresponde reclamo formal.");
+    // Todas las quejas que se reconocen, como pide el prompt real: varias causas si
+    // el cliente se queja de varias cosas.
+    const categorias = [
+      /(cobr|precio|factur|caro)/.test(t) ? causaMock("PRECIO_FACTURACION", "INFORMACION_INCORRECTA") : null,
+      /(trato|atendieron mal|mala atención)/.test(t) ? causaMock("MAL_TRATO_PERSONAL", "TRATO_INADECUADO") : null,
+      /(demora|tard|esper)/.test(t) ? causaMock("DEMORA_SERVICIO", "DEMORA_INCUMPLIMIENTO_PLAZO") : null,
+      /(repuesto)/.test(t) ? causaMock("REPUESTOS") : null,
+      /(no me avisaron|no informaron|no me llamaron)/.test(t) ? causaMock("FALTA_COMUNICACION", "FALTA_INFORMACION") : null,
+    ].filter((c) => c !== null);
+    return armar(
+      Semaforo.ROJO,
+      Severidad.GRAVE,
+      0.9,
+      categorias.length ? categorias : [causaMock("CALIDAD_TRABAJO", "ERROR_TECNICO")],
+      "Cliente claramente insatisfecho, corresponde reclamo formal."
+    );
   }
 
   // Objeción -> AMARILLO. Severidad MODERADA si la objeción es marcada, LEVE si es al pasar.
@@ -762,7 +808,7 @@ function analizarMock(texto: string): ResultadoAnalisis {
       Semaforo.AMARILLO,
       marcada ? Severidad.MODERADA : Severidad.LEVE,
       marcada ? 0.8 : 0.5,
-      causaMock("DEMORA_SERVICIO", "DEMORA_INCUMPLIMIENTO_PLAZO"),
+      [causaMock("DEMORA_SERVICIO", "DEMORA_INCUMPLIMIENTO_PLAZO")],
       marcada
         ? "Objeción clara por demoras aunque el servicio se completó."
         : "Satisfacción parcial con una objeción menor por tiempos."
@@ -771,11 +817,11 @@ function analizarMock(texto: string): ResultadoAnalisis {
 
   // Positivo -> VERDE
   if (/(excelente|perfecto|muy bien|conforme|gracias|10 puntos|impecable)/.test(t)) {
-    return armar(Semaforo.VERDE, null, 0.95, null, "Cliente satisfecho con el servicio, sin objeciones.");
+    return armar(Semaforo.VERDE, null, 0.95, [], "Cliente satisfecho con el servicio, sin objeciones.");
   }
 
   // Sin señales claras -> AMARILLO leve con revisión manual (no escala a RQR)
-  return armar(Semaforo.AMARILLO, Severidad.LEVE, 0.3, null, "No hay señales claras de satisfacción o queja.", true);
+  return armar(Semaforo.AMARILLO, Severidad.LEVE, 0.3, [], "No hay señales claras de satisfacción o queja.", true);
 }
 
 // ---------- Punto de entrada ----------

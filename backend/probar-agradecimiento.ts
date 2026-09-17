@@ -27,7 +27,7 @@ function analisis(semaforo: Semaforo | null, confianza: number, severidad: Sever
     severidad,
     estrellas: null,
     confianza,
-    categoriaCausaRaiz: null,
+    categoriasCausaRaiz: [],
     resumen: "resumen de la IA",
     requiereRQR: false,
     requiereRevisionManual: false,

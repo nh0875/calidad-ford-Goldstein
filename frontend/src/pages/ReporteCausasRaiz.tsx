@@ -27,7 +27,8 @@ interface ItemDetalle {
   };
   semaforo: string | null;
   severidad: string | null;
-  categoria: string;
+  // Una o varias (17-09-2026). Sin ninguna viene ["Falta clasificar"].
+  categorias: string[];
   rqr: { id: string; numeroRQR: string; estado: string } | null;
   resumenIA: string | null;
   textoCliente: string | null;
@@ -47,6 +48,9 @@ export function BadgeSeveridad({ severidad }: { severidad: string | null }) {
 
 interface Reporte {
   porCategoria: Array<{ categoria: string; total: number; conRqr: number; sinRqr: number }>;
+  /** Cuántos reclamos hay, y cuántos con más de una causa (suman en cada una). */
+  totalReclamos: number;
+  conVariasCausas: number;
   detalle: ItemDetalle[];
   tiempoCierre: {
     promedioDias: number | null;
@@ -144,7 +148,14 @@ export default function ReporteCausasRaiz() {
         <>
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2">
-              <h3 className="mb-3 text-sm font-semibold text-ink">Casos por categoría de causa raíz</h3>
+              <h3 className="mb-1 text-sm font-semibold text-ink">Casos por categoría de causa raíz</h3>
+              <p className="mb-3 text-xs text-ink-muted">
+                {reporte.totalReclamos} reclamo(s).
+                {reporte.conVariasCausas > 0 &&
+                  (reporte.conVariasCausas === 1
+                    ? " 1 tiene más de una causa y suma en cada una, así que las barras suman más que eso."
+                    : ` ${reporte.conVariasCausas} tienen más de una causa y suman en cada una, así que las barras suman más que eso.`)}
+              </p>
               <BarrasCategorias
                 items={reporte.porCategoria.map((c) => ({
                   etiqueta: etiquetaCategoria(c.categoria),
@@ -196,7 +207,7 @@ export default function ReporteCausasRaiz() {
                   <th className="px-3 py-2">Servicio</th>
                   <th className="px-3 py-2 text-center">Semáforo</th>
                   <th className="px-3 py-2">Severidad</th>
-                  <th className="px-3 py-2">Categoría</th>
+                  <th className="px-3 py-2">Causas raíz</th>
                   <th className="px-3 py-2">RQR</th>
                 </tr>
               </thead>
@@ -226,7 +237,7 @@ export default function ReporteCausasRaiz() {
                         <PuntoSemaforo semaforo={item.semaforo} soloIcono />
                       </td>
                       <td className="px-3 py-2"><BadgeSeveridad severidad={item.severidad} /></td>
-                      <td className="px-3 py-2 text-ink-muted">{etiquetaCategoria(item.categoria)}</td>
+                      <td className="px-3 py-2 text-ink-muted">{item.categorias.map((c) => etiquetaCategoria(c)).join(", ")}</td>
                       <td className="px-3 py-2">
                         {item.rqr ? (
                           <Link to={`/rqr/${item.rqr.id}`} onClick={(e) => e.stopPropagation()} title={`Abrir ${item.rqr.numeroRQR}`}>

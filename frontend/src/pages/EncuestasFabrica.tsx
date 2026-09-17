@@ -1016,7 +1016,7 @@ export default function EncuestasFabrica() {
                 <span className="text-ink-muted">
                   {r.email || "sin correo"} — {r.pendientes} cliente(s)
                 </span>
-                {r.error && <span className="text-rojo">{r.error}</span>}
+                {r.error && <span className="text-red-700">{r.error}</span>}
               </div>
             ))}
           </div>
@@ -1446,7 +1446,7 @@ export default function EncuestasFabrica() {
                       </div>
                     ) : (
                       <>
-                        <span className={`flex-1 text-sm ${g.email ? "text-ink-muted" : "text-rojo"}`}>
+                        <span className={`flex-1 text-sm ${g.email ? "text-ink-muted" : "text-red-700"}`}>
                           {g.email || (
                             <span className="inline-flex items-center gap-1">
                               <AlertTriangle className="h-3.5 w-3.5" /> falta el correo

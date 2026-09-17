@@ -522,7 +522,7 @@ export async function verConversacion(req: Request, res: Response) {
       estrellas: true,
       requiereRevisionManual: true,
       resumenIA: true,
-      categoriaCausaRaiz: true,
+      categoriasCausaRaiz: true,
     },
   });
 

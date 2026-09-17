@@ -8,7 +8,8 @@ import { ArrowLeft } from "lucide-react";
 import { apiGet, apiPostJson } from "../lib/api";
 import { getUsuario, veTodasLasAreas } from "../lib/auth";
 import { AREAS, etiquetaArea } from "../lib/area";
-import { causasRaiz, fechaCorta } from "../lib/categorias";
+import { fechaCorta } from "../lib/categorias";
+import { SelectorCausasRaiz } from "../components/SelectorCausasRaiz";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
@@ -61,7 +62,8 @@ export default function RqrNuevo() {
   const [areaAfectada, setAreaAfectada] = useState("");
   const [asesor, setAsesor] = useState("");
   const [descripcion, setDescripcion] = useState("");
-  const [causaRaiz, setCausaRaiz] = useState("");
+  // Una o varias (17-09-2026): un mismo reclamo puede tener más de una causa.
+  const [causasRaiz, setCausasRaiz] = useState<string[]>([]);
   const [bitacora, setBitacora] = useState("");
   const [observaciones, setObservaciones] = useState("");
 
@@ -146,7 +148,7 @@ export default function RqrNuevo() {
         areaAfectada: areaAfectada.trim() || undefined,
         asesor: asesor.trim(),
         descripcionReclamo: descripcion.trim(),
-        causaRaiz,
+        causasRaiz,
         tratamientoBitacora: bitacora.trim() || undefined,
         observaciones: observaciones.trim() || undefined,
         // Campos de Volkswagen: se mandan solo si la marca los usa.
@@ -465,18 +467,17 @@ export default function RqrNuevo() {
           </Campo>
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {/* Obligatoria: un RQR sin causa raíz no entra en el reporte de
-              causas, que es lo único que dice dónde está fallando el proceso. */}
-          <Campo etiqueta="Causa raíz *">
-            <Select value={causaRaiz} onChange={(e) => setCausaRaiz(e.target.value)}>
-              <option value="" disabled>
-                Elegí la causa raíz…
-              </option>
-              {causasRaiz().map((c) => (
-                <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>
-              ))}
-            </Select>
-          </Campo>
+          {/* Obligatoria, al menos una: un RQR sin causa raíz no entra en el
+              reporte de causas, que es lo único que dice dónde está fallando el
+              proceso. Puede tener varias, y suma en cada una. */}
+          <div className="sm:col-span-2">
+            <SelectorCausasRaiz
+              etiqueta="Causas raíz *"
+              hint="Marcá todas las que correspondan: el RQR suma en cada una."
+              valor={causasRaiz}
+              onCambiar={setCausasRaiz}
+            />
+          </div>
           <Campo etiqueta="Primer registro de bitácora (opcional)">
             <Input type="text" value={bitacora} onChange={(e) => setBitacora(e.target.value)} />
           </Campo>
@@ -498,7 +499,7 @@ export default function RqrNuevo() {
             guardando ||
             !descripcion.trim() ||
             !asesor.trim() ||
-            !causaRaiz ||
+            causasRaiz.length === 0 ||
             // Hay que saber de quién es: un caso, un nombre a mano, o la
             // constancia de que el cliente es anónimo.
             (!sinCaso && !anonimo && !casoElegido) ||

@@ -4,6 +4,8 @@
 import { AreaTrabajo, EstadoRQR, Prisma } from "@prisma/client";
 import * as XLSX from "xlsx";
 import { prisma } from "../config/prisma";
+import { marca } from "../config/marca";
+import { claveNormalizada } from "./normalizacion.service";
 import { abrirWorkbook, leerFilasCrudas, normalizarTexto, parsearFecha } from "./excel.service";
 import { normalizarTelefonoAR } from "./telefono.service";
 import { generarNumeroRQR } from "./rqr.service";
@@ -146,6 +148,30 @@ export function parsearFormularioRqr(workbook: XLSX.WorkBook, nombreHoja: string
   };
 }
 
+/**
+ * Las causas raíz que dice el formulario, como códigos de la marca. El Excel trae
+ * texto libre: se acepta el código o la etiqueta de la lista (sin mayúsculas ni
+ * tildes), y varias separadas por ";" o por renglón. Lo que no se reconoce se deja
+ * afuera: antes se guardaba igual y la limpieza del arranque lo borraba.
+ */
+function causasDelFormulario(texto: string | null): string[] {
+  if (!texto) return [];
+  const reconocer = (t: string) => {
+    const clave = claveNormalizada(t);
+    return marca.causasRaiz.find((c) => claveNormalizada(c.codigo) === clave || claveNormalizada(c.etiqueta) === clave)?.codigo ?? null;
+  };
+  const entera = reconocer(texto);
+  if (entera) return [entera];
+  return [
+    ...new Set(
+      texto
+        .split(/[;\n]/)
+        .map((parte) => reconocer(parte))
+        .filter((c): c is string => c !== null)
+    ),
+  ];
+}
+
 // ---------- Importación ----------
 
 async function buscarCasoVinculable(form: FormularioRqr) {
@@ -253,7 +279,7 @@ export async function importarFormulariosRqr(buffer: Buffer): Promise<{
               tratamientoDadoPor: form.tratamientoDadoPor,
               observaciones: form.observaciones,
               responsableCierre: form.fechaCierre ? form.responsableCierre : null,
-              causaRaiz: form.causaRaiz,
+              causasRaiz: causasDelFormulario(form.causaRaiz),
               fechaCierre: form.fechaCierre,
               estado: form.fechaCierre ? EstadoRQR.CERRADO : EstadoRQR.ABIERTO,
             },

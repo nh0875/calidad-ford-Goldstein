@@ -7,7 +7,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, FileDown, Trash2 } from "lucide-react";
 import { apiDelete, apiDescargarArchivo, apiGet, apiPatchJson } from "../lib/api";
 import { getUsuario } from "../lib/auth";
-import { causasRaiz, fechaCorta } from "../lib/categorias";
+import { fechaCorta } from "../lib/categorias";
+import { SelectorCausasRaiz } from "../components/SelectorCausasRaiz";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge, PuntoSemaforo } from "../components/ui/Badge";
@@ -41,7 +42,7 @@ interface RqrDetalleData {
   fechaCierre: string | null;
   observaciones: string | null;
   responsableCierre: string | null;
-  causaRaiz: string | null;
+  causasRaiz: string[];
   estado: string;
   caso: {
     numeroOrden: string;
@@ -81,7 +82,7 @@ interface Formulario {
   solucionPropuesta: string;
   tratamientoDadoPor: string;
   tratamientoDadoPor2: string;
-  causaRaiz: string;
+  causasRaiz: string[];
   estado: string;
   responsableCierre: string;
   observaciones: string;
@@ -141,7 +142,7 @@ export default function RqrDetalle() {
         solucionPropuesta: data.solucionPropuesta ?? "",
         tratamientoDadoPor: data.tratamientoDadoPor ?? "",
         tratamientoDadoPor2: data.tratamientoDadoPor2 ?? "",
-        causaRaiz: data.causaRaiz ?? "",
+        causasRaiz: data.causasRaiz ?? [],
         estado: data.estado,
         responsableCierre: data.responsableCierre ?? "",
         observaciones: data.observaciones ?? "",
@@ -172,11 +173,14 @@ export default function RqrDetalle() {
         solucionPropuesta: form.solucionPropuesta || null,
         tratamientoDadoPor: form.tratamientoDadoPor || null,
         tratamientoDadoPor2: form.tratamientoDadoPor2 || null,
-        // Si todavía no tiene causa NO se manda el campo, en vez de mandar null.
-        // Así un RQR viejo sin clasificar se puede seguir trabajando —agregar
-        // bitácora, escribir la solución— sin que el guardado se trabe. La causa
-        // se exige donde importa: no se puede CERRAR sin ella.
-        ...(form.causaRaiz ? { causaRaiz: form.causaRaiz } : {}),
+        // Si NUNCA tuvo causa y sigue sin tener, NO se manda el campo, en vez de
+        // mandar una lista vacía. Así un RQR viejo sin clasificar se puede seguir
+        // trabajando —agregar bitácora, escribir la solución— sin que el guardado se
+        // trabe. La causa se exige donde importa: no se puede CERRAR sin ella.
+        // Pero si ya tenía y le destildaron todas, se manda la lista vacía: el
+        // backend la rechaza con un mensaje. Omitirla dejaba las causas viejas en
+        // silencio, y hasta cerraba el RQR con las causas que se acababan de sacar.
+        ...(form.causasRaiz.length || rqr.causasRaiz.length ? { causasRaiz: form.causasRaiz } : {}),
         estado: form.estado,
         responsableCierre: form.responsableCierre || null,
         observaciones: form.observaciones || null,
@@ -367,20 +371,23 @@ export default function RqrDetalle() {
       <Seccion titulo="2. Descripción del reclamo">
         <Textarea value={form.descripcionReclamo} onChange={(e) => set("descripcionReclamo")(e.target.value)} rows={6} />
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
-          {/* La opción vacía queda DESHABILITADA, no borrada: los RQR que
-              todavía no tienen causa —los viejos, y los que la IA no pudo
-              identificar— tienen que poder mostrarse como lo que son. Se puede
-              ver, no elegir: una vez puesta, no se vuelve a sacar. */}
-          <Campo etiqueta="Causa raíz *" hint="Obligatoria: sin esto el RQR no se puede cerrar.">
-            <Select value={form.causaRaiz} onChange={(e) => set("causaRaiz")(e.target.value)}>
-              <option value="" disabled>
-                Falta clasificar — elegí una
-              </option>
-              {causasRaiz().map((c) => (
-                <option key={c.codigo} value={c.codigo}>{c.etiqueta}</option>
-              ))}
-            </Select>
-          </Campo>
+          {/* Una o varias (17-09-2026). Al menos una para cerrar. Un RQR que
+              todavía no tiene ninguna —los viejos, y los que la IA no pudo
+              clasificar— se muestra como lo que es: falta clasificar. */}
+          <div className="sm:col-span-3">
+            <SelectorCausasRaiz
+              etiqueta="Causas raíz *"
+              hint={
+                form.causasRaiz.length > 0
+                  ? "Marcá todas las que correspondan: el RQR suma en cada una en los reportes."
+                  : rqr.causasRaiz.length > 0
+                    ? "Marcá al menos una: un RQR que ya tenía causas no puede quedar sin ninguna."
+                    : "Falta clasificar: marcá al menos una, sin eso el RQR no se puede cerrar."
+              }
+              valor={form.causasRaiz}
+              onCambiar={(causasRaiz) => setForm((f) => (f ? { ...f, causasRaiz } : f))}
+            />
+          </div>
           {rqrVW ? (
             <>
               {/* El sector RESPONSABLE del reclamo. La subárea cuelga de acá, no

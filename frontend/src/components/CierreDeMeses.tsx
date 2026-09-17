@@ -162,7 +162,7 @@ export default function CierreDeMeses<T extends { id: string }>({
   }
 
   if (!meses) {
-    return errorCarga ? <p className="text-sm text-rojo">{errorCarga}</p> : null;
+    return errorCarga ? <p className="text-sm text-red-700">{errorCarga}</p> : null;
   }
 
   const totalPaginas = consulta ? Math.max(1, Math.ceil(consulta.data.length / CLIENTES_POR_PAGINA)) : 1;
@@ -192,8 +192,8 @@ export default function CierreDeMeses<T extends { id: string }>({
       {(mensaje || error || errorCarga) && (
         <div className="px-5 pb-3">
           {mensaje && <p className="text-sm text-green-800">{mensaje}</p>}
-          {error && <p className="text-sm text-rojo">{error}</p>}
-          {errorCarga && <p className="text-sm text-rojo">{errorCarga}</p>}
+          {error && <p className="text-sm text-red-700">{error}</p>}
+          {errorCarga && <p className="text-sm text-red-700">{errorCarga}</p>}
         </div>
       )}
 

@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { DatabaseBackup, PartyPopper } from "lucide-react";
 import { apiGet } from "../lib/api";
 import { getUsuario, veTodasLasAreas } from "../lib/auth";
-import { etiquetaCategoria } from "../lib/categorias";
+import { etiquetaCategoria, etiquetasCategorias } from "../lib/categorias";
 import { AREAS, etiquetaArea } from "../lib/area";
 import { FiltroFecha, FiltroSelect, FiltroTexto } from "../components/filtros";
 import { DistribucionEstrellas, DistribucionSemaforo, EvolucionSemaforo } from "../components/graficos";
@@ -75,7 +75,7 @@ interface Resumen {
       sucursal: string;
       modelo: string;
       asesor: string;
-      causaRaiz: string | null;
+      causasRaiz: string[];
       estado: string;
       diasAbierto: number;
     }>;
@@ -416,6 +416,7 @@ export default function Dashboard() {
               )}
               <h4 className="mb-1 mt-5 text-xs font-semibold uppercase text-ink-muted">Top causas raíz del período</h4>
               {resumen.topCategorias.length > 0 ? (
+                <>
                 <ol className="space-y-1 text-sm">
                   {resumen.topCategorias.map((c, i) => (
                     <li key={c.categoria} className="flex justify-between border-t border-gray-100 py-1">
@@ -426,6 +427,8 @@ export default function Dashboard() {
                     </li>
                   ))}
                 </ol>
+                <p className="mt-1 text-[11px] text-ink-muted">Un RQR con varias causas suma en cada una.</p>
+                </>
               ) : (
                 <p className="text-sm text-ink-muted">Todavía no hay causas registradas en este período.</p>
               )}
@@ -563,7 +566,7 @@ export default function Dashboard() {
                         </span>
                         <div className="text-xs text-ink-muted/80">
                           {r.asesor && r.asesor !== "(sin asesor)" ? `Asesor: ${r.asesor} · ` : ""}
-                          {etiquetaCategoria(r.causaRaiz)} · {r.estado.replace("_", " ")}
+                          {etiquetasCategorias(r.causasRaiz)} · {r.estado.replace("_", " ")}
                         </div>
                       </div>
                       <Badge tono={r.diasAbierto >= 7 ? "rojo" : "amarillo"} className="shrink-0" title="Días desde la apertura">

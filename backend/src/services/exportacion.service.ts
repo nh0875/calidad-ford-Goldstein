@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { etiquetasCausasRaiz } from "./causa-raiz.service";
 import fs from "fs";
 import path from "path";
 import {
@@ -225,6 +226,14 @@ export async function excelReporteCausaRaiz(f: FiltrosCausaRaiz): Promise<Buffer
     { header: "Amarillos sin RQR", key: "sinRqr", width: 18 },
   ]);
   categorias.addRows(r.porCategoria);
+  // Un reclamo con varias causas suma en cada una (decisión del 17-09-2026): la suma
+  // de la columna Total puede ser mayor que la cantidad de reclamos.
+  if (r.conVariasCausas > 0) {
+    categorias.addRow({});
+    categorias.addRow({
+      categoria: `${r.totalReclamos} reclamos; ${r.conVariasCausas} con más de una causa (suman en cada una).`,
+    });
+  }
 
   const detalle = hojaConEncabezado(wb, "Detalle", [
     { header: "Fecha", key: "fecha", width: 12 },
@@ -236,7 +245,7 @@ export async function excelReporteCausaRaiz(f: FiltrosCausaRaiz): Promise<Buffer
     { header: "Asesor", key: "asesor", width: 16 },
     { header: "Fecha servicio", key: "fechaServicio", width: 14 },
     { header: "Semáforo", key: "semaforo", width: 12 },
-    { header: "Categoría", key: "categoria", width: 22 },
+    { header: "Categorías", key: "categoria", width: 30 },
     { header: "RQR", key: "rqr", width: 16 },
     { header: "Estado RQR", key: "estadoRqr", width: 16 },
     { header: "Resumen IA", key: "resumen", width: 50 },
@@ -253,7 +262,7 @@ export async function excelReporteCausaRaiz(f: FiltrosCausaRaiz): Promise<Buffer
       asesor: d.caso.asesor,
       fechaServicio: fechaCorta(d.caso.fechaSalida),
       semaforo: d.semaforo ?? "-",
-      categoria: d.categoria,
+      categoria: d.categorias.join(", "),
       rqr: d.rqr?.numeroRQR ?? "-",
       estadoRqr: d.rqr?.estado ?? "-",
       resumen: d.resumenIA ?? "-",
@@ -484,7 +493,9 @@ export async function wordRqr(rqr: RqrCompleto): Promise<Buffer> {
 
           tituloSeccion("2. Descripción del reclamo"),
           parrafo(rqr.descripcionReclamo),
-          ...(rqr.causaRaiz ? [parrafo(`Causa raíz: ${rqr.causaRaiz}`)] : []),
+          ...(rqr.causasRaiz.length
+            ? [parrafo(`${rqr.causasRaiz.length === 1 ? "Causa raíz" : "Causas raíz"}: ${etiquetasCausasRaiz(rqr.causasRaiz)}`)]
+            : []),
           ...(rqr.sentimentAnalysis?.message?.content
             ? [parrafo(`Respuesta original del cliente: "${rqr.sentimentAnalysis.message.content}"`)]
             : []),

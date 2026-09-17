@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { FilePlus2, FileUp, SearchX } from "lucide-react";
 import { apiGet, apiPostForm } from "../lib/api";
-import { causasRaiz, etiquetaCategoria, fechaCorta } from "../lib/categorias";
+import { causasRaiz, etiquetasCategorias, fechaCorta } from "../lib/categorias";
 import { BarraFiltros, FILTROS_VACIOS, FiltroSelect, FiltrosComunes, filtrosAQuery, useOpcionesCasos } from "../components/filtros";
 import { getUsuario, veTodasLasAreas } from "../lib/auth";
 import { etiquetaArea, tonoArea } from "../lib/area";
@@ -18,7 +18,7 @@ interface FilaRqr {
   id: string;
   numeroRQR: string;
   fechaApertura: string;
-  causaRaiz: string | null;
+  causasRaiz: string[];
   estado: string;
   area: string;
   asesor: string;
@@ -195,7 +195,7 @@ export default function Rqr() {
               <th className="px-3 py-2">Área</th>
               <th className="px-3 py-2">Asesor</th>
               <th className="px-3 py-2">Apertura</th>
-              <th className="px-3 py-2">Categoría</th>
+              <th className="px-3 py-2">Causas raíz</th>
               <th className="px-3 py-2 text-center">Semáforo</th>
               <th className="px-3 py-2">Estado</th>
             </tr>
@@ -228,7 +228,7 @@ export default function Rqr() {
                   </td>
                   <td className="px-3 py-2 text-ink-muted">{r.asesor}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-ink-muted">{fechaCorta(r.fechaApertura)}</td>
-                  <td className="px-3 py-2 text-ink-muted">{etiquetaCategoria(r.causaRaiz)}</td>
+                  <td className="px-3 py-2 text-ink-muted">{etiquetasCategorias(r.causasRaiz)}</td>
                   <td className="px-3 py-2 text-center">
                     <PuntoSemaforo
                       semaforo={semaforo}

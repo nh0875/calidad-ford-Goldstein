@@ -275,7 +275,8 @@ export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
       eliminadoEn: null, // excluye RQR borrados lógicamente
       fechaApertura: rangoFechas(f),
       ...areaRqr,
-      ...(f.categoria ? { causaRaiz: f.categoria } : {}),
+      // Un RQR con varias causas entra al filtrar por cualquiera de ellas.
+      ...(f.categoria ? { causasRaiz: { has: f.categoria } } : {}),
       // Con filtro de caso (sucursal/asesor/período) se aplica filtroCaso, que
       // ya exige caso.eliminadoEn=null y de paso excluye los manuales (correcto:
       // no tienen sucursal). SIN filtro de caso NO se puede dejar el where sin
@@ -308,7 +309,7 @@ export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
           semaforo: Semaforo.AMARILLO,
           rqr: null,
           analyzedAt: rangoFechas(f),
-          ...(f.categoria ? { categoriaCausaRaiz: f.categoria } : {}),
+          ...(f.categoria ? { categoriasCausaRaiz: { has: f.categoria } } : {}),
           caso: { ...whereCaso(f), estadoContacto: { not: EstadoContacto.INTERNO } },
         },
         include: {
@@ -343,7 +344,7 @@ export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
       },
       semaforo: r.sentimentAnalysis?.semaforo ?? null,
       severidad: r.sentimentAnalysis?.severidad ?? null,
-      categoria: r.causaRaiz ?? FALTA_CLASIFICAR,
+      categorias: r.causasRaiz.length ? r.causasRaiz : [FALTA_CLASIFICAR],
       rqr: { id: r.id, numeroRQR: r.numeroRQR, estado: r.estado },
       resumenIA: r.sentimentAnalysis?.resumenIA ?? null,
       textoCliente: r.sentimentAnalysis?.message?.content ?? null,
@@ -354,7 +355,7 @@ export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
       caso: a.caso,
       semaforo: a.semaforo,
       severidad: a.severidad,
-      categoria: a.categoriaCausaRaiz ?? FALTA_CLASIFICAR,
+      categorias: a.categoriasCausaRaiz.length ? a.categoriasCausaRaiz : [FALTA_CLASIFICAR],
       rqr: null,
       resumenIA: a.resumenIA,
       textoCliente: a.message?.content ?? null,
@@ -362,14 +363,24 @@ export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
     })),
   ].sort((a, b) => b.fecha.getTime() - a.fecha.getTime());
 
-  // Cantidad por categoría (para el gráfico de barras)
+  // Cantidad por categoría (para el gráfico de barras).
+  //
+  // VARIAS CAUSAS (17-09-2026, decisión del dueño): un reclamo con dos causas suma
+  // 1 en CADA una. Por eso la suma de las barras puede dar más que la cantidad de
+  // reclamos, y la respuesta trae los dos números para que la pantalla lo aclare.
+  // Con una causa elegida en el filtro, se cuenta solo esa: si no, el gráfico
+  // mostraría también las otras causas de esos mismos reclamos.
+  const causasQueCuentan = (categorias: string[]) =>
+    f.categoria ? categorias.filter((c) => c === f.categoria) : categorias;
   const porCategoriaMapa = new Map<string, { total: number; conRqr: number; sinRqr: number }>();
   for (const item of detalle) {
-    const fila = porCategoriaMapa.get(item.categoria) ?? { total: 0, conRqr: 0, sinRqr: 0 };
-    fila.total++;
-    if (item.rqr) fila.conRqr++;
-    else fila.sinRqr++;
-    porCategoriaMapa.set(item.categoria, fila);
+    for (const categoria of causasQueCuentan(item.categorias)) {
+      const fila = porCategoriaMapa.get(categoria) ?? { total: 0, conRqr: 0, sinRqr: 0 };
+      fila.total++;
+      if (item.rqr) fila.conRqr++;
+      else fila.sinRqr++;
+      porCategoriaMapa.set(categoria, fila);
+    }
   }
   const porCategoria = [...porCategoriaMapa.entries()]
     .map(([categoria, v]) => ({ categoria, ...v }))
@@ -384,12 +395,19 @@ export async function reporteCausaRaiz(f: FiltrosCausaRaiz) {
 
   const cierrePorCategoriaMapa = new Map<string, number[]>();
   for (const r of cerrados) {
-    const k = r.causaRaiz ?? FALTA_CLASIFICAR;
-    cierrePorCategoriaMapa.set(k, [...(cierrePorCategoriaMapa.get(k) ?? []), diasCierre(r)]);
+    // Igual que el gráfico: un RQR cerrado con dos causas cuenta en las dos.
+    for (const k of causasQueCuentan(r.causasRaiz.length ? r.causasRaiz : [FALTA_CLASIFICAR])) {
+      cierrePorCategoriaMapa.set(k, [...(cierrePorCategoriaMapa.get(k) ?? []), diasCierre(r)]);
+    }
   }
 
   return {
     porCategoria,
+    // Cuántos reclamos hay y cuántos suman en más de una barra: la suma de las barras
+    // de porCategoria puede ser mayor que el total. Con una causa filtrada hay una
+    // sola barra y ninguno suma dos veces, aunque tenga otras causas.
+    totalReclamos: detalle.length,
+    conVariasCausas: detalle.filter((d) => causasQueCuentan(d.categorias).length > 1).length,
     detalle,
     tiempoCierre: {
       promedioDias: promedio(cerrados.map(diasCierre)),
