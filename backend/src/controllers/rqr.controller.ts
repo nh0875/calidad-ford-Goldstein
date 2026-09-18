@@ -151,6 +151,12 @@ const camposVW = {
   // qué tema llamó el cliente, este dice de quién es el problema. La subárea
   // cuelga de ESTE, no del tipo de contacto.
   areaPrincipal: vaciable(z.enum(AREAS_VW)),
+  // VARIAS (17-09-2026). Se acepta también el nombre viejo en singular, por si
+  // quedó alguna pantalla o un pedido guardado con el formato anterior.
+  subareas: z
+    .array(z.string().trim().min(1))
+    .transform((lista) => [...new Set(lista)])
+    .optional(),
   subarea: vaciable(z.string().trim().min(1)),
   origenRqr: vaciable(z.string().trim().min(1)),
   codigoSucursal: vaciable(
@@ -171,23 +177,42 @@ const camposVW = {
  */
 function validarCamposVW(datos: {
   areaPrincipal?: string | null;
-  subarea?: string | null;
+  subareas?: string[] | null;
   origenRqr?: string | null;
 }): string | null {
   if (datos.origenRqr && !ORIGENES_RQR_VALIDOS.has(datos.origenRqr)) {
     return "El origen del RQR no es válido.";
   }
-  if (datos.subarea) {
-    if (!SUBAREAS_VW_VALIDAS.has(datos.subarea)) return "La subárea no es válida.";
-    if (datos.areaPrincipal && !subareaPerteneceAlArea(datos.areaPrincipal as AreaVW, datos.subarea)) {
+  for (const subarea of datos.subareas ?? []) {
+    if (!SUBAREAS_VW_VALIDAS.has(subarea)) return "La subárea no es válida.";
+    if (datos.areaPrincipal && !subareaPerteneceAlArea(datos.areaPrincipal as AreaVW, subarea)) {
       // El mensaje nombra las dos cosas y dice cómo salir del paso: el error se
       // ve al cambiar de área principal, cuando la subárea que quedó adentro es
       // la del área anterior y en pantalla el casillero puede verse vacío.
       const area = NOMBRE_AREA_VW[datos.areaPrincipal as AreaVW];
-      return `La subárea "${etiquetaSubareaVW(datos.subarea)}" no corresponde a ${area}. Elegí una subárea de ${area}, o dejá el casillero vacío.`;
+      return `La subárea "${etiquetaSubareaVW(subarea)}" no corresponde a ${area}. Elegí subáreas de ${area}, o dejá el casillero vacío.`;
     }
   }
   return null;
+}
+
+/**
+ * Las subáreas que quedan después de un pedido: la lista nueva si vino, la
+ * forma vieja (una sola) si es lo único que llegó, y si no lo que ya estaba.
+ * Un array VACÍO es "sacale todas", no "no lo toques".
+ */
+function subareasDe(
+  datos: { subareas?: string[]; subarea?: string | null },
+  guardadas: string[]
+): string[] {
+  if (datos.subareas) return datos.subareas;
+  // La forma vieja (singular) sirve SOLO para poner una. Un null de esa forma no
+  // significa "sacá todas": una pestaña abierta de antes del cambio ya no recibe
+  // "subarea" en la respuesta y manda null sin que nadie haya tocado nada, y así
+  // borraba en silencio las subáreas del RQR. Para vaciar de verdad está la
+  // forma nueva (subareas: []), que es la que manda la pantalla de hoy.
+  if (datos.subarea) return [datos.subarea];
+  return guardadas;
 }
 
 const createSchema = z
@@ -236,7 +261,11 @@ export async function createRqr(req: Request, res: Response) {
     });
   }
   const datos = parsed.data;
-  const errorVW = validarCamposVW(datos);
+  // La lista final PRIMERO, y se valida ESA. Validando el objeto crudo, una alta
+  // con la forma vieja ({ subarea: "VTA_ENTREGA" }) no pasaba por la validación
+  // -que solo mira la lista- y entraba una subárea de otra área, o inventada.
+  const subareasNuevas = subareasDe(datos, []);
+  const errorVW = validarCamposVW({ ...datos, subareas: subareasNuevas });
   if (errorVW) return res.status(400).json({ message: errorVW });
 
   // El anonimato es una opción de la marca, no del que manda el pedido: si la
@@ -283,6 +312,7 @@ export async function createRqr(req: Request, res: Response) {
   // Queda registrado quién lo cargó: se imprime en el documento del RQR.
   const rqr = await crearRqrManual({
     ...datos,
+    subareas: marca.rqrConSubareas ? subareasNuevas : [],
     areaOrigen,
     area,
     creadoPorId: req.usuario!.id,
@@ -464,9 +494,10 @@ export async function patchRqr(req: Request, res: Response) {
   // OJO: acá va alFinal() y NO ??. Con ?? un campo borrado a propósito (null) se
   // leía como "no vino" y revivía el valor guardado, así que la validación
   // miraba una subárea que el usuario ya había sacado de la pantalla.
+  const subareasFinales = subareasDe(parsed.data, existente.subareas);
   const errorVW = validarCamposVW({
     areaPrincipal: alFinal(parsed.data.areaPrincipal, existente.areaPrincipal),
-    subarea: alFinal(parsed.data.subarea, existente.subarea),
+    subareas: subareasFinales,
     origenRqr: alFinal(parsed.data.origenRqr, existente.origenRqr),
   });
   if (errorVW) return res.status(400).json({ message: errorVW });
@@ -514,10 +545,14 @@ export async function patchRqr(req: Request, res: Response) {
           ? null
           : undefined;
 
+  // subarea/subareas no van sueltos al update: la columna vieja ya no existe y
+  // la lista final es la que calculó subareasDe (que entiende las dos formas).
+  const { subarea: _subareaVieja, subareas: _subareasDelPedido, ...cambiosGuardables } = cambios;
   const actualizado = await prisma.rQR.update({
     where: { id: existente.id },
     data: {
-      ...cambios,
+      ...cambiosGuardables,
+      ...(marca.rqrConSubareas ? { subareas: subareasFinales } : {}),
       ...(fechaCierre !== undefined ? { fechaCierre } : {}),
     },
   });

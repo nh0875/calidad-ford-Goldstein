@@ -9,6 +9,7 @@ import { apiDelete, apiDescargarArchivo, apiGet, apiPatchJson } from "../lib/api
 import { getUsuario } from "../lib/auth";
 import { fechaCorta } from "../lib/categorias";
 import { SelectorCausasRaiz } from "../components/SelectorCausasRaiz";
+import { SelectorMultiple } from "../components/SelectorMultiple";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge, PuntoSemaforo } from "../components/ui/Badge";
@@ -22,7 +23,7 @@ interface RqrDetalleData {
   // --- Campos de Volkswagen (null en Ford) ---
   tipoContacto: string | null;
   areaPrincipal: string | null;
-  subarea: string | null;
+  subareas: string[];
   origenRqr: string | null;
   codigoSucursal: string | null;
   razonSocial: string | null;
@@ -89,7 +90,7 @@ interface Formulario {
   areaOrigen: string;
   areaAfectada: string;
   areaPrincipal: string;
-  subarea: string;
+  subareas: string[];
   fechaCierre: string; // AAAA-MM-DD o ""
 }
 
@@ -149,7 +150,7 @@ export default function RqrDetalle() {
         areaOrigen: data.areaOrigen,
         areaAfectada: data.areaAfectada ?? "",
         areaPrincipal: data.areaPrincipal ?? "",
-        subarea: data.subarea ?? "",
+        subareas: data.subareas ?? [],
         fechaCierre: data.fechaCierre ? data.fechaCierre.slice(0, 10) : "",
       });
     } catch (err) {
@@ -188,7 +189,7 @@ export default function RqrDetalle() {
         // null y NO undefined: undefined se cae del JSON y el backend lo lee
         // como "no lo toques", así que al cambiar el área principal la subárea
         // vieja seguía guardada aunque en pantalla el casillero quedara vacío.
-        ...(rqrVW ? { areaPrincipal: form.areaPrincipal || null, subarea: form.subarea || null } : {}),
+        ...(rqrVW ? { areaPrincipal: form.areaPrincipal || null, subareas: form.subareas } : {}),
         areaAfectada: form.areaAfectada || null,
         // Al reabrir (estado != CERRADO) se limpia la fecha de cierre de forma
         // explícita: si no, el form conserva la fecha vieja y el RQR quedaría
@@ -334,7 +335,14 @@ export default function RqrDetalle() {
           <div className="mt-3 grid gap-x-6 gap-y-2 border-t border-gray-100 pt-3 text-sm sm:grid-cols-3">
             <Dato etiqueta="Tipo de contacto" valor={etiquetaCatalogo(rqr.tipoContacto, "area")} />
             <Dato etiqueta="Área principal" valor={etiquetaCatalogo(rqr.areaPrincipal, "area")} />
-            <Dato etiqueta="Subárea" valor={etiquetaCatalogo(rqr.subarea, "subarea")} />
+            <Dato
+              etiqueta={rqr.subareas.length === 1 ? "Subárea" : "Subáreas"}
+              valor={
+                rqr.subareas.length === 0
+                  ? "—"
+                  : rqr.subareas.map((s) => etiquetaCatalogo(s, "subarea")).join(", ")
+              }
+            />
             <Dato etiqueta="Origen del reclamo" valor={etiquetaCatalogo(rqr.origenRqr, "origen")} />
             <Dato etiqueta="Código de sucursal" valor={rqr.codigoSucursal ?? "—"} />
             <Dato etiqueta="Razón social" valor={rqr.razonSocial ?? "—"} />
@@ -396,8 +404,9 @@ export default function RqrDetalle() {
                 <Select
                   value={form.areaPrincipal}
                   onChange={(e) => {
-                    set("areaPrincipal")(e.target.value);
-                    set("subarea")(""); // la subárea puede no existir en el área nueva
+                    const areaPrincipal = e.target.value;
+                    // Las subáreas elegidas pueden no existir en el área nueva.
+                    setForm((f) => (f ? { ...f, areaPrincipal, subareas: [] } : f));
                   }}
                 >
                   <option value="">(elegir)</option>
@@ -406,21 +415,19 @@ export default function RqrDetalle() {
                   ))}
                 </Select>
               </Campo>
-              <Campo
-                etiqueta="Subárea"
-                hint={form.areaPrincipal ? undefined : "Elegí primero el área principal"}
-              >
-                <Select
-                  value={form.subarea}
-                  onChange={(e) => set("subarea")(e.target.value)}
-                  disabled={!form.areaPrincipal}
-                >
-                  <option value="">(elegir)</option>
-                  {(getMarca().rqr.areas.find((a) => a.valor === form.areaPrincipal)?.subareas ?? []).map((s) => (
-                    <option key={s.valor} value={s.valor}>{s.etiqueta}</option>
-                  ))}
-                </Select>
-              </Campo>
+              <SelectorMultiple
+                etiqueta="Subáreas"
+                hint={form.areaPrincipal ? "Podés marcar más de una" : undefined}
+                opciones={(getMarca().rqr.areas.find((a) => a.valor === form.areaPrincipal)?.subareas ?? []).map(
+                  (s) => ({ valor: s.valor, etiqueta: s.etiqueta })
+                )}
+                valor={form.subareas}
+                onCambiar={(subareas) => setForm((f) => (f ? { ...f, subareas } : f))}
+                deshabilitado={!form.areaPrincipal}
+                textoDeshabilitado="Falta el área principal"
+                placeholder="Elegí una o varias subáreas…"
+                etiquetaFuera={(valor) => etiquetaCatalogo(valor, "subarea")}
+              />
             </>
           ) : (
             <>

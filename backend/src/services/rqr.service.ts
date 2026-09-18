@@ -175,7 +175,7 @@ export interface DatosRqrManual {
   // vacío a propósito, y las dos cosas terminan guardándose como null.
   tipoContacto?: string | null;
   areaPrincipal?: string | null;
-  subarea?: string | null;
+  subareas?: string[];
   origenRqr?: string | null;
   codigoSucursal?: string | null;
   razonSocial?: string | null;
@@ -207,7 +207,7 @@ export async function crearRqrManual(datos: DatosRqrManual) {
             creadoPorId: datos.creadoPorId ?? null,
             tipoContacto: datos.tipoContacto ?? null,
             areaPrincipal: datos.areaPrincipal ?? null,
-            subarea: datos.subarea ?? null,
+            subareas: datos.subareas ?? [],
             origenRqr: datos.origenRqr ?? null,
             codigoSucursal: datos.codigoSucursal ?? null,
             razonSocial: datos.razonSocial ?? null,

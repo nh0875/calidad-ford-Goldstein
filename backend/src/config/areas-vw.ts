@@ -107,6 +107,12 @@ export function etiquetaSubareaVW(valor: string | null | undefined): string {
   return valor;
 }
 
+/** Las subáreas de un RQR en texto, separadas por coma (para el Word y la pantalla). */
+export function etiquetasSubareasVW(valores: string[] | null | undefined): string {
+  if (!valores || valores.length === 0) return "—";
+  return valores.map((v) => etiquetaSubareaVW(v)).join(", ");
+}
+
 /** ¿Esa subárea pertenece a esa área? Evita guardar combinaciones imposibles. */
 export function subareaPerteneceAlArea(area: AreaVW, subarea: string): boolean {
   return SUBAREAS_VW[area]?.some((s) => s.valor === subarea) ?? false;

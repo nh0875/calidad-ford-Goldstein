@@ -20,7 +20,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { reporteCausaRaiz, reporteSentimiento, FiltrosCausaRaiz, FiltrosReporte } from "./reporte.service";
 import { marca } from "../config/marca";
-import { etiquetaOrigenRqr, etiquetaSubareaVW, NOMBRE_AREA_VW, AreaVW } from "../config/areas-vw";
+import { etiquetaOrigenRqr, etiquetasSubareasVW, NOMBRE_AREA_VW, AreaVW } from "../config/areas-vw";
 import { nombreClienteRqr } from "./rqr.service";
 
 // Enums -> texto que lee gerencia (no las MAYUSCULAS_CON_GUION del código)
@@ -467,7 +467,10 @@ export async function wordRqr(rqr: RqrCompleto): Promise<Buffer> {
                       "Área principal",
                       rqr.areaPrincipal ? (NOMBRE_AREA_VW[rqr.areaPrincipal as AreaVW] ?? rqr.areaPrincipal) : "-"
                     ),
-                    filaDato("Subárea", etiquetaSubareaVW(rqr.subarea)),
+                    filaDato(
+                      rqr.subareas.length === 1 ? "Subárea" : "Subáreas",
+                      etiquetasSubareasVW(rqr.subareas)
+                    ),
                     filaDato("Origen del reclamo", etiquetaOrigenRqr(rqr.origenRqr)),
                     filaDato("Código de sucursal", rqr.codigoSucursal || "-"),
                     filaDato("Razón social", rqr.razonSocial || "-"),

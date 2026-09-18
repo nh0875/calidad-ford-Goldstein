@@ -10,6 +10,7 @@ import { getUsuario, veTodasLasAreas } from "../lib/auth";
 import { AREAS, etiquetaArea } from "../lib/area";
 import { fechaCorta } from "../lib/categorias";
 import { SelectorCausasRaiz } from "../components/SelectorCausasRaiz";
+import { SelectorMultiple } from "../components/SelectorMultiple";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
@@ -76,7 +77,8 @@ export default function RqrNuevo() {
   // Sector responsable del reclamo. Es OTRO dato que el tipo de contacto: ese
   // dice por qué tema llamó el cliente, este de quién es el problema.
   const [areaPrincipal, setAreaPrincipal] = useState("");
-  const [subarea, setSubarea] = useState("");
+  // Varias (17-09-2026): un reclamo puede tocar más de una subárea del sector.
+  const [subareas, setSubareas] = useState<string[]>([]);
   const [origenRqr, setOrigenRqr] = useState("");
   const [codigoSucursal, setCodigoSucursal] = useState("");
   const [razonSocial, setRazonSocial] = useState("");
@@ -156,7 +158,7 @@ export default function RqrNuevo() {
           ? {
               tipoContacto: tipoContacto || undefined,
               areaPrincipal: areaPrincipal || undefined,
-              subarea: subarea || undefined,
+              subareas,
               origenRqr: origenRqr || undefined,
               codigoSucursal: codigoSucursal.trim() || undefined,
               razonSocial: razonSocial.trim() || undefined,
@@ -371,8 +373,8 @@ export default function RqrNuevo() {
                 value={areaPrincipal}
                 onChange={(e) => {
                   setAreaPrincipal(e.target.value);
-                  // La subárea elegida puede no existir en el área nueva.
-                  setSubarea("");
+                  // Las subáreas elegidas pueden no existir en el área nueva.
+                  setSubareas([]);
                 }}
               >
                 <option value="">(elegir)</option>
@@ -383,23 +385,16 @@ export default function RqrNuevo() {
                 ))}
               </Select>
             </Campo>
-            <Campo
-              etiqueta="Subárea"
-              hint={areaPrincipal ? undefined : "Elegí primero el área principal"}
-            >
-              <Select
-                value={subarea}
-                onChange={(e) => setSubarea(e.target.value)}
-                disabled={!areaPrincipal}
-              >
-                <option value="">(elegir)</option>
-                {subareasDisponibles.map((s) => (
-                  <option key={s.valor} value={s.valor}>
-                    {s.etiqueta}
-                  </option>
-                ))}
-              </Select>
-            </Campo>
+            <SelectorMultiple
+              etiqueta="Subáreas"
+              hint={areaPrincipal ? "Podés marcar más de una" : undefined}
+              opciones={subareasDisponibles.map((s) => ({ valor: s.valor, etiqueta: s.etiqueta }))}
+              valor={subareas}
+              onCambiar={setSubareas}
+              deshabilitado={!areaPrincipal}
+              textoDeshabilitado="Falta el área principal"
+              placeholder="Elegí una o varias subáreas…"
+            />
             <Campo etiqueta="Origen del reclamo" hint="Por dónde llegó">
               <Select value={origenRqr} onChange={(e) => setOrigenRqr(e.target.value)}>
                 <option value="">(elegir)</option>
