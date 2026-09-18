@@ -10,6 +10,8 @@ import {
   eliminarVendedorVW,
   listarEncuestaVW,
   notificarEncuestaVW,
+  contarVolverAPendienteVW,
+  volverAPendienteEncuestaVW,
   previewEncuestaVW,
   editarEstadoEncuestaVW,
   seguimientoEncuestaVW,
@@ -55,6 +57,11 @@ router.get("/estado-mail", asyncHandler(estadoMailRefuerzo));
 // Aviso por correo a los vendedores con su lista.
 // Va ANTES de "/vendedores/:id" para que "notificar" no se lea como un id.
 router.post("/notificar", asyncHandler(notificarEncuestaVW));
+
+// Los avisados que no respondieron vuelven a pendiente, para que el próximo aviso
+// se los recuerde al vendedor. El GET dice cuántos serían, antes de confirmar.
+router.get("/volver-a-pendiente", asyncHandler(contarVolverAPendienteVW));
+router.post("/volver-a-pendiente", asyncHandler(volverAPendienteEncuestaVW));
 
 // ABM de vendedores: acá se les carga el correo, que es lo que habilita el aviso.
 router.post("/vendedores", asyncHandler(crearVendedorVW));

@@ -839,9 +839,14 @@ model EncuestaFabricaVW {
   // fábrica.
   origenFormato String @default("FABRICA")
 
-  detectadaEn DateTime  @default(now())
-  avisadoEn   DateTime? // cuándo salió el mail al vendedor con este cliente adentro
-  respondioEn DateTime?
+  detectadaEn  DateTime  @default(now())
+  avisadoEn    DateTime? // cuándo salió el ÚLTIMO mail al vendedor con este cliente adentro
+  // Cuántas veces se le avisó al vendedor por este cliente. Desde el 18-09-2026 se
+  // puede volver a pasar a pendiente a los avisados que no respondieron, para
+  // recordárselos: con esto el mail distingue los clientes nuevos de los que ya se
+  // le habían avisado ("recordatorio"), y la pantalla muestra cuántos avisos van.
+  vecesAvisado Int       @default(0)
+  respondioEn  DateTime?
 
   // Lo que carga Calidad a mano cuando el cliente contesta. La calificación va de
   // 1 a 5, la misma escala que la encuesta de posventa por WhatsApp, para que un
@@ -997,10 +1002,20 @@ model CierrePeriodo {
 // de fábrica y del DMS, no del sistema); los porcentajes, totales y la comparación
 // con los objetivos los calcula el sistema (indicadores-cem.service.ts).
 
+// Ventas o Posventa (pedido del 18-09-2026: "que se puedan cargar las dos áreas").
+// Posventa usa las MISMAS columnas y cuentas, adaptadas a taller: "patentamientos"
+// son sus órdenes de reparación, y no se separa tradicional/autoahorro (eso es de
+// ventas, plan de ahorro). Lo que ya estaba cargado es todo de Ventas.
+enum AreaCem {
+  VENTAS
+  POSVENTA
+}
+
 model IndicadorCemMes {
-  id       String @id @default(cuid())
+  id       String  @id @default(cuid())
   periodo  String // "AAAA-MM"
   sucursal String // "Mendoza", "San Juan"
+  area     AreaCem @default(VENTAS)
 
   patentamientos     Int?
   baseCem            Int?
@@ -1015,14 +1030,15 @@ model IndicadorCemMes {
   actualizadoEn        DateTime @updatedAt
   actualizadoPorNombre String?
 
-  @@unique([periodo, sucursal])
+  @@unique([periodo, sucursal, area])
 }
 
 model IndicadorCemTrimestre {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
   anio      Int
   trimestre Int // 1 a 4
   sucursal  String
+  area      AreaCem @default(VENTAS)
 
   // El OS del trimestre lo publica fábrica: NO es el promedio de los tres meses.
   os                 Float?
@@ -1032,14 +1048,16 @@ model IndicadorCemTrimestre {
   actualizadoEn        DateTime @updatedAt
   actualizadoPorNombre String?
 
-  @@unique([anio, trimestre, sucursal])
+  @@unique([anio, trimestre, sucursal, area])
 }
 
 // Los objetivos cambian de un trimestre a otro y valen para las dos provincias.
+// Cada área tiene los suyos (decisión del 18-09-2026).
 model ObjetivoCemTrimestre {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
   anio      Int
   trimestre Int
+  area      AreaCem @default(VENTAS)
 
   os          Float?
   cargas      Float? // % de carga mínimo (base CEM / patentamientos)
@@ -1048,5 +1066,5 @@ model ObjetivoCemTrimestre {
   actualizadoEn        DateTime @updatedAt
   actualizadoPorNombre String?
 
-  @@unique([anio, trimestre])
+  @@unique([anio, trimestre, area])
 }

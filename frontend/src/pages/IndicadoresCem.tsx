@@ -7,8 +7,13 @@
 // objetivo, rojo si no) los hace el backend con las mismas fórmulas de la planilla
 // (services/indicadores-cem.service.ts). Lo ve cualquier perfil; cargan Calidad y
 // los administradores.
+//
+// Dos áreas desde el 18-09-2026: Ventas y Posventa, con un selector arriba. Las
+// dos tienen las mismas columnas, cuentas y objetivos propios; en Posventa los
+// "patentamientos" son las órdenes de reparación del taller y no hay separación
+// tradicional / autoahorro (eso es de ventas).
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Gauge, Pencil } from "lucide-react";
+import { AlertTriangle, Car, Gauge, Pencil, Wrench } from "lucide-react";
 import { apiGet, apiPutJson } from "../lib/api";
 import { getMarca } from "../lib/marca";
 import { Card } from "../components/ui/Card";
@@ -17,6 +22,51 @@ import { claseBoton } from "../components/ui/Button";
 import { Select } from "../components/ui/Field";
 import { SkeletonBlock } from "../components/ui/Skeleton";
 import { etiquetaMes } from "../components/SeguimientoAnimaciones";
+
+type AreaCem = "VENTAS" | "POSVENTA";
+
+/** Lo que cambia de una área a otra: nombres de columnas y qué columnas hay. */
+const CONFIG_AREA: Record<
+  AreaCem,
+  {
+    nombre: string;
+    /** Encabezado corto de la primera columna y su nombre completo (tooltip). */
+    base: string;
+    baseLargo: string;
+    /** Tradicional / autoahorro: solo en Ventas. */
+    conSeparacion: boolean;
+    descripcion: string;
+  }
+> = {
+  VENTAS: {
+    nombre: "Ventas",
+    base: "Patentam.",
+    baseLargo: "patentamientos",
+    conSeparacion: true,
+    descripcion:
+      "Patentamientos, base CEM, encuestas efectivas, mails válidos y OS de cada mes, por provincia.",
+  },
+  POSVENTA: {
+    nombre: "Posventa",
+    base: "Órdenes rep.",
+    baseLargo: "órdenes de reparación",
+    conSeparacion: false,
+    descripcion:
+      "Órdenes de reparación, base CEM, encuestas efectivas, mails válidos y OS de cada mes del taller, por provincia.",
+  },
+};
+
+// El área elegida se recuerda en este navegador (quien carga Posventa no tiene
+// que cambiarla cada vez). Con try/catch: en una ventana privada o con los datos
+// del sitio bloqueados, localStorage tira error y la pantalla tiene que andar igual.
+const CLAVE_AREA = "calidad.indicadoresCem.area";
+function areaGuardada(): AreaCem {
+  try {
+    return localStorage.getItem(CLAVE_AREA) === "POSVENTA" ? "POSVENTA" : "VENTAS";
+  } catch {
+    return "VENTAS";
+  }
+}
 
 const CAMPOS_MES = [
   "patentamientos",
@@ -73,6 +123,7 @@ interface Trimestre {
 
 interface Respuesta {
   anio: number;
+  area: AreaCem;
   anios: number[];
   sucursales: string[];
   trimestres: Trimestre[];
@@ -107,6 +158,11 @@ function leerNumero(texto: string, entero: boolean): number | null | undefined {
 }
 
 const aTexto = (n: number | null) => (n === null ? "" : String(n).replace(".", ","));
+
+/** Qué campos se cargan en cada área (Posventa no separa tradicional / autoahorro). */
+function camposDelArea(area: AreaCem): CampoMes[] {
+  return CAMPOS_MES.filter((c) => CONFIG_AREA[area].conSeparacion || (c !== "baseCemTradicional" && c !== "baseCemAutoahorro"));
+}
 
 const ETIQUETA_CAMPO: Record<CampoMes, string> = {
   patentamientos: "patentamientos",
@@ -144,24 +200,45 @@ export default function IndicadoresCem() {
   const marca = getMarca();
   const [anio, setAnio] = useState(new Date().getFullYear());
   const [trimestre, setTrimestre] = useState(TRIMESTRE_ACTUAL);
+  const [area, setArea] = useState<AreaCem>(areaGuardada);
   const [datos, setDatos] = useState<Respuesta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
     try {
-      setDatos(await apiGet<Respuesta>(`/api/indicadores-cem?anio=${anio}`));
+      setDatos(await apiGet<Respuesta>(`/api/indicadores-cem?anio=${anio}&area=${area}`));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos cargar los indicadores.");
     }
-  }, [anio]);
+  }, [anio, area]);
+
+  function cambiarArea(nueva: AreaCem) {
+    if (nueva === area) return;
+    // Se vacía lo que se veía: si no, durante la carga quedarían los números de la
+    // OTRA área con el título de la nueva, y alguien podría tomarlos por buenos.
+    setDatos(null);
+    setMensaje(null);
+    setArea(nueva);
+    try {
+      localStorage.setItem(CLAVE_AREA, nueva);
+    } catch {
+      // sin almacenamiento del navegador: solo no se recuerda la próxima vez
+    }
+  }
 
   useEffect(() => {
     if (marca.modulos.indicadoresCem) cargar();
   }, [cargar, marca.modulos.indicadoresCem]);
 
-  const actual = useMemo(() => datos?.trimestres.find((t) => t.trimestre === trimestre) ?? null, [datos, trimestre]);
+  // Solo se muestra si lo que llegó es del área elegida (el pedido puede volver
+  // después de haber cambiado de área).
+  const actual = useMemo(
+    () => (datos && datos.area === area ? datos.trimestres.find((t) => t.trimestre === trimestre) ?? null : null),
+    [datos, trimestre, area]
+  );
+  const config = CONFIG_AREA[area];
 
   if (!marca.modulos.indicadoresCem) {
     return <Alert tono="info">Esta pantalla es de Volkswagen. En {marca.nombre} no aplica.</Alert>;
@@ -175,10 +252,12 @@ export default function IndicadoresCem() {
       <Card padding="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="font-display text-sm font-bold uppercase tracking-wide text-navy">Indicadores CEM</h2>
+            <h2 className="font-display text-sm font-bold uppercase tracking-wide text-navy">
+              Indicadores CEM · {config.nombre}
+            </h2>
             <p className="mt-1 max-w-3xl text-sm text-ink-muted">
-              Patentamientos, base CEM, encuestas efectivas, mails válidos y OS de cada mes, por provincia. Los números se
-              cargan a mano; los porcentajes, los totales y la comparación con los objetivos los calcula el sistema.
+              {config.descripcion} Los números se cargan a mano; los porcentajes, los totales y la comparación con los
+              objetivos los calcula el sistema.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -194,27 +273,35 @@ export default function IndicadoresCem() {
             </Select>
           </div>
         </div>
-        <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Trimestre">
-          {[1, 2, 3, 4].map((t) => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={t === trimestre}
-              onClick={() => setTrimestre(t)}
-              className={claseBoton(t === trimestre ? "primario" : "secundario", "!py-1.5")}
-            >
-              Q{t} · {NOMBRE_TRIMESTRE[t - 1]}
-            </button>
-          ))}
+        {/* Área y trimestre juntos, en la misma fila: son las dos cosas que dicen
+            QUÉ se está mirando. El área va primero y separada por una raya, así se
+            lee "Posventa · Q3" y no queda perdida al costado según el ancho. */}
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <SelectorArea valor={area} onCambiar={cambiarArea} />
+          <span className="hidden h-7 w-px bg-gray-200 sm:block" aria-hidden="true" />
+          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Trimestre">
+            {[1, 2, 3, 4].map((t) => (
+              <button
+                key={t}
+                role="tab"
+                aria-selected={t === trimestre}
+                onClick={() => setTrimestre(t)}
+                className={claseBoton(t === trimestre ? "primario" : "secundario", "!py-1.5")}
+              >
+                Q{t} · {NOMBRE_TRIMESTRE[t - 1]}
+              </button>
+            ))}
+          </div>
         </div>
       </Card>
 
-      {!datos && !error && <SkeletonBlock className="h-72 w-full" />}
+      {!actual && !error && <SkeletonBlock className="h-72 w-full" />}
 
       {datos && actual && (
         <>
           <BloqueObjetivos
-            key={`obj-${anio}-${trimestre}`}
+            key={`obj-${area}-${anio}-${trimestre}`}
+            area={area}
             trimestre={actual}
             puedeEditar={datos.permisos.cargar && !datos.permisos.provincia}
             onGuardado={async (m) => {
@@ -228,7 +315,8 @@ export default function IndicadoresCem() {
           />
           {actual.sucursales.map((s) => (
             <TablaSucursal
-              key={`${anio}-${trimestre}-${s.sucursal}`}
+              key={`${area}-${anio}-${trimestre}-${s.sucursal}`}
+              area={area}
               trimestre={actual}
               sucursal={s.sucursal}
               meses={s.meses}
@@ -256,11 +344,13 @@ export default function IndicadoresCem() {
 
 // ---------------------------------------------------------------- objetivos ----
 function BloqueObjetivos({
+  area,
   trimestre,
   puedeEditar,
   onGuardado,
   onError,
 }: {
+  area: AreaCem;
   trimestre: Trimestre;
   puedeEditar: boolean;
   onGuardado: (mensaje: string) => Promise<void>;
@@ -295,6 +385,7 @@ function BloqueObjetivos({
     onError(null);
     try {
       await apiPutJson("/api/indicadores-cem/objetivos", {
+        area,
         anio: trimestre.anio,
         trimestre: trimestre.trimestre,
         os: os.valor,
@@ -302,7 +393,7 @@ function BloqueObjetivos({
         mailValidos: mailValidos.valor,
       });
       setEditando(false);
-      await onGuardado(`Objetivos del Q${trimestre.trimestre} ${trimestre.anio} guardados.`);
+      await onGuardado(`Objetivos de ${CONFIG_AREA[area].nombre} del Q${trimestre.trimestre} ${trimestre.anio} guardados.`);
     } catch (err) {
       onError(err instanceof Error ? err.message : "No se pudieron guardar los objetivos.");
     } finally {
@@ -314,7 +405,7 @@ function BloqueObjetivos({
     <Card padding="p-4">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
         <span className="font-display text-sm font-bold uppercase tracking-wide text-navy">
-          Objetivos Q{trimestre.trimestre} {trimestre.anio}
+          Objetivos {CONFIG_AREA[area].nombre} · Q{trimestre.trimestre} {trimestre.anio}
         </span>
         {editando ? (
           <>
@@ -362,8 +453,8 @@ function BloqueObjetivos({
         )}
       </div>
       <p className="mt-2 text-xs text-ink-muted">
-        Valen para las dos provincias. En verde lo que llega al objetivo y en rojo lo que no: el % de carga contra
-        "Cargas", el % de mails válidos contra "Mails válidos" y el OS contra "OS".
+        Son los de {CONFIG_AREA[area].nombre} y valen para las dos provincias. En verde lo que llega al objetivo y en
+        rojo lo que no: el % de carga contra "Cargas", el % de mails válidos contra "Mails válidos" y el OS contra "OS".
       </p>
     </Card>
   );
@@ -373,6 +464,7 @@ function BloqueObjetivos({
 type FormMes = Record<CampoMes, string>;
 
 function TablaSucursal({
+  area,
   trimestre,
   sucursal,
   meses,
@@ -382,6 +474,7 @@ function TablaSucursal({
   onError,
   onRecargar,
 }: {
+  area: AreaCem;
   trimestre: Trimestre;
   sucursal: string;
   meses: Mes[];
@@ -396,6 +489,9 @@ function TablaSucursal({
   const [form, setForm] = useState<Record<string, FormMes>>({});
   const [formTrimestre, setFormTrimestre] = useState({ os: "", resultadoAuditoria: "" });
   const [guardando, setGuardando] = useState(false);
+  const config = CONFIG_AREA[area];
+  const campos = camposDelArea(area);
+  const etiquetaCampo = (c: CampoMes) => (c === "patentamientos" ? config.baseLargo : ETIQUETA_CAMPO[c]);
 
   function abrir() {
     setForm(
@@ -411,10 +507,10 @@ function TablaSucursal({
     const cambiosMeses: Array<{ periodo: string; datos: Partial<Record<CampoMes, number | null>> }> = [];
     for (const m of meses) {
       const datos: Partial<Record<CampoMes, number | null>> = {};
-      for (const c of CAMPOS_MES) {
+      for (const c of campos) {
         const r = leerCampo(form[m.periodo]?.[c] ?? "", c === "os" ? "os" : "entero");
         if ("error" in r) {
-          onError(`Revisá ${etiquetaMes(m.periodo)}, ${ETIQUETA_CAMPO[c]}: ${r.error} ("${form[m.periodo]?.[c]}").`);
+          onError(`Revisá ${etiquetaMes(m.periodo)}, ${etiquetaCampo(c)}: ${r.error} ("${form[m.periodo]?.[c]}").`);
           return;
         }
         if (r.valor !== m[c]) datos[c] = r.valor;
@@ -439,10 +535,11 @@ function TablaSucursal({
     onError(null);
     try {
       for (const c of cambiosMeses) {
-        await apiPutJson("/api/indicadores-cem/mes", { periodo: c.periodo, sucursal, ...c.datos });
+        await apiPutJson("/api/indicadores-cem/mes", { area, periodo: c.periodo, sucursal, ...c.datos });
       }
       if (cambiaTrimestre) {
         await apiPutJson("/api/indicadores-cem/trimestre", {
+          area,
           anio: trimestre.anio,
           trimestre: trimestre.trimestre,
           sucursal,
@@ -453,7 +550,7 @@ function TablaSucursal({
       setEditando(false);
       await onGuardado(
         cambiosMeses.length || cambiaTrimestre
-          ? `Indicadores de ${sucursal} guardados.`
+          ? `Indicadores de ${config.nombre} de ${sucursal} guardados.`
           : "No había cambios para guardar."
       );
     } catch (err) {
@@ -474,7 +571,7 @@ function TablaSucursal({
       value={form[periodo]?.[campo] ?? ""}
       onChange={(e) => setForm({ ...form, [periodo]: { ...form[periodo], [campo]: e.target.value } })}
       inputMode={campo === "os" ? "decimal" : "numeric"}
-      aria-label={`${campo} de ${etiquetaMes(periodo)}`}
+      aria-label={`${etiquetaCampo(campo)} de ${etiquetaMes(periodo)}`}
       className="w-16 rounded border border-gray-300 px-1.5 py-0.5 text-right text-sm"
     />
   );
@@ -488,6 +585,9 @@ function TablaSucursal({
         <h3 className="flex items-center gap-2 font-display text-sm font-bold uppercase tracking-wide text-navy">
           <Gauge className="h-4 w-4" aria-hidden="true" />
           {sucursal} · Q{trimestre.trimestre} {trimestre.anio}
+          <span className="rounded-full bg-navy/10 px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-navy">
+            {config.nombre}
+          </span>
         </h3>
         {puedeEditar &&
           (editando ? (
@@ -511,10 +611,16 @@ function TablaSucursal({
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50/80 text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
               <th className="px-4 py-2 text-left">Mes</th>
-              <th className={th}>Patentam.</th>
+              <th className={th} title={config.baseLargo}>
+                {config.base}
+              </th>
               <th className={th}>Base CEM</th>
-              <th className={th}>Tradicional</th>
-              <th className={th}>Autoahorro</th>
+              {config.conSeparacion && (
+                <>
+                  <th className={th}>Tradicional</th>
+                  <th className={th}>Autoahorro</th>
+                </>
+              )}
               <th className={th}>% de carga</th>
               <th className={th}>Encuestas efectivas</th>
               <th className={th} title="Encuestas efectivas sobre la base CEM">
@@ -545,8 +651,12 @@ function TablaSucursal({
                   <>
                     <td className={td}>{celdaInput(m.periodo, "patentamientos")}</td>
                     <td className={td}>{celdaInput(m.periodo, "baseCem")}</td>
-                    <td className={td}>{celdaInput(m.periodo, "baseCemTradicional")}</td>
-                    <td className={td}>{celdaInput(m.periodo, "baseCemAutoahorro")}</td>
+                    {config.conSeparacion && (
+                      <>
+                        <td className={td}>{celdaInput(m.periodo, "baseCemTradicional")}</td>
+                        <td className={td}>{celdaInput(m.periodo, "baseCemAutoahorro")}</td>
+                      </>
+                    )}
                     <td className={`${td} text-ink-muted`}>{fmtPct(m.porcentajeCarga)}</td>
                     <td className={td}>{celdaInput(m.periodo, "encuestasEfectivas")}</td>
                     <td className={`${td} text-ink-muted`}>{fmtPct(m.porcentajeEfectivas)}</td>
@@ -560,8 +670,12 @@ function TablaSucursal({
                   <>
                     <td className={td}>{fmtEntero(m.patentamientos)}</td>
                     <td className={td}>{fmtEntero(m.baseCem)}</td>
-                    <td className={td}>{fmtEntero(m.baseCemTradicional)}</td>
-                    <td className={td}>{fmtEntero(m.baseCemAutoahorro)}</td>
+                    {config.conSeparacion && (
+                      <>
+                        <td className={td}>{fmtEntero(m.baseCemTradicional)}</td>
+                        <td className={td}>{fmtEntero(m.baseCemAutoahorro)}</td>
+                      </>
+                    )}
                     <td className={`${td} ${claseCumple(m.cumple.cargas)}`}>{fmtPct(m.porcentajeCarga)}</td>
                     <td className={td}>{fmtEntero(m.encuestasEfectivas)}</td>
                     <td className={td}>{fmtPct(m.porcentajeEfectivas)}</td>
@@ -578,8 +692,12 @@ function TablaSucursal({
               <td className="px-4 py-2">Total</td>
               <td className={td}>{fmtEntero(total.patentamientos)}</td>
               <td className={td}>{fmtEntero(total.baseCem)}</td>
-              <td className={td}>{fmtEntero(total.baseCemTradicional)}</td>
-              <td className={td}>{fmtEntero(total.baseCemAutoahorro)}</td>
+              {config.conSeparacion && (
+                <>
+                  <td className={td}>{fmtEntero(total.baseCemTradicional)}</td>
+                  <td className={td}>{fmtEntero(total.baseCemAutoahorro)}</td>
+                </>
+              )}
               <td className={`${td} ${claseCumple(total.cumple.cargas)}`}>{fmtPct(total.porcentajeCarga)}</td>
               <td className={td}>{fmtEntero(total.encuestasEfectivas)}</td>
               <td className={td} title="Promedio de los porcentajes de los meses, como en la planilla">
@@ -625,7 +743,7 @@ function TablaSucursal({
         <span>
           {trimestre.objetivos.cargas === null ? "Cargas necesarias" : `${fmtDecimal(trimestre.objetivos.cargas)} % de cargas`}:{" "}
           <strong>{fmtDecimal(total.cargasNecesarias)}</strong>
-          <span className="ml-1 text-xs text-ink-muted">(patentamientos del trimestre × objetivo de cargas)</span>
+          <span className="ml-1 text-xs text-ink-muted">({config.baseLargo} del trimestre × objetivo de cargas)</span>
         </span>
         {editando && (
           <span className="text-xs text-ink-muted">
@@ -635,5 +753,50 @@ function TablaSucursal({
         )}
       </div>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------- área ----
+/**
+ * El cambio entre Ventas y Posventa (pedido del 18-09-2026: "tipo un botón que
+ * cambie de posventa a ventas, con la estética cuidada").
+ *
+ * Es un control segmentado y no dos botones sueltos: se lee de un vistazo cuál de
+ * las dos está elegida (la opción activa queda "levantada", en blanco sobre el
+ * fondo gris) y no se confunde con las pestañas de trimestre de abajo, que usan
+ * el estilo de botón del sistema. Con role="tablist" el lector de pantalla lo
+ * anuncia como lo que es.
+ */
+function SelectorArea({ valor, onCambiar }: { valor: AreaCem; onCambiar: (a: AreaCem) => void }) {
+  const opciones: Array<{ area: AreaCem; Icono: typeof Car; ayuda: string }> = [
+    { area: "VENTAS", Icono: Car, ayuda: "Encuestas CEM de ventas (patentamientos)" },
+    { area: "POSVENTA", Icono: Wrench, ayuda: "Encuestas CEM de taller (órdenes de reparación)" },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="Área"
+      className="inline-flex rounded-xl bg-gray-100 p-1 ring-1 ring-inset ring-gray-200"
+    >
+      {opciones.map(({ area, Icono, ayuda }) => {
+        const activa = area === valor;
+        return (
+          <button
+            key={area}
+            type="button"
+            role="tab"
+            aria-selected={activa}
+            title={ayuda}
+            onClick={() => onCambiar(area)}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-semibold transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+              activa ? "bg-white text-navy shadow-sm ring-1 ring-gray-200" : "text-ink-muted hover:bg-white/60 hover:text-ink"
+            }`}
+          >
+            <Icono className={`h-4 w-4 ${activa ? "text-accent" : ""}`} aria-hidden="true" />
+            {CONFIG_AREA[area].nombre}
+          </button>
+        );
+      })}
+    </div>
   );
 }

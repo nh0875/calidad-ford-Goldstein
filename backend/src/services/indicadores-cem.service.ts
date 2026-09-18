@@ -15,6 +15,7 @@
 // porcentajes, los totales y la comparación con los objetivos, con las MISMAS
 // fórmulas de la planilla (ver calcularTrimestre).
 
+import { AreaCem } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { marca, sucursalCanonica } from "../config/marca";
 import { redondear } from "./redondeo";
@@ -206,18 +207,30 @@ export function sucursalesCem(): string[] {
   return [...marca.sucursales];
 }
 
-/** Los cuatro trimestres de un año, con lo que haya cargado. */
-export async function indicadoresDelAnio(anio: number): Promise<{
+/**
+ * Los cuatro trimestres de un año de UN área, con lo que haya cargado.
+ *
+ * Ventas y Posventa usan las mismas cuentas (decisión del 18-09-2026): en Posventa
+ * la columna de "patentamientos" son las órdenes de reparación, y tradicional /
+ * autoahorro quedan vacías. La pantalla solo cambia los nombres.
+ */
+export async function indicadoresDelAnio(
+  anio: number,
+  area: AreaCem = AreaCem.VENTAS
+): Promise<{
   anio: number;
+  area: AreaCem;
   anios: number[];
   sucursales: string[];
   trimestres: TrimestreCalculado[];
 }> {
   const sucursales = sucursalesCem();
   const [filasMes, filasTrimestre, filasObjetivo, aniosMes] = await Promise.all([
-    prisma.indicadorCemMes.findMany({ where: { periodo: { startsWith: `${anio}-` } } }),
-    prisma.indicadorCemTrimestre.findMany({ where: { anio } }),
-    prisma.objetivoCemTrimestre.findMany({ where: { anio } }),
+    prisma.indicadorCemMes.findMany({ where: { area, periodo: { startsWith: `${anio}-` } } }),
+    prisma.indicadorCemTrimestre.findMany({ where: { area, anio } }),
+    prisma.objetivoCemTrimestre.findMany({ where: { area, anio } }),
+    // Los años con algo cargado, de CUALQUIER área: el selector de año es uno solo
+    // y no conviene que cambie de opciones al pasar de Ventas a Posventa.
     prisma.indicadorCemMes.findMany({ select: { periodo: true }, distinct: ["periodo"] }),
   ]);
 
@@ -253,7 +266,7 @@ export async function indicadoresDelAnio(anio: number): Promise<{
     ...new Set([...aniosMes.map((a) => Number(a.periodo.slice(0, 4))), anio, new Date().getFullYear()]),
   ].sort((a, b) => b - a);
 
-  return { anio, anios, sucursales, trimestres };
+  return { anio, area, anios, sucursales, trimestres };
 }
 
 // ---------------------------------------------------------------------------

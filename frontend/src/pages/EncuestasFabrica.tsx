@@ -8,7 +8,7 @@
 // Por eso esta pantalla se organiza por vendedor y no por cliente: la unidad de
 // trabajo es "a quién le mando el mail y con qué lista adentro".
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, Mail, MailCheck, Pencil, Plus, Trash2, UploadCloud, UserPlus } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Mail, MailCheck, Pencil, Plus, RotateCcw, Trash2, UploadCloud, UserPlus } from "lucide-react";
 import { apiDelete, apiGet, apiPatchJson, apiPostForm, apiPostJson } from "../lib/api";
 import { getMarca } from "../lib/marca";
 import { esSoloFidelizacion, getUsuario } from "../lib/auth";
@@ -134,6 +134,8 @@ interface Pendiente {
   observacionesFabrica: string[];
   esManual?: boolean;
   avisadoEn?: string | null;
+  /** Cuántas veces se le avisó al vendedor por este cliente (los recordatorios suman). */
+  vecesAvisado?: number;
   respondioEn?: string | null;
   detectadaEn?: string | null;
   /** La sucursal del CLIENTE: la dice el código con el que se vendió (1035 / 1036). */
@@ -412,6 +414,49 @@ export default function EncuestasFabrica() {
     }
   }
 
+  // ---- Volver a pendiente a los avisados sin respuesta ---------------------
+  //
+  // Pedido del 18-09-2026: a los clientes que ya se le avisaron al vendedor y
+  // siguen sin responder se los vuelve a PENDIENTE, así el próximo "Avisar a los
+  // vendedores" se los manda de nuevo, marcados como recordatorio. Solo meses
+  // ABIERTOS y solo la sucursal elegida arriba (vacía = las dos provincias).
+  const [volviendo, setVolviendo] = useState(false);
+
+  async function volverAPendiente() {
+    setError(null);
+    setMensaje(null);
+    setResultados(null);
+    setVolviendo(true);
+    try {
+      // El número exacto lo da el backend (mismo filtro que va a aplicar), no la
+      // cuenta de la pantalla: así lo que se confirma es lo que va a pasar.
+      const q = sucursalGraficos ? `?sucursal=${encodeURIComponent(sucursalGraficos)}` : "";
+      const { cantidad, sucursal } = await apiGet<{ cantidad: number; sucursal: string | null }>(
+        `/api/encuesta-vw/volver-a-pendiente${q}`
+      );
+      const donde = sucursal ? ` de ${sucursal}` : " de las dos provincias";
+      if (cantidad === 0) {
+        setMensaje(`No hay clientes avisados sin responder${donde} en los meses abiertos.`);
+        return;
+      }
+      const ok = window.confirm(
+        `¿Volver a pendiente ${cantidad} cliente(s)${donde}?\n\n` +
+          `Son los que ya se le avisaron al vendedor, siguen sin responder y están en un mes abierto. ` +
+          `Después apretá "Avisar a los vendedores": les llega un mail de RECORDATORIO con esos clientes aparte.`
+      );
+      if (!ok) return;
+      const r = await apiPostJson<{ message: string; cantidad: number }>("/api/encuesta-vw/volver-a-pendiente", {
+        sucursal: sucursalGraficos || null,
+      });
+      setMensaje(r.message);
+      await cargar();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudieron volver a pendiente los clientes.");
+    } finally {
+      setVolviendo(false);
+    }
+  }
+
   // ---- Edición del vendedor ------------------------------------------------
   const [editando, setEditando] = useState<string | null>(null);
   const [formNombre, setFormNombre] = useState("");
@@ -674,6 +719,22 @@ export default function EncuestasFabrica() {
     [vendedores]
   );
   const sinCorreo = conPendientes.filter((g) => !g.email);
+  // Los avisados sin respuesta de la sucursal elegida: los que el botón de volver a
+  // pendiente movería. La lista ya trae solo los meses abiertos.
+  const avisadosSinRespuesta = useMemo(
+    () =>
+      vendedores.reduce(
+        (n, v) =>
+          n +
+          v.pendientes.filter(
+            (p) =>
+              p.estado === "AVISADO" &&
+              (!sucursalGraficos || mismaSucursal(p.sucursal ?? v.sucursal, sucursalGraficos))
+          ).length,
+        0
+      ),
+    [vendedores, sucursalGraficos]
+  );
 
   if (!marca.modulos.encuestaFabrica) {
     return <Alert tono="info">Esta pantalla es de {marca.nombre}. En esta marca no aplica.</Alert>;
@@ -710,7 +771,7 @@ export default function EncuestasFabrica() {
             <span className="text-xs text-ink-muted">
               {soloGraficos
                 ? "El mes acota el ranking de vendedores; la sucursal, todos los gráficos."
-                : "El mes acota el ranking y la lista de clientes. La sucursal acota los gráficos, el ranking, la lista y los vendedores (el resumen de arriba y el aviso son de las dos). Con Todas las provincias, un vendedor que vende en las dos aparece una sola vez."}
+                : "El mes acota el ranking y la lista de clientes. La sucursal acota los gráficos, el ranking, la lista y los vendedores (el resumen de arriba y el aviso son de las dos; «Pasar a pendiente» es solo de la sucursal elegida). Con Todas las provincias, un vendedor que vende en las dos aparece una sola vez."}
             </span>
           </div>
 
@@ -820,6 +881,26 @@ export default function EncuestasFabrica() {
                 }}
               />
             </label>
+            <button
+              onClick={volverAPendiente}
+              disabled={volviendo || avisando || avisadosSinRespuesta === 0}
+              className={claseBoton("secundario", "!py-1.5")}
+              title={
+                avisadosSinRespuesta === 0
+                  ? "No hay clientes avisados sin responder en los meses abiertos"
+                  : `Volver a pendiente a los ${avisadosSinRespuesta} avisados que no respondieron${
+                      sucursalGraficos ? ` (${sucursalGraficos})` : ""
+                    }, para recordárselos al vendedor`
+              }
+            >
+              <RotateCcw className="h-4 w-4" />
+              {volviendo ? "Revisando…" : "Pasar a pendiente"}
+              {avisadosSinRespuesta > 0 && !volviendo && (
+                <span className="rounded-full bg-accent-light px-1.5 text-xs font-semibold text-accent-dark">
+                  {avisadosSinRespuesta}
+                </span>
+              )}
+            </button>
             <button
               onClick={() => avisar()}
               disabled={avisando || conPendientes.length === 0 || estadoMail?.configurado === false}
@@ -1199,6 +1280,15 @@ export default function EncuestasFabrica() {
                               : "Todavía no se le avisó al vendedor"
                           }
                         />
+                        {/* Cuántas veces se le avisó al vendedor: con los
+                            recordatorios, un cliente puede ir por el segundo o
+                            tercer aviso y eso cambia cómo se lo trabaja. */}
+                        {(c.vecesAvisado ?? 0) > 0 && (
+                          <div className="mt-1 text-[11px] text-ink-muted">
+                            {c.vecesAvisado === 1 ? "1 aviso" : `${c.vecesAvisado} avisos`}
+                            {c.avisadoEn && ` · último ${fechaCorta(c.avisadoEn)}`}
+                          </div>
+                        )}
                       </td>
                       {/* Botón de verdad, no texto suelto: antes era una palabra
                           contra el borde de la fila, y "Eliminar" en rojo pelado

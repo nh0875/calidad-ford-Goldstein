@@ -21,7 +21,8 @@ import {
   nombresDeVendedorDelLibro,
   resolverVendedores,
 } from "../services/encuesta-interna-vw.service";
-import { avisarVendedoresVW } from "../services/encuesta-vw-mail.service";
+import { avisarVendedoresVW, volverAPendienteVW } from "../services/encuesta-vw-mail.service";
+import { provinciaPermitida } from "../services/area.service";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { zSucursal } from "../services/sucursal.service";
 import { seguimientoEncuestasVW } from "../services/seguimiento-encuesta-vw.service";
@@ -271,6 +272,8 @@ export async function listarEncuestaVW(req: Request, res: Response) {
           sucursal: true,
           estado: true,
           avisadoEn: true,
+          // Cuántas veces se le avisó al vendedor por este cliente (recordatorios).
+          vecesAvisado: true,
           respondioEn: true,
           detectadaEn: true,
           observacionesFabrica: true,
@@ -481,6 +484,63 @@ export async function notificarEncuestaVW(req: Request, res: Response) {
     ? `Se avisó a ${enviados} vendedor(es); ${detalle} ${fallidos.length} no recibieron el correo.`
     : `Se avisó a ${enviados} vendedor(es); ${detalle}`;
   res.json({ message, resultados });
+}
+
+// ---------- GET y POST /api/encuesta-vw/volver-a-pendiente ----------
+//
+// Los avisados que no respondieron vuelven a PENDIENTE, para que el próximo aviso a
+// los vendedores se los recuerde (pedido del 18-09-2026). El GET cuenta cuántos
+// serían, para que la pantalla lo diga antes de confirmar; el POST lo hace.
+//
+// La sucursal es la elegida en la pantalla (vacía = las dos). Un usuario con
+// provincia asignada solo puede tocar la suya, como en el resto de Volkswagen.
+const volverSchema = z.object({ sucursal: z.string().trim().optional().nullable() });
+
+function sucursalParaVolver(req: Request, pedida: string | null | undefined): { sucursal: string | null } | { error: string; status: number } {
+  const provincia = provinciaPermitida(req.usuario!);
+  let sucursal: string | null = null;
+  if (pedida && pedida.trim()) {
+    const canonica = sucursalCanonica(pedida);
+    if (!canonica || canonica === SUCURSAL_GENERAL) return { error: mensajeSucursalInvalida(), status: 400 };
+    sucursal = canonica;
+  }
+  if (provincia) {
+    const suya = sucursalCanonica(provincia) ?? provincia;
+    if (sucursal && claveNormalizada(sucursal) !== claveNormalizada(suya)) {
+      return { error: `Tu usuario es de ${suya}: solo puede pasar a pendiente los clientes de esa provincia.`, status: 403 };
+    }
+    sucursal = suya;
+  }
+  return { sucursal };
+}
+
+export async function contarVolverAPendienteVW(req: Request, res: Response) {
+  const elegida = sucursalParaVolver(req, typeof req.query.sucursal === "string" ? req.query.sucursal : null);
+  if ("error" in elegida) return res.status(elegida.status).json({ message: elegida.error });
+  const { cantidad } = await volverAPendienteVW({ sucursal: elegida.sucursal, soloContar: true });
+  res.json({ cantidad, sucursal: elegida.sucursal });
+}
+
+export async function volverAPendienteEncuestaVW(req: Request, res: Response) {
+  const parsed = volverSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ message: "La sucursal no es válida." });
+  const elegida = sucursalParaVolver(req, parsed.data.sucursal);
+  if ("error" in elegida) return res.status(elegida.status).json({ message: elegida.error });
+
+  const { cantidad } = await volverAPendienteVW({ sucursal: elegida.sucursal });
+  auditar(req, {
+    accion: ACCIONES.ENCUESTA_VW_VUELTA_A_PENDIENTE,
+    entidad: "EncuestaFabricaVW",
+    detalles: { cantidad, sucursal: elegida.sucursal ?? "todas" },
+  });
+  const donde = elegida.sucursal ? ` de ${elegida.sucursal}` : "";
+  res.json({
+    cantidad,
+    message:
+      cantidad === 0
+        ? `No había clientes avisados sin responder${donde} en los meses abiertos.`
+        : `${cantidad} cliente(s)${donde} volvieron a pendiente. Ahora apretá "Avisar a los vendedores" para mandarles el recordatorio.`,
+  });
 }
 
 // ---------- DELETE /api/encuesta-vw/vendedores/:id ----------
