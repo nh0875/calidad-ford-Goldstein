@@ -1032,6 +1032,14 @@ model IndicadorCemMes {
   // OS del mes, como lo publica fábrica (4,86).
   os                 Float?
 
+  // POSVENTA (19-09-2026): las columnas de la planilla "Postventa Q 2026". Posventa
+  // no usa las de arriba salvo encuestasEfectivas; Ventas no usa estas.
+  mailsEnviados         Int?
+  notaTrato             Float? // Q1 – Trato
+  notaOrganizacion      Float? // Q2 – Organización
+  notaCalidadReparacion Float? // Q3 – Calidad de reparación
+  notaLvs               Float? // Q4 – LVS (satisfacción general): de ella sale la escala
+
   actualizadoEn        DateTime @updatedAt
   actualizadoPorNombre String?
 
@@ -1050,6 +1058,13 @@ model IndicadorCemTrimestre {
   // "Resultado auditoría", en porcentaje (88,10).
   resultadoAuditoria Float?
 
+  // POSVENTA: las notas Q1 a Q4 del trimestre las publica fábrica (NO son el
+  // promedio de los meses: decisión del 19-09-2026, se cargan a mano).
+  notaTrato             Float?
+  notaOrganizacion      Float?
+  notaCalidadReparacion Float?
+  notaLvs               Float?
+
   actualizadoEn        DateTime @updatedAt
   actualizadoPorNombre String?
 
@@ -1067,6 +1082,13 @@ model ObjetivoCemTrimestre {
   os          Float?
   cargas      Float? // % de carga mínimo (base CEM / patentamientos)
   mailValidos Float? // % de mails válidos mínimo
+
+  // POSVENTA: la tabla "OBJETIVOS LVS". Desde qué nota LVS empieza cada escala
+  // (4,88 / 4,85 / 4,82 / 4,80); por debajo de la 4 es Escala 5 = No cumple.
+  lvsEscala1 Float?
+  lvsEscala2 Float?
+  lvsEscala3 Float?
+  lvsEscala4 Float?
 
   actualizadoEn        DateTime @updatedAt
   actualizadoPorNombre String?

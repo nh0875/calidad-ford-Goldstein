@@ -132,6 +132,12 @@ export interface PerfilMarca {
    */
   indicadoresCem: boolean;
   /**
+   * Las provincias de los Indicadores CEM de POSVENTA. La planilla de Posventa
+   * ("Postventa Q 2026", 19-09-2026) es solo de Mendoza, como Encuestas PV: el
+   * taller que encuesta fábrica es el de Mendoza. Ventas usa `sucursales` (las dos).
+   */
+  sucursalesCemPosventa: string[];
+  /**
    * La separación por PROVINCIA se aplica en TODO el sistema (listados, tableros,
    * reportes, campañas) además de por área.
    *
@@ -209,6 +215,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     // Sin estrellas no hay promotores de 5: la pestaña no aplica.
     encuestaFabricaPV: { habilitado: false, sucursal: null },
     indicadoresCem: false,
+    sucursalesCemPosventa: [],
     visibilidadPorProvincia: false,
     avisoPosibleDuplicado: false,
     segundoContacto: false,
@@ -250,6 +257,8 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     encuestaFabricaPV: { habilitado: true, sucursal: "Mendoza" },
     // Pedido de Calidad del 17-09-2026: la planilla "Q 2026" adentro del sistema.
     indicadoresCem: true,
+    // Pedido del 19-09-2026: la planilla de Posventa trae solo Mendoza.
+    sucursalesCemPosventa: ["Mendoza"],
     visibilidadPorProvincia: true,
     avisoPosibleDuplicado: true,
     segundoContacto: true,

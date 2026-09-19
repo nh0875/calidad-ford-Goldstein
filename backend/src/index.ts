@@ -8,7 +8,7 @@ import { detenerLatido, iniciarLatido } from "./services/latido.service";
 import { limpiarCausasRaizFueraDeLista } from "./services/causa-raiz.service";
 import { completarDatosDePersonas, corregirSucursalesPorCodigo } from "./services/importacion-encuesta-vw.service";
 import { cierreAutomaticoDePeriodos, listasHabilitadas } from "./services/cierre-periodo.service";
-import { sembrarHistoricoCem } from "./services/indicadores-cem.service";
+import { sembrarHistoricoCem, sembrarPlanillaPosventaCem } from "./services/indicadores-cem.service";
 
 const app = createApp();
 
@@ -83,12 +83,21 @@ async function correrCierreAutomatico(): Promise<void> {
 const relojCierre = listasHabilitadas().length ? setInterval(() => void correrCierreAutomatico(), 60 * 60 * 1000) : null;
 relojCierre?.unref();
 
-// Indicadores CEM (VW): la primera vez, se carga lo que tenía la planilla "Q 2026".
+// Indicadores CEM (VW): la primera vez, se carga lo que tenía la planilla "Q 2026"
+// (Ventas) y, una sola vez, la de Posventa. Son independientes: cada una mira solo
+// lo suyo, y si una falla se reintenta en el próximo arranque sin frenar a la otra.
 sembrarHistoricoCem()
   .then((sembrado) => {
     if (sembrado) console.log("[indicadores-cem] cargado el histórico de la planilla Q 2026");
   })
   .catch((err) => console.error("[indicadores-cem] no se pudo cargar el histórico:", err));
+sembrarPlanillaPosventaCem()
+  .then((completados) => {
+    if (completados !== null) {
+      console.log(`[indicadores-cem] cargada la planilla Postventa Q 2026 (${completados} casilleros)`);
+    }
+  })
+  .catch((err) => console.error("[indicadores-cem] no se pudo cargar la planilla de Posventa:", err));
 
 // Latido: deja constancia de que el sistema esta vivo, y al arrancar mide cuanto
 // estuvo caido. Importa porque los mensajes entrantes de WhatsApp llegan SOLO

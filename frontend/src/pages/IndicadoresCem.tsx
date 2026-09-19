@@ -8,11 +8,13 @@
 // (services/indicadores-cem.service.ts). Lo ve cualquier perfil; cargan Calidad y
 // los administradores.
 //
-// Dos áreas desde el 18-09-2026: Ventas y Posventa, con un selector arriba. Las
-// dos tienen las mismas columnas, cuentas y objetivos propios; en Posventa los
-// "patentamientos" son las órdenes de reparación del taller y no hay separación
-// tradicional / autoahorro (eso es de ventas).
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+// Dos áreas desde el 18-09-2026: Ventas y Posventa, con un selector arriba y
+// objetivos propios. Desde el 19-09-2026 Posventa tiene las columnas de SU planilla
+// ("Postventa Q 2026", solo Mendoza): mails enviados, encuestas efectivas, las notas
+// Q1 a Q4 (Trato, Organización, Calidad de reparación y LVS), la escala que sale de
+// la nota LVS con la tabla "Objetivos LVS" y la tasa de respuesta. Por eso cada área
+// tiene su tabla (TablaVentas / TablaPosventa) y su bloque de objetivos.
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Car, Gauge, Pencil, Wrench } from "lucide-react";
 import { apiGet, apiPutJson } from "../lib/api";
 import { getMarca } from "../lib/marca";
@@ -25,36 +27,25 @@ import { etiquetaMes } from "../components/SeguimientoAnimaciones";
 
 type AreaCem = "VENTAS" | "POSVENTA";
 
-/** Lo que cambia de una área a otra: nombres de columnas y qué columnas hay. */
-const CONFIG_AREA: Record<
-  AreaCem,
-  {
-    nombre: string;
-    /** Encabezado corto de la primera columna y su nombre completo (tooltip). */
-    base: string;
-    baseLargo: string;
-    /** Tradicional / autoahorro: solo en Ventas. */
-    conSeparacion: boolean;
-    descripcion: string;
-  }
-> = {
+/** Lo que cambia de una área a otra en el encabezado de la pantalla. */
+const CONFIG_AREA: Record<AreaCem, { nombre: string; descripcion: string }> = {
   VENTAS: {
     nombre: "Ventas",
-    base: "Patentam.",
-    baseLargo: "patentamientos",
-    conSeparacion: true,
     descripcion:
-      "Patentamientos, base CEM, encuestas efectivas, mails válidos y OS de cada mes, por provincia.",
+      "Patentamientos, base CEM, encuestas efectivas, mails válidos y OS de cada mes, por provincia. Los números se " +
+      "cargan a mano; los porcentajes, los totales y la comparación con los objetivos los calcula el sistema.",
   },
   POSVENTA: {
     nombre: "Posventa",
-    base: "Órdenes rep.",
-    baseLargo: "órdenes de reparación",
-    conSeparacion: false,
     descripcion:
-      "Órdenes de reparación, base CEM, encuestas efectivas, mails válidos y OS de cada mes del taller, por provincia.",
+      "Mails enviados, encuestas efectivas y las notas Q1 a Q4 de cada mes del taller, como en la planilla de " +
+      "Posventa. Los números se cargan a mano, igual que las notas del total del trimestre (las publica fábrica); la " +
+      "tasa de respuesta, los totales y la escala los calcula el sistema.",
   },
 };
+
+/** Las columnas de la tabla de Ventas (planilla "Q 2026"). */
+const COLUMNAS_VENTAS = { base: "Patentam.", baseLargo: "patentamientos", conSeparacion: true };
 
 // El área elegida se recuerda en este navegador (quien carga Posventa no tiene
 // que cambiarla cada vez). Con try/catch: en una ventana privada o con los datos
@@ -68,7 +59,9 @@ function areaGuardada(): AreaCem {
   }
 }
 
-const CAMPOS_MES = [
+const CAMPOS_NOTA = ["notaTrato", "notaOrganizacion", "notaCalidadReparacion", "notaLvs"] as const;
+type CampoNota = (typeof CAMPOS_NOTA)[number];
+const CAMPOS_MES_VENTAS = [
   "patentamientos",
   "baseCem",
   "baseCemTradicional",
@@ -78,14 +71,20 @@ const CAMPOS_MES = [
   "mailOk",
   "os",
 ] as const;
+const CAMPOS_MES_POSVENTA = ["mailsEnviados", "encuestasEfectivas", ...CAMPOS_NOTA] as const;
+const CAMPOS_MES = [...CAMPOS_MES_VENTAS, "mailsEnviados", ...CAMPOS_NOTA] as const;
 type CampoMes = (typeof CAMPOS_MES)[number];
 type Cumple = boolean | null;
+/** 1 a 4 cumple (1 es la mejor); 5 = No cumple. */
+type Escala = 1 | 2 | 3 | 4 | 5 | null;
 
 interface Mes extends Record<CampoMes, number | null> {
   periodo: string;
   porcentajeCarga: number | null;
   porcentajeEfectivas: number | null;
   porcentajeMailValidos: number | null;
+  tasaRespuesta: number | null;
+  escala: Escala;
   baseNoSuma: boolean;
   cumple: { cargas: Cumple; mailValidos: Cumple; os: Cumple };
 }
@@ -105,9 +104,19 @@ interface Total {
   resultadoAuditoria: number | null;
   cargasNecesarias: number | null;
   cumple: { cargas: Cumple; mailValidos: Cumple; os: Cumple };
+  mailsEnviados: number | null;
+  tasaRespuesta: number | null;
+  notaTrato: number | null;
+  notaOrganizacion: number | null;
+  notaCalidadReparacion: number | null;
+  notaLvs: number | null;
+  escala: Escala;
 }
 
-interface Objetivos {
+const CAMPOS_ESCALA = ["lvsEscala1", "lvsEscala2", "lvsEscala3", "lvsEscala4"] as const;
+type CampoEscala = (typeof CAMPOS_ESCALA)[number];
+
+interface Objetivos extends Record<CampoEscala, number | null> {
   os: number | null;
   cargas: number | null;
   mailValidos: number | null;
@@ -159,9 +168,9 @@ function leerNumero(texto: string, entero: boolean): number | null | undefined {
 
 const aTexto = (n: number | null) => (n === null ? "" : String(n).replace(".", ","));
 
-/** Qué campos se cargan en cada área (Posventa no separa tradicional / autoahorro). */
-function camposDelArea(area: AreaCem): CampoMes[] {
-  return CAMPOS_MES.filter((c) => CONFIG_AREA[area].conSeparacion || (c !== "baseCemTradicional" && c !== "baseCemAutoahorro"));
+/** Qué campos se cargan en cada área: cada una tiene los de su planilla. */
+function camposDelArea(area: AreaCem): readonly CampoMes[] {
+  return area === "POSVENTA" ? CAMPOS_MES_POSVENTA : CAMPOS_MES_VENTAS;
 }
 
 const ETIQUETA_CAMPO: Record<CampoMes, string> = {
@@ -173,6 +182,11 @@ const ETIQUETA_CAMPO: Record<CampoMes, string> = {
   baseSinDuplicados: "base sin duplicados",
   mailOk: "mail OK",
   os: "OS",
+  mailsEnviados: "mails enviados",
+  notaTrato: "Q1 – Trato",
+  notaOrganizacion: "Q2 – Organización",
+  notaCalidadReparacion: "Q3 – Calidad de reparación",
+  notaLvs: "Q4 – LVS",
 };
 
 /**
@@ -182,13 +196,14 @@ const ETIQUETA_CAMPO: Record<CampoMes, string> = {
  */
 function leerCampo(
   texto: string,
-  tipo: "entero" | "os" | "porcentaje"
+  tipo: "entero" | "os" | "nota" | "porcentaje"
 ): { valor: number | null } | { error: string } {
   const n = leerNumero(texto, tipo === "entero");
   if (n === undefined) return { error: tipo === "entero" ? "tiene que ser un número entero" : "tiene que ser un número" };
   if (n === null) return { valor: null };
   if (tipo === "entero" && (n < 0 || n > 1_000_000)) return { error: "tiene que estar entre 0 y 1.000.000" };
   if (tipo === "os" && (n < 0 || n > 5)) return { error: "el OS va de 0 a 5" };
+  if (tipo === "nota" && (n < 0 || n > 5)) return { error: "las notas van de 0 a 5" };
   if (tipo === "porcentaje" && (n < 0 || n > 100)) return { error: "un porcentaje va de 0 a 100" };
   return { valor: n };
 }
@@ -205,14 +220,33 @@ export default function IndicadoresCem() {
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
 
+  // Lo que se está mirando AHORA. Un pedido que vuelve tarde (se cambió de área o de
+  // año mientras tanto, o terminó un guardado de la pantalla anterior) no puede pisar
+  // lo que se ve: dejaba la pantalla cargando para siempre o con números de otro año.
+  const seleccion = useRef({ anio, area });
+  seleccion.current = { anio, area };
+  const esVigente = (a: number, ar: AreaCem) => seleccion.current.anio === a && seleccion.current.area === ar;
+
   const cargar = useCallback(async () => {
     try {
-      setDatos(await apiGet<Respuesta>(`/api/indicadores-cem?anio=${anio}&area=${area}`));
+      const respuesta = await apiGet<Respuesta>(`/api/indicadores-cem?anio=${anio}&area=${area}`);
+      if (!esVigente(anio, area)) return;
+      setDatos(respuesta);
       setError(null);
     } catch (err) {
+      if (!esVigente(anio, area)) return;
       setError(err instanceof Error ? err.message : "No pudimos cargar los indicadores.");
     }
+    // esVigente lee un ref: no hace falta en las dependencias.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anio, area]);
+
+  /** Al terminar de guardar: el aviso y la recarga, solo si se sigue mirando lo que se guardó. */
+  const alGuardar = (ar: AreaCem, a: number) => async (m: string) => {
+    if (!esVigente(a, ar)) return;
+    setMensaje(m);
+    await cargar();
+  };
 
   function cambiarArea(nueva: AreaCem) {
     if (nueva === area) return;
@@ -232,11 +266,14 @@ export default function IndicadoresCem() {
     if (marca.modulos.indicadoresCem) cargar();
   }, [cargar, marca.modulos.indicadoresCem]);
 
-  // Solo se muestra si lo que llegó es del área elegida (el pedido puede volver
-  // después de haber cambiado de área).
+  // Solo se muestra si lo que llegó es del área y el año elegidos (mientras llega lo
+  // nuevo, el esqueleto de carga; nunca los números de otro año con este título).
   const actual = useMemo(
-    () => (datos && datos.area === area ? datos.trimestres.find((t) => t.trimestre === trimestre) ?? null : null),
-    [datos, trimestre, area]
+    () =>
+      datos && datos.area === area && datos.anio === anio
+        ? datos.trimestres.find((t) => t.trimestre === trimestre) ?? null
+        : null,
+    [datos, trimestre, area, anio]
   );
   const config = CONFIG_AREA[area];
 
@@ -255,10 +292,7 @@ export default function IndicadoresCem() {
             <h2 className="font-display text-sm font-bold uppercase tracking-wide text-navy">
               Indicadores CEM · {config.nombre}
             </h2>
-            <p className="mt-1 max-w-3xl text-sm text-ink-muted">
-              {config.descripcion} Los números se cargan a mano; los porcentajes, los totales y la comparación con los
-              objetivos los calcula el sistema.
-            </p>
+            <p className="mt-1 max-w-3xl text-sm text-ink-muted">{config.descripcion}</p>
           </div>
           <div className="flex items-center gap-2">
             <label htmlFor="cem-anio" className="text-sm font-medium text-ink">
@@ -297,24 +331,55 @@ export default function IndicadoresCem() {
 
       {!actual && !error && <SkeletonBlock className="h-72 w-full" />}
 
-      {datos && actual && (
+      {datos && actual && area === "POSVENTA" && (
         <>
-          <BloqueObjetivos
+          <ObjetivosPosventa
             key={`obj-${area}-${anio}-${trimestre}`}
-            area={area}
             trimestre={actual}
             puedeEditar={datos.permisos.cargar && !datos.permisos.provincia}
-            onGuardado={async (m) => {
-              setMensaje(m);
-              await cargar();
-            }}
+            onGuardado={alGuardar(area, anio)}
             onError={(e) => {
               setError(e);
               if (e) setMensaje(null);
             }}
           />
           {actual.sucursales.map((s) => (
-            <TablaSucursal
+            <TablaPosventa
+              key={`${area}-${anio}-${trimestre}-${s.sucursal}`}
+              trimestre={actual}
+              sucursal={s.sucursal}
+              meses={s.meses}
+              total={s.total}
+              puedeEditar={
+                datos.permisos.cargar &&
+                (!datos.permisos.provincia || datos.permisos.provincia.toLowerCase() === s.sucursal.toLowerCase())
+              }
+              onGuardado={alGuardar(area, anio)}
+              onError={(e) => {
+                setError(e);
+                if (e) setMensaje(null);
+              }}
+              onRecargar={cargar}
+            />
+          ))}
+        </>
+      )}
+
+      {datos && actual && area === "VENTAS" && (
+        <>
+          <BloqueObjetivos
+            key={`obj-${area}-${anio}-${trimestre}`}
+            area={area}
+            trimestre={actual}
+            puedeEditar={datos.permisos.cargar && !datos.permisos.provincia}
+            onGuardado={alGuardar(area, anio)}
+            onError={(e) => {
+              setError(e);
+              if (e) setMensaje(null);
+            }}
+          />
+          {actual.sucursales.map((s) => (
+            <TablaVentas
               key={`${area}-${anio}-${trimestre}-${s.sucursal}`}
               area={area}
               trimestre={actual}
@@ -325,10 +390,7 @@ export default function IndicadoresCem() {
                 datos.permisos.cargar &&
                 (!datos.permisos.provincia || datos.permisos.provincia.toLowerCase() === s.sucursal.toLowerCase())
               }
-              onGuardado={async (m) => {
-                setMensaje(m);
-                await cargar();
-              }}
+              onGuardado={alGuardar(area, anio)}
               onError={(e) => {
                 setError(e);
                 if (e) setMensaje(null);
@@ -460,10 +522,10 @@ function BloqueObjetivos({
   );
 }
 
-// ---------------------------------------------------------------- tabla ----
+// ---------------------------------------------------------------- tabla de Ventas ----
 type FormMes = Record<CampoMes, string>;
 
-function TablaSucursal({
+function TablaVentas({
   area,
   trimestre,
   sucursal,
@@ -489,7 +551,7 @@ function TablaSucursal({
   const [form, setForm] = useState<Record<string, FormMes>>({});
   const [formTrimestre, setFormTrimestre] = useState({ os: "", resultadoAuditoria: "" });
   const [guardando, setGuardando] = useState(false);
-  const config = CONFIG_AREA[area];
+  const config = { ...CONFIG_AREA[area], ...COLUMNAS_VENTAS };
   const campos = camposDelArea(area);
   const etiquetaCampo = (c: CampoMes) => (c === "patentamientos" ? config.baseLargo : ETIQUETA_CAMPO[c]);
 
@@ -554,13 +616,15 @@ function TablaSucursal({
           : "No había cambios para guardar."
       );
     } catch (err) {
-      onError(
+      const aviso =
         `${err instanceof Error ? err.message : "No se pudieron guardar los indicadores."} ` +
-          "Lo que se llegó a guardar antes del error ya se ve en la tabla; revisá y volvé a guardar."
-      );
-      // Sin esto la tabla seguiría con los números viejos aunque algún mes ya se haya
-      // guardado, y la próxima comparación de "qué cambió" saldría mal.
+        "Lo que se llegó a guardar antes del error ya se ve en la tabla; revisá y volvé a guardar.";
+      // Sin recargar, la tabla seguiría con los números viejos aunque algún mes ya se
+      // haya guardado, y la próxima comparación de "qué cambió" saldría mal. Primero
+      // se recarga y DESPUÉS se avisa: la recarga limpia los errores, y al revés el
+      // aviso desaparecía enseguida.
       await onRecargar().catch(() => {});
+      onError(aviso);
     } finally {
       setGuardando(false);
     }
@@ -756,6 +820,434 @@ function TablaSucursal({
   );
 }
 
+// ---------------------------------------------------------------- Posventa ----
+//
+// La planilla "Postventa Q 2026" (19-09-2026): una tabla por provincia (hoy solo
+// Mendoza) con mails enviados, encuestas efectivas, las notas Q1 a Q4, la escala y
+// la tasa de respuesta; y arriba la tabla "Objetivos LVS" del trimestre.
+
+const ETIQUETA_NOTA: Record<CampoNota, { corta: string; larga: string }> = {
+  notaTrato: { corta: "Q1 · Trato", larga: "Q1 – Trato" },
+  notaOrganizacion: { corta: "Q2 · Organización", larga: "Q2 – Organización" },
+  notaCalidadReparacion: { corta: "Q3 · Calidad de reparación", larga: "Q3 – Calidad de reparación" },
+  notaLvs: { corta: "Q4 · LVS", larga: "Q4 – LVS (satisfacción general): de ella sale la escala" },
+};
+
+/**
+ * "Escala 2" en verde (cumple) o "No cumple" en rojo (Escala 5); sin escala, una raya.
+ * `apagado` mientras se edita: es la escala de lo GUARDADO, y en color contradecía la
+ * nota que se está escribiendo (igual que la tasa, que en edición también se apaga).
+ */
+function ChipEscala({ escala, apagado = false }: { escala: Escala; apagado?: boolean }) {
+  if (escala === null) return <span className="text-ink-muted">—</span>;
+  if (apagado) return <span className="text-xs text-ink-muted">{escala === 5 ? "No cumple" : `Escala ${escala}`}</span>;
+  if (escala === 5) {
+    return (
+      <span
+        className="inline-flex rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-200"
+        title="Escala 5: la nota LVS está por debajo de la Escala 4"
+      >
+        No cumple
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-800 ring-1 ring-inset ring-green-200">
+      Escala {escala}
+    </span>
+  );
+}
+
+/** Verde si la escala cumple (1 a 4), rojo si es la 5. */
+const claseEscala = (e: Escala) => claseCumple(e === null ? null : e !== 5);
+
+/**
+ * Los rangos de la tabla como los escribe la planilla ("> 4,87", "4,85 – 4,87", …,
+ * "< 4,80"), a partir de desde dónde empieza cada escala. null si la tabla no está.
+ */
+function rangosEscala(o: Objetivos): string[] | null {
+  const desde = CAMPOS_ESCALA.map((c) => o[c]);
+  if (desde.some((d) => d === null)) return null;
+  const [e1, e2, e3, e4] = desde as number[];
+  const rango = (desdeN: number, siguiente: number) => {
+    const hasta = siguiente - 0.01;
+    return fmtDecimal(desdeN) === fmtDecimal(hasta) ? fmtDecimal(desdeN) : `${fmtDecimal(desdeN)} – ${fmtDecimal(hasta)}`;
+  };
+  return [`> ${fmtDecimal(e1 - 0.01)}`, rango(e2, e1), rango(e3, e2), rango(e4, e3), `< ${fmtDecimal(e4)}`];
+}
+
+function ObjetivosPosventa({
+  trimestre,
+  puedeEditar,
+  onGuardado,
+  onError,
+}: {
+  trimestre: Trimestre;
+  puedeEditar: boolean;
+  onGuardado: (mensaje: string) => Promise<void>;
+  onError: (e: string | null) => void;
+}) {
+  const { objetivos } = trimestre;
+  const [editando, setEditando] = useState(false);
+  const [form, setForm] = useState<Record<CampoEscala, string>>({ lvsEscala1: "", lvsEscala2: "", lvsEscala3: "", lvsEscala4: "" });
+  const [guardando, setGuardando] = useState(false);
+  const rangos = rangosEscala(objetivos);
+
+  function abrir() {
+    setForm(Object.fromEntries(CAMPOS_ESCALA.map((c) => [c, aTexto(objetivos[c])])) as Record<CampoEscala, string>);
+    setEditando(true);
+  }
+
+  async function guardar() {
+    const valores: Array<number | null> = [];
+    for (const [i, c] of CAMPOS_ESCALA.entries()) {
+      const r = leerCampo(form[c], "nota");
+      if ("error" in r) {
+        onError(`Revisá desde dónde empieza la Escala ${i + 1}: ${r.error} ("${form[c]}").`);
+        return;
+      }
+      valores.push(r.valor);
+    }
+    // Las mismas reglas que el backend: la tabla entera o vacía, y de mayor a menor.
+    const cargadas = valores.filter((v) => v !== null).length;
+    if (cargadas > 0 && cargadas < 4) {
+      onError("Completá las cuatro escalas (o dejalas todas vacías).");
+      return;
+    }
+    if (cargadas === 4) {
+      for (let i = 1; i < 4; i++) {
+        if (!(Math.round(valores[i - 1]! * 100) > Math.round(valores[i]! * 100))) {
+          onError(`La Escala ${i} tiene que empezar más arriba que la Escala ${i + 1}.`);
+          return;
+        }
+      }
+    }
+    setGuardando(true);
+    onError(null);
+    try {
+      await apiPutJson("/api/indicadores-cem/objetivos", {
+        area: "POSVENTA",
+        anio: trimestre.anio,
+        trimestre: trimestre.trimestre,
+        ...Object.fromEntries(CAMPOS_ESCALA.map((c, i) => [c, valores[i]])),
+      });
+      setEditando(false);
+      await onGuardado(`Objetivos LVS de Posventa del Q${trimestre.trimestre} ${trimestre.anio} guardados.`);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "No se pudieron guardar los objetivos.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <Card padding="p-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <span className="font-display text-sm font-bold uppercase tracking-wide text-navy">
+          Objetivos LVS Posventa · Q{trimestre.trimestre} {trimestre.anio}
+        </span>
+        {editando ? (
+          <>
+            {CAMPOS_ESCALA.map((c, i) => (
+              <label key={c} className="flex items-center gap-2 text-sm text-ink">
+                Escala {i + 1} desde
+                <input
+                  value={form[c]}
+                  onChange={(e) => setForm({ ...form, [c]: e.target.value })}
+                  inputMode="decimal"
+                  className="w-16 rounded-md border border-gray-300 px-2 py-1 text-right text-sm"
+                />
+              </label>
+            ))}
+            <button onClick={guardar} disabled={guardando} className={claseBoton("primario", "!py-1 !px-3")}>
+              {guardando ? "Guardando…" : "Guardar"}
+            </button>
+            <button onClick={() => setEditando(false)} className={claseBoton("secundario", "!py-1 !px-3")}>
+              Cancelar
+            </button>
+          </>
+        ) : (
+          <>
+            {rangos ? (
+              <ul className="flex flex-wrap gap-2" aria-label="Tabla de escalas LVS">
+                {rangos.map((r, i) => (
+                  <li
+                    key={i}
+                    className={`rounded-lg px-2.5 py-1 text-sm ring-1 ring-inset ${
+                      i === 4 ? "bg-red-50 text-red-800 ring-red-200" : "bg-gray-50 text-ink ring-gray-200"
+                    }`}
+                  >
+                    <span className="font-semibold">{i === 4 ? "Escala 5 · No cumple" : `Escala ${i + 1}`}</span>{" "}
+                    <span className="tabular-nums">{r}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <span className="text-sm text-ink-muted">Sin tabla de escalas: sin ella el sistema no calcula la escala.</span>
+            )}
+            {puedeEditar && (
+              <button onClick={abrir} className={claseBoton("secundario", "!py-1 !px-2")} title="Cargar o corregir la tabla de escalas">
+                <Pencil className="h-3.5 w-3.5" /> Editar
+              </button>
+            )}
+          </>
+        )}
+      </div>
+      <p className="mt-2 text-xs text-ink-muted">
+        {editando
+          ? "Desde qué nota LVS empieza cada escala (por ejemplo 4,88 para \u201c> 4,87\u201d). Debajo de la Escala 4 es la Escala 5: No cumple."
+          : "La escala de cada mes y del trimestre sale de la nota Q4 – LVS con esta tabla. Escala 5 = No cumple."}
+      </p>
+    </Card>
+  );
+}
+
+function TablaPosventa({
+  trimestre,
+  sucursal,
+  meses,
+  total,
+  puedeEditar,
+  onGuardado,
+  onError,
+  onRecargar,
+}: {
+  trimestre: Trimestre;
+  sucursal: string;
+  meses: Mes[];
+  total: Total;
+  puedeEditar: boolean;
+  onGuardado: (mensaje: string) => Promise<void>;
+  onError: (e: string | null) => void;
+  /** Si algo falla a mitad de guardar: que la tabla muestre lo que de verdad quedó. */
+  onRecargar: () => Promise<void>;
+}) {
+  const [editando, setEditando] = useState(false);
+  const [form, setForm] = useState<Record<string, FormMes>>({});
+  const [formTrimestre, setFormTrimestre] = useState<Record<CampoNota, string>>({
+    notaTrato: "",
+    notaOrganizacion: "",
+    notaCalidadReparacion: "",
+    notaLvs: "",
+  });
+  const [guardando, setGuardando] = useState(false);
+
+  function abrir() {
+    setForm(
+      Object.fromEntries(
+        meses.map((m) => [m.periodo, Object.fromEntries(CAMPOS_MES.map((c) => [c, aTexto(m[c])])) as FormMes])
+      )
+    );
+    setFormTrimestre(Object.fromEntries(CAMPOS_NOTA.map((c) => [c, aTexto(total[c])])) as Record<CampoNota, string>);
+    setEditando(true);
+  }
+
+  async function guardar() {
+    // Todo se valida ANTES de mandar nada: un error de tipeo en septiembre no puede
+    // dejar julio y agosto guardados y septiembre no.
+    const cambiosMeses: Array<{ periodo: string; datos: Partial<Record<CampoMes, number | null>> }> = [];
+    for (const m of meses) {
+      const datos: Partial<Record<CampoMes, number | null>> = {};
+      for (const c of CAMPOS_MES_POSVENTA) {
+        const esNota = (CAMPOS_NOTA as readonly string[]).includes(c);
+        const r = leerCampo(form[m.periodo]?.[c] ?? "", esNota ? "nota" : "entero");
+        if ("error" in r) {
+          onError(`Revisá ${etiquetaMes(m.periodo)}, ${ETIQUETA_CAMPO[c]}: ${r.error} ("${form[m.periodo]?.[c]}").`);
+          return;
+        }
+        if (r.valor !== m[c]) datos[c] = r.valor;
+      }
+      if (Object.keys(datos).length) cambiosMeses.push({ periodo: m.periodo, datos });
+    }
+    const notasTrimestre: Partial<Record<CampoNota, number | null>> = {};
+    for (const c of CAMPOS_NOTA) {
+      const r = leerCampo(formTrimestre[c], "nota");
+      if ("error" in r) {
+        onError(`Revisá ${ETIQUETA_NOTA[c].larga.split(":")[0]} del trimestre: ${r.error} ("${formTrimestre[c]}").`);
+        return;
+      }
+      if (r.valor !== total[c]) notasTrimestre[c] = r.valor;
+    }
+    const cambiaTrimestre = Object.keys(notasTrimestre).length > 0;
+
+    setGuardando(true);
+    onError(null);
+    try {
+      for (const c of cambiosMeses) {
+        await apiPutJson("/api/indicadores-cem/mes", { area: "POSVENTA", periodo: c.periodo, sucursal, ...c.datos });
+      }
+      if (cambiaTrimestre) {
+        await apiPutJson("/api/indicadores-cem/trimestre", {
+          area: "POSVENTA",
+          anio: trimestre.anio,
+          trimestre: trimestre.trimestre,
+          sucursal,
+          ...notasTrimestre,
+        });
+      }
+      setEditando(false);
+      await onGuardado(
+        cambiosMeses.length || cambiaTrimestre
+          ? `Indicadores de Posventa de ${sucursal} guardados.`
+          : "No había cambios para guardar."
+      );
+    } catch (err) {
+      const aviso =
+        `${err instanceof Error ? err.message : "No se pudieron guardar los indicadores."} ` +
+        "Lo que se llegó a guardar antes del error ya se ve en la tabla; revisá y volvé a guardar.";
+      // Primero se recarga y después se avisa (ver TablaVentas).
+      await onRecargar().catch(() => {});
+      onError(aviso);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  const input = (valor: string, onCambio: (v: string) => void, etiqueta: string, decimal: boolean) => (
+    <input
+      value={valor}
+      onChange={(e) => onCambio(e.target.value)}
+      inputMode={decimal ? "decimal" : "numeric"}
+      aria-label={etiqueta}
+      className="w-16 rounded border border-gray-300 px-1.5 py-0.5 text-right text-sm"
+    />
+  );
+  const celdaMes = (periodo: string, campo: CampoMes) =>
+    input(
+      form[periodo]?.[campo] ?? "",
+      (v) => setForm({ ...form, [periodo]: { ...form[periodo], [campo]: v } }),
+      `${ETIQUETA_CAMPO[campo]} de ${etiquetaMes(periodo)}`,
+      (CAMPOS_NOTA as readonly string[]).includes(campo)
+    );
+
+  const th = "px-2 py-2 text-right";
+  const td = "whitespace-nowrap px-2 py-2 text-right tabular-nums";
+
+  return (
+    <Card padding="p-0">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-5 py-3">
+        <h3 className="flex items-center gap-2 font-display text-sm font-bold uppercase tracking-wide text-navy">
+          <Gauge className="h-4 w-4" aria-hidden="true" />
+          {sucursal} · Q{trimestre.trimestre} {trimestre.anio}
+          <span className="rounded-full bg-navy/10 px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-navy">
+            Posventa
+          </span>
+        </h3>
+        {puedeEditar &&
+          (editando ? (
+            <div className="flex gap-2">
+              <button onClick={guardar} disabled={guardando} className={claseBoton("primario", "!py-1.5")}>
+                {guardando ? "Guardando…" : "Guardar"}
+              </button>
+              <button onClick={() => setEditando(false)} className={claseBoton("secundario", "!py-1.5")}>
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <button onClick={abrir} className={claseBoton("secundario", "!py-1.5")}>
+              <Pencil className="h-4 w-4" /> Cargar / corregir
+            </button>
+          ))}
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-200 bg-gray-50/80 text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+              <th className="px-4 py-2 text-left">Mes</th>
+              <th className={th}>Mails enviados</th>
+              <th className={th}>Encuestas efectivas</th>
+              {CAMPOS_NOTA.map((c) => (
+                <th key={c} className={th} title={ETIQUETA_NOTA[c].larga}>
+                  {ETIQUETA_NOTA[c].corta}
+                </th>
+              ))}
+              <th className="px-2 py-2 text-center" title="Sale de la nota Q4 – LVS con la tabla de objetivos">
+                Escala
+              </th>
+              <th className="px-4 py-2 text-right" title="Encuestas efectivas sobre mails enviados">
+                Tasa de respuesta
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {meses.map((m) => (
+              <tr key={m.periodo} className="border-b border-gray-100">
+                <td className="whitespace-nowrap px-4 py-2 font-medium text-ink">{etiquetaMes(m.periodo)}</td>
+                {editando ? (
+                  <>
+                    <td className={td}>{celdaMes(m.periodo, "mailsEnviados")}</td>
+                    <td className={td}>{celdaMes(m.periodo, "encuestasEfectivas")}</td>
+                    {CAMPOS_NOTA.map((c) => (
+                      <td key={c} className={td}>
+                        {celdaMes(m.periodo, c)}
+                      </td>
+                    ))}
+                    <td className="px-2 py-2 text-center">
+                      <ChipEscala escala={m.escala} apagado />
+                    </td>
+                    <td className={`${td} pr-4 text-ink-muted`}>{fmtPct(m.tasaRespuesta)}</td>
+                  </>
+                ) : (
+                  <>
+                    <td className={td}>{fmtEntero(m.mailsEnviados)}</td>
+                    <td className={td}>{fmtEntero(m.encuestasEfectivas)}</td>
+                    {CAMPOS_NOTA.map((c) => (
+                      <td key={c} className={`${td} ${c === "notaLvs" ? claseEscala(m.escala) : ""}`}>
+                        {fmtDecimal(m[c])}
+                      </td>
+                    ))}
+                    <td className="px-2 py-2 text-center">
+                      <ChipEscala escala={m.escala} />
+                    </td>
+                    <td className={`${td} pr-4`}>{fmtPct(m.tasaRespuesta)}</td>
+                  </>
+                )}
+              </tr>
+            ))}
+            <tr className="border-b border-gray-200 bg-gray-50 font-semibold text-ink">
+              <td className="px-4 py-2">Total</td>
+              <td className={td}>{fmtEntero(total.mailsEnviados)}</td>
+              <td className={td}>{fmtEntero(total.encuestasEfectivas)}</td>
+              {CAMPOS_NOTA.map((c) =>
+                editando ? (
+                  <td key={c} className={td}>
+                    {input(
+                      formTrimestre[c],
+                      (v) => setFormTrimestre({ ...formTrimestre, [c]: v }),
+                      `${ETIQUETA_NOTA[c].larga.split(":")[0]} del trimestre`,
+                      true
+                    )}
+                  </td>
+                ) : (
+                  <td
+                    key={c}
+                    className={`${td} ${c === "notaLvs" ? claseEscala(total.escala) : ""}`}
+                    title="La nota del trimestre que publica fábrica"
+                  >
+                    {fmtDecimal(total[c])}
+                  </td>
+                )
+              )}
+              <td className="px-2 py-2 text-center">
+                <ChipEscala escala={total.escala} apagado={editando} />
+              </td>
+              <td className={`${td} pr-4`} title="Efectivas del trimestre sobre mails del trimestre, como en la planilla">
+                {fmtPct(total.tasaRespuesta)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="px-5 py-3 text-xs text-ink-muted">
+        {editando
+          ? "Mails y encuestas en números enteros; las notas con decimales (4,86). Un casillero vacío queda sin dato. Las notas del Total son las del trimestre que publica fábrica."
+          : "Las notas del Total son las del trimestre que publica fábrica (no el promedio de los meses). La tasa de respuesta es encuestas efectivas sobre mails enviados."}
+      </p>
+    </Card>
+  );
+}
+
 // ---------------------------------------------------------------- área ----
 /**
  * El cambio entre Ventas y Posventa (pedido del 18-09-2026: "tipo un botón que
@@ -770,7 +1262,7 @@ function TablaSucursal({
 function SelectorArea({ valor, onCambiar }: { valor: AreaCem; onCambiar: (a: AreaCem) => void }) {
   const opciones: Array<{ area: AreaCem; Icono: typeof Car; ayuda: string }> = [
     { area: "VENTAS", Icono: Car, ayuda: "Encuestas CEM de ventas (patentamientos)" },
-    { area: "POSVENTA", Icono: Wrench, ayuda: "Encuestas CEM de taller (órdenes de reparación)" },
+    { area: "POSVENTA", Icono: Wrench, ayuda: "Encuestas CEM del taller (planilla de Posventa)" },
   ];
   return (
     <div
