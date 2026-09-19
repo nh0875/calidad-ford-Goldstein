@@ -69,7 +69,7 @@ export const ACCIONES = {
   // declara que animó al cliente o que ya respondió la encuesta de fábrica.
   ENCUESTA_PV_ESTADO_CAMBIADO: "ENCUESTA_PV_ESTADO_CAMBIADO",
   // Cierre de meses de las encuestas de fábrica: saca clientes de la lista de
-  // trabajo. El automático del día 19 se audita sin usuario.
+  // trabajo. El automático (día 19 en Ventas, 25 en PV) se audita sin usuario.
   PERIODO_CERRADO: "PERIODO_CERRADO",
   PERIODO_REABIERTO: "PERIODO_REABIERTO",
   // Indicadores CEM: números que después se informan a fábrica.

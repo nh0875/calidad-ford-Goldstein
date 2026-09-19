@@ -966,7 +966,8 @@ model EncuestaFabricaPV {
 // ---------------------------------------------------------------------------
 // Los clientes de un mes se CIERRAN: salen de la lista de trabajo (ocupaban lugar
 // y confundían) y quedan para consultar. Se cierra por mes y por provincia, con un
-// botón (Calidad) o solo el día 19 del mes siguiente. Reabre un administrador.
+// botón (Calidad) o solo el mes siguiente: el día 19 en Ventas y el 25 en PV (ver
+// DIA_CIERRE_AUTOMATICO en services/cierre-periodo.service.ts). Reabre un administrador.
 
 enum ListaCierre {
   ENCUESTA_VENTAS // Encuestas de fábrica (EncuestaFabricaVW)

@@ -7,7 +7,7 @@ import { seedAdmin } from "./scripts/seedAdmin";
 import { detenerLatido, iniciarLatido } from "./services/latido.service";
 import { limpiarCausasRaizFueraDeLista } from "./services/causa-raiz.service";
 import { completarDatosDePersonas, corregirSucursalesPorCodigo } from "./services/importacion-encuesta-vw.service";
-import { cierreAutomaticoDePeriodos, listasHabilitadas } from "./services/cierre-periodo.service";
+import { cierreAutomaticoDePeriodos, corregirCierresAdelantados, listasHabilitadas } from "./services/cierre-periodo.service";
 import { sembrarHistoricoCem, sembrarPlanillaPosventaCem } from "./services/indicadores-cem.service";
 
 const app = createApp();
@@ -67,11 +67,17 @@ corregirSucursalesPorCodigo()
   // Recién con las sucursales corregidas se cierran meses: el cierre es por provincia.
   .then(() => correrCierreAutomatico());
 
-// Cierre automático de meses de las encuestas de fábrica (VW): el día 19 se cierra el
-// mes anterior. Corre al arrancar (si el 19 la PC estaba apagada, lo hace ahora) y
-// una vez por hora. Casi siempre no hace nada. En Ford no hay listas: ni se agenda.
+// Cierre automático de meses de las encuestas de fábrica (VW): el mes anterior se
+// cierra el día 19 en Ventas y el 25 en PV. Corre al arrancar (si ese día la PC
+// estaba apagada, lo hace ahora) y una vez por hora. Casi siempre no hace nada. En
+// Ford no hay listas: ni se agenda. Antes deshace un cierre automático que se haya
+// hecho antes de su día (pasó con agosto de PV el 19-09-2026, cuando PV todavía
+// cerraba el 19).
 async function correrCierreAutomatico(): Promise<void> {
   try {
+    for (const c of await corregirCierresAdelantados()) {
+      console.log(`[cierre] ${c.lista} ${c.periodo} ${c.sucursal}: reabierto (se había cerrado antes de su día), ${c.reabiertos} cliente(s) vuelven a la lista`);
+    }
     for (const c of await cierreAutomaticoDePeriodos()) {
       // Los meses que se cierran sin clientes no ensucian el log.
       if (c.cerrados > 0) console.log(`[cierre] ${c.lista} ${c.periodo} ${c.sucursal}: cerrado solo, ${c.cerrados} cliente(s)`);

@@ -12,10 +12,11 @@
 //    su Fecha Dominio (el mismo de los gráficos); en PV, el del servicio.
 //  - Cierra Calidad con un botón (un usuario con provincia, solo la suya). Reabre
 //    solo un administrador.
-//  - Además se cierra SOLO: el día 19 de cada mes, el mes anterior, en las dos
-//    listas y las dos provincias. Si ese día la PC estaba apagada, cierra apenas
-//    arranca. Un mes que un administrador reabrió no se vuelve a cerrar solo.
-//    Al instalarse cerró de una vez todos los meses que ya habían pasado su 19.
+//  - Además se cierra SOLO el mes anterior, en todas las provincias de la lista: en
+//    Ventas el día 19 y en PV el día 25 (corrección del 19-09-2026: la encuesta de
+//    fábrica de Posventa cierra el 25). Si ese día la PC estaba apagada, cierra
+//    apenas arranca. Un mes que un administrador reabrió no se vuelve a cerrar solo.
+//    Al instalarse cerró de una vez todos los meses que ya habían pasado su día.
 //  - Un cliente cerrado sale de la lista de trabajo y de los avisos, y solo se
 //    consulta: para tocarlo hay que reabrir el mes. Los gráficos lo siguen contando.
 //  - Si después de cerrar llega un cliente de ese mes (una carga atrasada, un 5
@@ -34,8 +35,15 @@ import { claveNormalizada } from "./normalizacion.service";
 import { periodoDelServicio, sincronizarPromotoresPV, whereCasoDeLaLista } from "./encuesta-pv.service";
 import { ACCIONES, auditar } from "./audit.service";
 
-/** El día del mes en que se cierra solo el mes anterior. */
-export const DIA_CIERRE_AUTOMATICO = 19;
+/**
+ * El día del mes en que se cierra solo el mes anterior, por lista. Ventas el 19; PV
+ * el 25 (Calidad, 19-09-2026: "la fecha de cierre de las encuestas de fábrica de
+ * posventa es el 25").
+ */
+export const DIA_CIERRE_AUTOMATICO: Record<ListaCierre, number> = {
+  ENCUESTA_VENTAS: 19,
+  ENCUESTA_PV: 25,
+};
 
 const ZONA = "America/Argentina/Buenos_Aires";
 
@@ -60,12 +68,13 @@ export function periodoActual(ahora: Date): string {
 }
 
 /**
- * El último mes que el cierre automático ya puede cerrar: desde el día 19, el mes
- * anterior; antes del 19, el anterior a ese. El 17-09 da julio; el 19-09, agosto.
+ * El último mes que el cierre automático de una lista ya puede cerrar: desde su día
+ * (19 en Ventas, 25 en PV), el mes anterior; antes, el anterior a ese. En Ventas el
+ * 17-09 da julio y el 19-09 agosto; en PV el 24-09 da julio y el 25-09 agosto.
  */
-export function ultimoPeriodoCerrable(ahora: Date): string {
+export function ultimoPeriodoCerrable(ahora: Date, lista: ListaCierre): string {
   const { dia } = fechaArgentina(ahora);
-  return sumarMeses(periodoActual(ahora), dia >= DIA_CIERRE_AUTOMATICO ? -1 : -2);
+  return sumarMeses(periodoActual(ahora), dia >= DIA_CIERRE_AUTOMATICO[lista] ? -1 : -2);
 }
 
 /** Las listas que existen en esta marca. En Ford ninguna: todo esto no hace nada. */
@@ -194,9 +203,11 @@ export async function cerrarPeriodo(opciones: {
   sucursal: string;
   origen: OrigenCierre;
   quien: Quien;
+  /** La hora del cierre (el automático pasa la suya). */
+  ahora?: Date;
 }): Promise<{ cerrados: number; totalCerrados: number }> {
   const { lista, periodo, sucursal, origen, quien } = opciones;
-  const ahora = new Date();
+  const ahora = opciones.ahora ?? new Date();
   const clientes = (await clientesDeLaLista(lista)).filter(
     (c) => c.periodo === periodo && mismaSucursal(c.sucursal, sucursal)
   );
@@ -213,6 +224,17 @@ export async function cerrarPeriodo(opciones: {
         });
 
   const totalCerrados = clientes.length - ids.length + count;
+  // Si el mes YA estaba cerrado ("Guardar los que llegaron"), el cierre sigue siendo el
+  // mismo: no cambia quién ni cuándo ni si fue solo. Antes se pisaba con MANUAL y el
+  // nombre de quien apretó, y un mes que se había cerrado solo pasaba por cerrado a
+  // mano (19-09-2026: eso impedía deshacer el cierre adelantado de agosto de PV).
+  const existente = await prisma.cierrePeriodo.findUnique({
+    where: { lista_periodo_sucursal: { lista, periodo, sucursal } },
+  });
+  if (existente && !existente.reabiertoEn) {
+    await prisma.cierrePeriodo.update({ where: { id: existente.id }, data: { clientesCerrados: totalCerrados } });
+    return { cerrados: count, totalCerrados };
+  }
   await prisma.cierrePeriodo.upsert({
     where: { lista_periodo_sucursal: { lista, periodo, sucursal } },
     create: {
@@ -239,6 +261,22 @@ export async function cerrarPeriodo(opciones: {
   return { cerrados: count, totalCerrados };
 }
 
+/** Los clientes cerrados de un mes vuelven a la lista de trabajo. Devuelve cuántos. */
+async function devolverALaLista(lista: ListaCierre, periodo: string, sucursal: string): Promise<number> {
+  if (lista === ListaCierre.ENCUESTA_VENTAS) {
+    const ids = (await clientesDeLaLista(lista))
+      .filter((c) => c.cerrado && c.periodo === periodo && mismaSucursal(c.sucursal, sucursal))
+      .map((c) => c.id);
+    return (await prisma.encuestaFabricaVW.updateMany({ where: { id: { in: ids } }, data: { cerradoEn: null } })).count;
+  }
+  return (
+    await prisma.encuestaFabricaPV.updateMany({
+      where: { cerradoEn: { not: null }, periodoCierre: periodo },
+      data: { cerradoEn: null, periodoCierre: null },
+    })
+  ).count;
+}
+
 /** Reabre un mes: sus clientes vuelven a la lista de trabajo. Solo administradores. */
 export async function reabrirPeriodo(opciones: {
   lista: ListaCierre;
@@ -252,20 +290,7 @@ export async function reabrirPeriodo(opciones: {
   });
   if (!cierre || cierre.reabiertoEn) return { error: "Ese mes no está cerrado." };
 
-  let reabiertos = 0;
-  if (lista === ListaCierre.ENCUESTA_VENTAS) {
-    const ids = (await clientesDeLaLista(lista))
-      .filter((c) => c.cerrado && c.periodo === periodo && mismaSucursal(c.sucursal, sucursal))
-      .map((c) => c.id);
-    reabiertos = (await prisma.encuestaFabricaVW.updateMany({ where: { id: { in: ids } }, data: { cerradoEn: null } })).count;
-  } else {
-    reabiertos = (
-      await prisma.encuestaFabricaPV.updateMany({
-        where: { cerradoEn: { not: null }, periodoCierre: periodo },
-        data: { cerradoEn: null, periodoCierre: null },
-      })
-    ).count;
-  }
+  const reabiertos = await devolverALaLista(lista, periodo, sucursal);
   await prisma.cierrePeriodo.update({
     where: { id: cierre.id },
     data: { reabiertoEn: new Date(), reabiertoPorId: quien.id, reabiertoPorNombre: quien.nombre, clientesCerrados: 0 },
@@ -283,26 +308,119 @@ export async function idsCerradosVentas(periodo: string, sucursal: string): Prom
 /** Qué clave de Configuracion guarda hasta qué mes llegó el cierre automático. */
 const claveMarcaDeAgua = (lista: ListaCierre) => `cierre.automatico.${lista}`;
 
+/** "AAAA-MM-DD" de una fecha en Argentina (se comparan como texto). */
+function diaArgentina(fecha: Date): string {
+  const { anio, mes, dia } = fechaArgentina(fecha);
+  return `${anio}-${String(mes).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+}
+
+/** Desde qué día el cierre automático puede cerrar ese mes: PV "2026-08" -> "2026-09-25". */
+export function fechaDeCierre(lista: ListaCierre, periodo: string): string {
+  return `${sumarMeses(periodo, 1)}-${String(DIA_CIERRE_AUTOMATICO[lista]).padStart(2, "0")}`;
+}
+
 /**
- * El cierre del día 19. Corre al arrancar y una vez por hora; casi siempre no hace
- * nada.
+ * Un cierre que hoy figura MANUAL, ¿empezó como automático? Con el código anterior,
+ * "Guardar los que llegaron" sobre un mes que se había cerrado solo lo pasaba a manual
+ * (y le ponía el nombre de quien apretó), aunque esa persona no cerró el mes. Lo dice
+ * la auditoría: el primer cierre de ese mes (después de su última reapertura, si la
+ * hubo) fue automático. Un mes reabierto y vuelto a cerrar a mano es manual de verdad.
+ */
+async function empezoComoAutomatico(lista: ListaCierre, periodo: string, sucursal: string): Promise<boolean> {
+  const eventos = await prisma.auditLog.findMany({
+    where: { entidad: "CierrePeriodo", accion: { in: [ACCIONES.PERIODO_CERRADO, ACCIONES.PERIODO_REABIERTO] } },
+    orderBy: { createdAt: "asc" },
+    select: { accion: true, detalles: true },
+  });
+  const delMes = eventos.filter((e) => {
+    const d = (e.detalles ?? {}) as Record<string, unknown>;
+    return d.lista === lista && d.periodo === periodo && mismaSucursal(String(d.sucursal ?? ""), sucursal);
+  });
+  const ultimaReapertura = delMes.map((e) => e.accion).lastIndexOf(ACCIONES.PERIODO_REABIERTO);
+  const primerCierre = delMes.slice(ultimaReapertura + 1).find((e) => e.accion === ACCIONES.PERIODO_CERRADO);
+  return ((primerCierre?.detalles ?? {}) as Record<string, unknown>).origen === "AUTOMATICO";
+}
+
+/**
+ * Deshace los cierres automáticos que se hicieron ANTES del día de su lista.
+ *
+ * Pasó una vez: hasta el 19-09-2026 las dos listas se cerraban el 19, y PV cierra el
+ * 25. Ese 19 el automático ya había cerrado agosto de PV. El dueño eligió que ese
+ * cierre se deshaga solo: los clientes vuelven a la lista, la fila del cierre se borra
+ * (una fila reabierta frenaría el cierre automático para siempre) y la marca de agua
+ * vuelve atrás, así el día que corresponde se cierra como cualquier otro mes. Si la
+ * actualización llega después del 25, se deshace y se vuelve a cerrar en la misma
+ * pasada, y entran también los que llegaron entre el 19 y el 25.
+ *
+ * Qué es "antes de tiempo" lo dice la FILA (la fecha en que se cerró), no el reloj de
+ * ahora: si la hora de la PC va para atrás, esto no toca nada.
+ *
+ * Lo que cerró una persona con el botón se respeta, aunque haya sido antes del día
+ * (cerrar a mano antes es justamente para eso). Un cierre automático al que después
+ * le "guardaron los que llegaron" sigue siendo automático (ver cerrarPeriodo; con el
+ * código anterior quedaba manual: eso se reconoce por la auditoría).
+ */
+export async function corregirCierresAdelantados(): Promise<
+  Array<{ lista: ListaCierre; periodo: string; sucursal: string; reabiertos: number }>
+> {
+  const hechos: Array<{ lista: ListaCierre; periodo: string; sucursal: string; reabiertos: number }> = [];
+  for (const lista of listasHabilitadas()) {
+    const clave = claveMarcaDeAgua(lista);
+    const activos = await prisma.cierrePeriodo.findMany({ where: { lista, reabiertoEn: null } });
+    for (const c of activos) {
+      // Se cerró en su día o después: está bien.
+      if (diaArgentina(c.cerradoEn) >= fechaDeCierre(lista, c.periodo)) continue;
+      // Lo cerró una persona: se respeta.
+      if (c.origen === OrigenCierre.MANUAL && !(await empezoComoAutomatico(lista, c.periodo, c.sucursal))) continue;
+
+      // Primero la marca de agua (solo baja): si esto se corta a mitad, la fila sigue
+      // ahí y la próxima pasada lo retoma.
+      const anterior = sumarMeses(c.periodo, -1);
+      const marcaDeAgua = (await prisma.configuracion.findUnique({ where: { clave } }))?.valor ?? null;
+      if (marcaDeAgua && marcaDeAgua > anterior) {
+        await prisma.configuracion.update({ where: { clave }, data: { valor: anterior } });
+      }
+      const reabiertos = await devolverALaLista(lista, c.periodo, c.sucursal);
+      await prisma.cierrePeriodo.delete({ where: { id: c.id } });
+      hechos.push({ lista, periodo: c.periodo, sucursal: c.sucursal, reabiertos });
+      await auditar(null, {
+        accion: ACCIONES.PERIODO_REABIERTO,
+        entidad: "CierrePeriodo",
+        usuarioId: null,
+        detalles: {
+          lista,
+          periodo: c.periodo,
+          sucursal: c.sucursal,
+          reabiertos,
+          origen: "AUTOMATICO",
+          motivo: `Se había cerrado solo antes de tiempo: esta lista se cierra el día ${DIA_CIERRE_AUTOMATICO[lista]}.`,
+        },
+      });
+    }
+  }
+  return hechos;
+}
+
+/**
+ * El cierre del día de cada lista (19 en Ventas, 25 en PV). Corre al arrancar y una
+ * vez por hora; casi siempre no hace nada.
  *
  * Recuerda hasta qué mes ya cerró (una "marca de agua" por lista) y solo mira los
  * meses nuevos desde ahí. Por eso:
- *  - si el 19 la PC estaba apagada, lo hace apenas vuelve;
+ *  - si ese día la PC estaba apagada, lo hace apenas vuelve;
  *  - un cliente que llega tarde a un mes que ya pasó por acá no se esconde solo:
  *    aparece en la lista marcado, como pidió Calidad;
  *  - un mes que alguien ya cerró o que un administrador reabrió (tiene su fila en
  *    CierrePeriodo) no se toca.
- * La primera vez no hay marca: cierra todos los meses que ya pasaron su 19.
+ * La primera vez no hay marca: cierra todos los meses que ya pasaron su día.
  */
 export async function cierreAutomaticoDePeriodos(
   ahora: Date = new Date()
 ): Promise<Array<{ lista: ListaCierre; periodo: string; sucursal: string; cerrados: number }>> {
-  const hasta = ultimoPeriodoCerrable(ahora);
   const hechos: Array<{ lista: ListaCierre; periodo: string; sucursal: string; cerrados: number }> = [];
 
   for (const lista of listasHabilitadas()) {
+    const hasta = ultimoPeriodoCerrable(ahora, lista);
     const clave = claveMarcaDeAgua(lista);
     const marcaDeAgua = (await prisma.configuracion.findUnique({ where: { clave } }))?.valor ?? null;
     if (marcaDeAgua && marcaDeAgua >= hasta) continue;
@@ -313,7 +431,7 @@ export async function cierreAutomaticoDePeriodos(
 
     const meses = await mesesDeLaLista(lista);
     // Se recorren TODOS los meses y TODAS las provincias de la lista, tengan clientes o
-    // no: un mes que el 19 todavía no tenía nada cargado (el Excel llega tarde) queda
+    // no: un mes que en su día todavía no tenía nada cargado (el Excel llega tarde) queda
     // cerrado igual, y lo que entre después sale marcado "mes cerrado". Solo las
     // provincias de la marca: un cliente con otra sucursal ("General") nunca se
     // esconde solo, porque después no habría cómo consultarlo ni reabrirlo.
@@ -340,6 +458,7 @@ export async function cierreAutomaticoDePeriodos(
           sucursal,
           origen: OrigenCierre.AUTOMATICO,
           quien: { id: null, nombre: null },
+          ahora,
         });
         hechos.push({ lista, periodo, sucursal, cerrados });
         if (cerrados > 0) {

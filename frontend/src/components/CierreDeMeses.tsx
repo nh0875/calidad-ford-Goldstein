@@ -2,8 +2,9 @@
 //
 // Pedido de Calidad del 17-09-2026: los clientes de cada mes se CIERRAN y dejan la
 // lista de trabajo (ocupaban lugar y confundían), pero se pueden volver a consultar.
-// Se cierra por mes y por provincia con el botón, o solo el día 19 del mes
-// siguiente. Reabre un administrador. Lo que decide todo eso está en el backend
+// Se cierra por mes y por provincia con el botón, o solo el mes siguiente: el día
+// 19 en Ventas y el 25 en PV (lo dice el backend en `diaCierre`). Reabre un
+// administrador. Lo que decide todo eso está en el backend
 // (services/cierre-periodo.service.ts); acá solo se muestra y se piden las acciones.
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Lock, LockOpen } from "lucide-react";
@@ -31,6 +32,8 @@ export interface MesDeLaLista {
 interface RespuestaMeses {
   data: MesDeLaLista[];
   periodoActual: string;
+  /** El día del mes en que esta lista se cierra sola (19 Ventas, 25 PV). */
+  diaCierre?: number;
   permisos: { cerrar: boolean; reabrir: boolean; provincia: string | null };
 }
 
@@ -102,6 +105,9 @@ export default function CierreDeMeses<T extends { id: string }>({
   const conLlegadosTarde = visibles.filter((m) => m.cierre?.activo && m.enLista > 0);
   const abiertosViejos = visibles.filter((m) => !m.cierre?.activo && meses && m.periodo < meses.periodoActual && m.enLista > 0);
 
+  // Si el backend todavía no lo manda (una versión vieja), el de Ventas de siempre.
+  const dia = meses?.diaCierre ?? 19;
+
   const puedeTocar = (m: MesDeLaLista) =>
     !meses?.permisos.provincia || mismaSucursal(meses.permisos.provincia, m.sucursal);
 
@@ -118,7 +124,7 @@ export default function CierreDeMeses<T extends { id: string }>({
 
   async function reabrir(m: MesDeLaLista) {
     const ok = window.confirm(
-      `¿Reabrir ${etiquetaMes(m.periodo)} de ${m.sucursal}?\n\nSus ${m.cerrados} cliente(s) vuelven a la lista de trabajo. El mes ya no se cierra solo el día 19: se vuelve a cerrar con el botón.`
+      `¿Reabrir ${etiquetaMes(m.periodo)} de ${m.sucursal}?\n\nSus ${m.cerrados} cliente(s) vuelven a la lista de trabajo. El mes ya no se cierra solo el día ${dia}: se vuelve a cerrar con el botón.`
     );
     if (!ok) return;
     await accion(`reabrir-${m.periodo}-${m.sucursal}`, `${base}/cierres/reabrir`, m);
@@ -179,7 +185,7 @@ export default function CierreDeMeses<T extends { id: string }>({
         {abierto ? <ChevronDown className="h-4 w-4 text-ink-muted" /> : <ChevronRight className="h-4 w-4 text-ink-muted" />}
         <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">Cierre de meses</h3>
         <span className="text-xs text-ink-muted">
-          Los meses cerrados salen de la lista y se consultan acá. Se cierran solos el día 19 del mes siguiente.
+          Los meses cerrados salen de la lista y se consultan acá. Se cierran solos el día {dia} del mes siguiente.
         </span>
         {conLlegadosTarde.length > 0 && (
           <Badge tono="amarillo">
@@ -243,7 +249,7 @@ export default function CierreDeMeses<T extends { id: string }>({
                             <span className="inline-flex items-center gap-1 text-xs text-ink">
                               <Lock className="h-3.5 w-3.5 text-navy" aria-hidden="true" />
                               Cerrado el {fecha(m.cierre!.cerradoEn)}
-                              {m.cierre!.origen === "AUTOMATICO" ? " (solo, día 19)" : m.cierre!.cerradoPorNombre ? ` por ${m.cierre!.cerradoPorNombre}` : ""}
+                              {m.cierre!.origen === "AUTOMATICO" ? " (se cerró solo)" : m.cierre!.cerradoPorNombre ? ` por ${m.cierre!.cerradoPorNombre}` : ""}
                             </span>
                           ) : m.cierre?.reabiertoEn ? (
                             <span className="inline-flex items-center gap-1 text-xs text-ink-muted">

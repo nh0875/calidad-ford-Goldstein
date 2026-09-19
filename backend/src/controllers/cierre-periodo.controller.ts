@@ -8,6 +8,7 @@ import { provinciaPermitida } from "../services/area.service";
 import { claveNormalizada } from "../services/normalizacion.service";
 import {
   cerrarPeriodo,
+  DIA_CIERRE_AUTOMATICO,
   idsCerradosVentas,
   mesesDeLaLista,
   periodoActual,
@@ -68,6 +69,8 @@ export function listarMeses(lista: ListaCierre, acceso?: ControlDeAcceso) {
     res.json({
       data: await mesesDeLaLista(lista),
       periodoActual: periodoActual(new Date()),
+      // El día del mes en que esta lista se cierra sola (19 Ventas, 25 PV).
+      diaCierre: DIA_CIERRE_AUTOMATICO[lista],
       // Para que la pantalla no ofrezca botones que el backend va a rechazar.
       permisos: {
         cerrar: req.usuario?.rol !== "FIDELIZACION",
