@@ -63,6 +63,14 @@ export interface PerfilMarca {
    */
   rqrClienteAnonimo: boolean;
   /**
+   * Los casos INTERNOS (autos de la concesionaria, órdenes con solo visitas
+   * internas) NO se cargan y se pueden eliminar de una vez desde Casos.
+   *
+   * Volkswagen: sí (pedido del dueño, 19-09-2026). Ford: no, porque ahí el estado
+   * Interno viene a propósito de la columna Estado de su propio Excel ("INT").
+   */
+  excluirCasosInternos: boolean;
+  /**
    * La encuesta de POSVENTA se mide por ÍTEMS (trato, organización, calidad de
    * reparación, lavado y satisfacción general) en vez de con una sola nota.
    *
@@ -195,6 +203,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     fidelizacion: true,
     rqrConSubareas: false,
     rqrClienteAnonimo: false,
+    excluirCasosInternos: false,
     posventaPorItems: false,
     refuerzo: { habilitado: true, notificarPorMail: false, formatoExcel: "FORD", sucursalPorCodigoVendedor: {} },
     // Sin estrellas no hay promotores de 5: la pestaña no aplica.
@@ -229,6 +238,7 @@ const PERFILES: Record<CodigoMarca, PerfilMarca> = {
     fidelizacion: false,
     rqrConSubareas: true,
     rqrClienteAnonimo: true,
+    excluirCasosInternos: true,
     posventaPorItems: true,
     refuerzo: {
       habilitado: true,

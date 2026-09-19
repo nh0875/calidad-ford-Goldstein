@@ -240,6 +240,8 @@ const ORDEN_ESTADO: Record<EstadoEncuestaFabrica, number> = {
   PENDIENTE: 0,
   AVISADO: 1,
   RESPONDIO: 2,
+  // Al final: ya no se trabaja.
+  CERRADO: 3,
 };
 
 const INCLUDE_CASO = {
@@ -309,7 +311,7 @@ async function aPromotores(filas: FilaPV[]): Promise<PromotorPV[]> {
 /** La lista de trabajo: sin los clientes de los meses cerrados. */
 export async function listarPromotoresPV(): Promise<{
   data: PromotorPV[];
-  resumen: { pendientes: number; animados: number; respondieron: number; total: number };
+  resumen: { pendientes: number; animados: number; respondieron: number; cerrados: number; total: number };
 }> {
   await sincronizarPromotoresPV();
 
@@ -325,6 +327,7 @@ export async function listarPromotoresPV(): Promise<{
       pendientes: data.filter((d) => d.estado === EstadoEncuestaFabrica.PENDIENTE).length,
       animados: data.filter((d) => d.estado === EstadoEncuestaFabrica.AVISADO).length,
       respondieron: data.filter((d) => d.estado === EstadoEncuestaFabrica.RESPONDIO).length,
+      cerrados: data.filter((d) => d.estado === EstadoEncuestaFabrica.CERRADO).length,
       total: data.length,
     },
   };

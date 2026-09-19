@@ -32,6 +32,8 @@ export interface InfoMarca {
     desempenoPosventa: boolean;
     // Circuito de insistencia: 2° contacto por WhatsApp y 3° por llamada.
     segundoContacto: boolean;
+    // Los casos internos no se cargan y se pueden eliminar desde Casos (Volkswagen).
+    excluirCasosInternos?: boolean;
   };
   /**
    * Las sucursales de esta marca. Lista CERRADA: las pantallas las ofrecen en

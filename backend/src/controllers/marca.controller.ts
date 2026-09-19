@@ -41,6 +41,8 @@ export function infoMarca(_req: Request, res: Response) {
       // para decidir si mostrar el botón de insistir, el filtro y el embudo del
       // tablero: en las marcas sin circuito esas tres cosas no existen.
       segundoContacto: marca.segundoContacto,
+      // Los internos no se cargan y se pueden eliminar desde Casos (solo VW).
+      excluirCasosInternos: marca.excluirCasosInternos,
     },
     // Lista CERRADA de sucursales. La pantalla las ofrece en un desplegable en
     // vez de dejar escribirlas: un typo rompe en silencio la visibilidad por

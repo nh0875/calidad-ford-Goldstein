@@ -1,7 +1,10 @@
 import { Request, Response } from "express";
+import { EstadoContacto } from "@prisma/client";
 import { prisma } from "../config/prisma";
+import { marca } from "../config/marca";
 import { ACCIONES, auditar } from "../services/audit.service";
 import { recalcularTieneRqrAbierto } from "../services/rqr.service";
+import { whereVisible } from "../services/area.service";
 
 // Borrado lógico y restauración. TODO esto es solo ADMIN (lo exige la ruta con
 // requireAdmin). Nunca se borra físicamente: se marca eliminadoEn/eliminadoPorId
@@ -28,6 +31,71 @@ export async function eliminarCaso(req: Request, res: Response) {
   });
 
   res.json({ message: `El caso de orden ${caso.numeroOrden} se eliminó (recuperable desde auditoría).` });
+}
+
+// ---------- GET y POST /api/admin/casos-internos ----------
+//
+// Los casos en estado INTERNO, todos de una vez (pedido del dueño, 19-09-2026):
+// en Volkswagen ya no se cargan, y los que quedaron de antes se eliminan con esto.
+// Es el MISMO borrado lógico que "Eliminar" en un caso: salen de las listas, los
+// reportes y el tablero, y cada uno se puede restaurar. El GET cuenta cuántos hay,
+// para que la pantalla lo diga antes de confirmar.
+
+function motivoSinInternos(): string | null {
+  return marca.excluirCasosInternos
+    ? null
+    : `En ${marca.nombre} los casos internos se cargan a propósito desde su Excel: esta acción no aplica.`;
+}
+
+// Con la visibilidad del usuario: en VW la provincia rige en todo el sistema, así
+// que se cuentan y se borran solo los internos que esa persona ve en Casos. Un
+// ADMIN sin provincia (lo normal) ve todos y los borra todos.
+async function whereInternosActivos(req: Request) {
+  return {
+    estadoContacto: EstadoContacto.INTERNO,
+    eliminadoEn: null,
+    ...(await whereVisible(req.usuario!)),
+  };
+}
+
+export async function contarCasosInternos(req: Request, res: Response) {
+  const motivo = motivoSinInternos();
+  if (motivo) return res.status(404).json({ message: motivo });
+  res.json({ cantidad: await prisma.caso.count({ where: await whereInternosActivos(req) }) });
+}
+
+export async function eliminarCasosInternos(req: Request, res: Response) {
+  const motivo = motivoSinInternos();
+  if (motivo) return res.status(404).json({ message: motivo });
+
+  const where = await whereInternosActivos(req);
+  const internos = await prisma.caso.findMany({
+    where,
+    select: { id: true, numeroOrden: true },
+  });
+  if (internos.length === 0) {
+    return res.json({ cantidad: 0, message: "No había casos internos para eliminar." });
+  }
+  const ids = internos.map((c) => c.id);
+  // Por id y con la condición repetida: si entre la lectura y acá alguien cambió
+  // el estado de uno, ese no se toca.
+  const { count } = await prisma.caso.updateMany({
+    where: { id: { in: ids }, ...where },
+    data: { eliminadoEn: new Date(), eliminadoPorId: req.usuario!.id },
+  });
+
+  // Un solo registro con TODOS los ids: es lo que permite encontrar y restaurar
+  // cualquiera de ellos después, uno por uno, igual que un borrado suelto.
+  await auditar(req, {
+    accion: ACCIONES.CASOS_INTERNOS_ELIMINADOS,
+    entidad: "Caso",
+    detalles: { cantidad: count, ids, ordenes: internos.map((c) => c.numeroOrden) },
+  });
+
+  res.json({
+    cantidad: count,
+    message: `Se eliminaron ${count} caso(s) internos. Se pueden restaurar uno por uno, igual que cualquier caso eliminado.`,
+  });
 }
 
 // ---------- DELETE /api/rqr/:id ----------

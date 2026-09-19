@@ -2,8 +2,9 @@
 //
 // Los clientes de Posventa que calificaron con 5 estrellas —los promotores— entran
 // SOLOS a esta lista. Calidad los contacta para animarlos a responder la encuesta
-// de fábrica y marca cómo va cada uno: Pendiente → Animado → Respondió. Abajo, el
-// mismo seguimiento mes a mes que las encuestas de Ventas.
+// de fábrica y marca cómo va cada uno: Pendiente → Primer contacto → Respondió, o
+// Cerrado si se lo dejó de trabajar sin respuesta. Abajo, el mismo seguimiento mes a
+// mes que las encuestas de Ventas.
 //
 // Los GRÁFICOS los ve cualquier perfil. La LISTA es de Calidad de Posventa de la
 // sucursal: a quien no la trabaja el backend le responde 403 con el motivo, y la
@@ -32,28 +33,40 @@ import {
 } from "../components/SeguimientoAnimaciones";
 
 // En la base es el MISMO enum que las encuestas de Ventas (PENDIENTE / AVISADO /
-// RESPONDIO). Acá no hay un vendedor al que avisarle —al cliente lo anima Calidad—,
-// así que AVISADO se lee "Animado".
-const ESTADOS = ["PENDIENTE", "AVISADO", "RESPONDIO"] as const;
+// RESPONDIO), más CERRADO, que es solo de esta pestaña. Acá no hay un vendedor al
+// que avisarle —al cliente lo contacta Calidad—, así que AVISADO se lee "Primer
+// contacto" (hasta el 19-09-2026 decía "Animado"). CERRADO: se lo dejó de trabajar
+// sin respuesta; en los gráficos cuenta como contactado que no respondió.
+const ESTADOS = ["PENDIENTE", "AVISADO", "RESPONDIO", "CERRADO"] as const;
 type Estado = (typeof ESTADOS)[number];
 
 const ETIQUETA_ESTADO: Record<Estado, string> = {
   PENDIENTE: "Pendiente",
-  AVISADO: "Animado",
+  AVISADO: "Primer contacto",
   RESPONDIO: "Respondió",
+  CERRADO: "Cerrado",
 };
 
 // Los mismos colores que la pestaña de Ventas y que los gráficos: amarillo lo que
-// falta, celeste lo que espera respuesta, verde lo que ya respondió.
+// falta, celeste lo que espera respuesta, verde lo que ya respondió y gris lo que
+// ya no se trabaja.
 const CLASE_ESTADO: Record<Estado, string> = {
   PENDIENTE: "bg-yellow-50 text-yellow-900 border-yellow-200 hover:bg-yellow-100",
   AVISADO: "bg-accent-light text-accent-dark border-accent/30 hover:bg-accent-light/70",
   RESPONDIO: "bg-green-50 text-green-900 border-green-200 hover:bg-green-100",
+  CERRADO: "bg-gray-100 text-ink-muted border-gray-300 hover:bg-gray-200",
 };
 const PUNTO_ESTADO: Record<Estado, string> = {
   PENDIENTE: "bg-yellow-400",
   AVISADO: "bg-accent",
   RESPONDIO: "bg-green-500",
+  CERRADO: "bg-gray-400",
+};
+const TONO_ESTADO: Record<Estado, "amarillo" | "azul" | "verde" | "gris"> = {
+  PENDIENTE: "amarillo",
+  AVISADO: "azul",
+  RESPONDIO: "verde",
+  CERRADO: "gris",
 };
 
 /** El menú escucha este evento para actualizar su contador sin esperar al próximo pedido. */
@@ -85,7 +98,7 @@ interface Promotor {
 
 interface RespuestaLista {
   data: Promotor[];
-  resumen: { pendientes: number; animados: number; respondieron: number; total: number };
+  resumen: { pendientes: number; animados: number; respondieron: number; cerrados?: number; total: number };
   sucursal: string | null;
   /** Los meses cerrados: un promotor de esos meses que sigue en la lista llegó tarde. */
   periodosCerrados?: Array<{ periodo: string; sucursal: string }>;
@@ -118,9 +131,9 @@ function SelectorEstado({
   onCambiar: (e: Estado) => void;
   deshabilitado?: boolean;
 }) {
-  // Ancho fijo: las tres etiquetas miden distinto y sin esto la columna queda dentada.
+  // Ancho fijo: las etiquetas miden distinto y sin esto la columna queda dentada.
   return (
-    <div className="inline-flex w-32">
+    <div className="inline-flex w-40">
       <Desplegable
         valor={valor}
         opciones={ESTADOS.map((e) => ({ valor: e, etiqueta: ETIQUETA_ESTADO[e], punto: PUNTO_ESTADO[e] }))}
@@ -175,7 +188,7 @@ export default function EncuestasFabricaPV() {
       const r = await apiGet<RespuestaLista>("/api/encuesta-pv");
       setLista(r);
       setSinAcceso(null);
-      // El contador del menú se pone al día enseguida (por ejemplo, al marcar Animado).
+      // El contador del menú se pone al día enseguida (por ejemplo, al marcar Primer contacto).
       window.dispatchEvent(new CustomEvent(EVENTO_PENDIENTES_PV, { detail: r.resumen.pendientes }));
     } catch (err) {
       const status = (err as { status?: number }).status;
@@ -298,10 +311,11 @@ export default function EncuestasFabricaPV() {
       </div>
 
       <Card padding="p-5">
-        <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">Animaciones mes a mes</h3>
+        <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">Contactos mes a mes</h3>
         <p className="mt-1 text-sm text-ink-muted">
           Cada mes son los promotores cuyo servicio fue ese mes (la salida del taller o, si no está, la apertura de la
-          orden). Un cliente está animado desde que Calidad lo marcó como Animado, aunque después haya respondido.
+          orden). Un cliente cuenta como contactado desde que Calidad lo marcó en Primer contacto, aunque después haya
+          respondido. Los Cerrados cuentan como contactados que no respondieron.
         </p>
         {seguimiento.meses.length === 0 ? (
           <p className="mt-4 text-sm text-ink-muted">
@@ -369,14 +383,17 @@ export default function EncuestasFabricaPV() {
         </h2>
         <p className="mt-1 text-sm text-ink-muted">
           Entran solos los clientes de Posventa{sucursal ? ` ${sucursal}` : ""} que calificaron con 5 estrellas: por
-          WhatsApp, por llamada o con la nota corregida en Seguimiento. Animalos a responder la encuesta de fábrica y
-          marcá cómo va cada uno.
+          WhatsApp, por llamada o con la nota corregida en Seguimiento. Contactalos para que respondan la encuesta de
+          fábrica y marcá cómo va cada uno.
         </p>
         {lista && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Dato valor={lista.resumen.pendientes} etiqueta="sin animar" clase="bg-yellow-50 text-yellow-900" />
-            <Dato valor={lista.resumen.animados} etiqueta="esperando respuesta" clase="bg-accent-light text-accent-dark" />
+            <Dato valor={lista.resumen.pendientes} etiqueta="sin contactar" clase="bg-yellow-50 text-yellow-900" />
+            <Dato valor={lista.resumen.animados} etiqueta="primer contacto" clase="bg-accent-light text-accent-dark" />
             <Dato valor={lista.resumen.respondieron} etiqueta="respondieron" clase="bg-green-50 text-green-900" />
+            {(lista.resumen.cerrados ?? 0) > 0 && (
+              <Dato valor={lista.resumen.cerrados ?? 0} etiqueta="cerrados" clase="bg-gray-100 text-ink" />
+            )}
             <Dato valor={lista.resumen.total} etiqueta="en total" clase="bg-gray-100 text-ink-muted" />
           </div>
         )}
@@ -421,9 +438,7 @@ export default function EncuestasFabricaPV() {
                     <td className="px-3 py-2 text-ink">{p.caso.asesor || "—"}</td>
                     <td className="px-3 py-2 text-ink">{fechaCorta(p.caso.fechaServicio)}</td>
                     <td className="px-5 py-2">
-                      <Badge tono={p.estado === "RESPONDIO" ? "verde" : p.estado === "AVISADO" ? "azul" : "amarillo"}>
-                        {ETIQUETA_ESTADO[p.estado]}
-                      </Badge>
+                      <Badge tono={TONO_ESTADO[p.estado] ?? "gris"}>{ETIQUETA_ESTADO[p.estado] ?? p.estado}</Badge>
                     </td>
                   </tr>
                 ))}
@@ -534,7 +549,7 @@ export default function EncuestasFabricaPV() {
                           deshabilitado={guardandoId === p.id}
                         />
                         {p.animadoEn && (
-                          <div className="mt-1 text-[11px] text-ink-muted">animado el {fechaCorta(p.animadoEn)}</div>
+                          <div className="mt-1 text-[11px] text-ink-muted">primer contacto el {fechaCorta(p.animadoEn)}</div>
                         )}
                       </td>
                     </tr>

@@ -751,6 +751,11 @@ enum EstadoEncuestaFabrica {
   // se avisa el cliente sale de esa bolsa y el próximo mail no lo repite.
   AVISADO
   RESPONDIO // dejó de venir en el archivo, así que ya contestó
+  // SOLO en Encuestas de fábrica PV (pedido del 19-09-2026): se dejó de trabajar
+  // al cliente sin que respondiera. Cuenta como contactado sin respuesta en los
+  // gráficos. NO es lo mismo que "mes cerrado" (cerradoEn): eso es el cierre del
+  // período; esto es el estado de UN cliente. Ventas no lo usa y lo rechaza.
+  CERRADO
 }
 
 // Vendedor de VW. NO es un usuario del sistema: no entra, no tiene contraseña.

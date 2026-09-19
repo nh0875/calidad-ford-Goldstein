@@ -62,8 +62,10 @@ export async function pendientesEncuestaPV(req: Request, res: Response) {
 
 // ---------- PATCH /api/encuesta-pv/clientes/:id ----------
 //
-// Cambio de estado a mano: Pendiente / Animado (en la base, AVISADO: es el mismo
-// enum que las encuestas de Ventas) / Respondió. Las fechas las pone el sistema.
+// Cambio de estado a mano: Pendiente / Primer contacto (en la base, AVISADO: es
+// el mismo enum que las encuestas de Ventas; antes se llamaba "Animado") /
+// Respondió / Cerrado (19-09-2026: se dejó de trabajar sin respuesta). Las fechas
+// las pone el sistema.
 const estadoSchema = z.object({
   estado: z.nativeEnum(EstadoEncuestaFabrica),
 });
@@ -74,7 +76,7 @@ export async function editarEstadoEncuestaPV(req: Request, res: Response) {
 
   const parseo = estadoSchema.safeParse(req.body);
   if (!parseo.success) {
-    return res.status(400).json({ message: "Elegí un estado válido: Pendiente, Animado o Respondió." });
+    return res.status(400).json({ message: "Elegí un estado válido: Pendiente, Primer contacto, Respondió o Cerrado." });
   }
   const estadoNuevo = parseo.data.estado;
   const sucursalPV = marca.encuestaFabricaPV.sucursal ?? "";
@@ -102,7 +104,7 @@ export async function editarEstadoEncuestaPV(req: Request, res: Response) {
   ) {
     return res.status(409).json({
       message:
-        "Este cliente ya no tiene 5 estrellas: si lo pasás a Pendiente sale de la lista y se pierde lo trabajado. Dejalo en Animado o Respondió.",
+        "Este cliente ya no tiene 5 estrellas: si lo pasás a Pendiente sale de la lista y se pierde lo trabajado. Dejalo en Primer contacto, Respondió o Cerrado.",
     });
   }
 
@@ -114,6 +116,11 @@ export async function editarEstadoEncuestaPV(req: Request, res: Response) {
   // Respondió. Volver a Pendiente sí la borra: significa "todavía no se lo animó".
   if (estadoNuevo === EstadoEncuestaFabrica.PENDIENTE) data.animadoEn = null;
   if (estadoNuevo === EstadoEncuestaFabrica.AVISADO && !fila.animadoEn) data.animadoEn = new Date();
+  // Cerrado cuenta como CONTACTADO SIN RESPUESTA (decisión del dueño, 19-09-2026):
+  // se lo trabajó y no respondió, así que suma en los contactados y baja la
+  // efectividad. Si se lo cierra sin haber pasado por Primer contacto, la fecha se
+  // pone ahora; si ya la tenía, se conserva.
+  if (estadoNuevo === EstadoEncuestaFabrica.CERRADO && !fila.animadoEn) data.animadoEn = new Date();
   if (estadoNuevo === EstadoEncuestaFabrica.RESPONDIO && !fila.respondioEn) data.respondioEn = new Date();
   if (estadoNuevo !== EstadoEncuestaFabrica.RESPONDIO) data.respondioEn = null;
 

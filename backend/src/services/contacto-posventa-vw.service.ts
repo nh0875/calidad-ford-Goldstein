@@ -39,6 +39,7 @@
 // que se van separando con el tiempo.
 
 import * as XLSX from "xlsx";
+import { marca } from "../config/marca";
 import { leerFilasCrudas } from "./excel.service";
 import { normalizarTexto } from "./excel.service";
 
@@ -234,8 +235,13 @@ export interface ResumenConversion {
   casos: number;
   /** Filas que se juntaron con otra por ser la misma orden. */
   repetidasUnidas: number;
-  /** Autos de la concesionaria: entran como INTERNO y no reciben WhatsApp. */
+  /** Autos de la concesionaria u órdenes con solo visitas internas. */
   internos: number;
+  /**
+   * De esos, los que NO se cargaron (19-09-2026: en Volkswagen los internos ya no
+   * entran al sistema). En una marca que sí los carga, queda en 0.
+   */
+  internosDejadosAfuera: number;
   /** De esos, los que son internos por tipo de visita (todas sus líneas en I). */
   internosPorTipoVisita: number;
   /** Casos a los que NO se les va a preguntar por el lavado. */
@@ -303,6 +309,7 @@ export function convertirContactoPosventaVW(
 
   let internos = 0;
   let internosPorTipoVisita = 0;
+  let internosDejadosAfuera = 0;
   let sinLavado = 0;
   const cuerpo: string[][] = [];
 
@@ -319,6 +326,14 @@ export function convertirContactoPosventaVW(
     const interno = propio || soloInternas;
     if (interno) internos++;
     if (soloInternas && !propio) internosPorTipoVisita++;
+    // Volkswagen ya no carga los internos (pedido del dueño, 19-09-2026): no se les
+    // manda nada y solo ensuciaban la lista. Se saltean acá, antes de que existan,
+    // y la carga dice cuántos quedaron afuera. En Ford esto no aplica: su Excel
+    // no pasa por este traductor y el estado Interno se usa a propósito.
+    if (interno && marca.excluirCasosInternos) {
+      internosDejadosAfuera++;
+      continue;
+    }
 
     // A un caso interno no se le manda nada, así que el lavado no aplica.
     const lavado = interno ? null : huboLavado(tipos);
@@ -370,6 +385,7 @@ export function convertirContactoPosventaVW(
       repetidasUnidas,
       internos,
       internosPorTipoVisita,
+      internosDejadosAfuera,
       sinLavado,
       concesionarios: [...concesionarios].sort(),
     },
@@ -384,7 +400,18 @@ export function convertirContactoPosventaVW(
  * existe un formato nuevo.
  */
 export function normalizarLibroSiEsVW(workbook: XLSX.WorkBook): XLSX.WorkBook {
-  if (!esContactoPosventaVW(workbook)) return workbook;
+  return traducirLibroSiEsVW(workbook).libro;
+}
+
+/**
+ * Lo mismo, pero devuelve también el resumen de la traducción: la importación lo
+ * usa para decir cuántos internos se dejaron afuera. null = no era el export de VW.
+ */
+export function traducirLibroSiEsVW(workbook: XLSX.WorkBook): {
+  libro: XLSX.WorkBook;
+  resumen: ResumenConversion | null;
+} {
+  if (!esContactoPosventaVW(workbook)) return { libro: workbook, resumen: null };
   const r = convertirContactoPosventaVW(workbook);
-  return "error" in r ? workbook : r.libro;
+  return "error" in r ? { libro: workbook, resumen: null } : { libro: r.libro, resumen: r.resumen };
 }

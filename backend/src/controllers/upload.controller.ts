@@ -210,6 +210,9 @@ export async function confirmUpload(req: Request, res: Response) {
     `(${t.semaforo.VERDE} verdes, ${t.semaforo.AMARILLO} amarillos, ${t.semaforo.ROJO} rojos).` +
     (t.suprimidos > 0
       ? ` ${t.suprimidos} caso(s) son de clientes que solicitaron no ser contactados: quedaron cargados pero nunca entrarán en una campaña.`
+      : "") +
+    (t.internosDejadosAfuera > 0
+      ? ` ${t.internosDejadosAfuera} orden(es) internas (autos de la concesionaria o solo visitas internas) no se cargaron.`
       : "");
 
   res.status(201).json({

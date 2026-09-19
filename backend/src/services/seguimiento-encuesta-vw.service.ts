@@ -79,6 +79,8 @@ export interface NumerosAnimacion {
   respondieronAnimados: number;
   /** Contestaron sin que se le avisara al vendedor. Cantidad de contexto, no una tasa (ver arriba). */
   respondieronSinAnimar: number;
+  /** CERRADO (solo Encuestas PV): se dejó de trabajar sin respuesta. Cuentan en animados. */
+  cerrados: number;
   /** Clientes cuyo mes se estimó con la entrega porque no traían Fecha Dominio. */
   mesEstimado: number;
   /** respondieron / clientes */
@@ -129,14 +131,18 @@ function numerosDe(clientes: ReadonlyArray<ClienteSeguimiento>): NumerosAnimacio
   let animados = 0;
   let respondieronAnimados = 0;
   let respondieronSinAnimar = 0;
+  let cerrados = 0;
   let mesEstimado = 0;
 
   for (const c of clientes) {
-    const animado = c.avisadoEn !== null;
+    // Un CERRADO (solo Encuestas PV) cuenta como contactado sin respuesta aunque
+    // no tenga la fecha: el cambio de estado la pone, pero así no depende de eso.
+    const animado = c.avisadoEn !== null || c.estado === EstadoEncuestaFabrica.CERRADO;
     if (animado) animados++;
     if (c.periodo && !c.fechaDominio) mesEstimado++;
     if (c.estado === EstadoEncuestaFabrica.PENDIENTE) sinAvisar++;
     else if (c.estado === EstadoEncuestaFabrica.AVISADO) esperandoRespuesta++;
+    else if (c.estado === EstadoEncuestaFabrica.CERRADO) cerrados++;
     else if (c.estado === EstadoEncuestaFabrica.RESPONDIO) {
       respondieron++;
       if (animado) respondieronAnimados++;
@@ -153,6 +159,7 @@ function numerosDe(clientes: ReadonlyArray<ClienteSeguimiento>): NumerosAnimacio
     animados,
     respondieronAnimados,
     respondieronSinAnimar,
+    cerrados,
     mesEstimado,
     tasaRespuesta: tasa(respondieron, total),
     coberturaAnimacion: tasa(animados, total),

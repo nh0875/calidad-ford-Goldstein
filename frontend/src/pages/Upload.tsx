@@ -68,6 +68,8 @@ interface ConfirmResponse {
     ordenesDuplicadas: string[];
     historicosConSentimiento: number;
     semaforo: { VERDE: number; AMARILLO: number; ROJO: number };
+    /** Órdenes internas del export de VW que no se cargaron (19-09-2026). */
+    internosDejadosAfuera?: number;
   };
 }
 
@@ -530,6 +532,14 @@ function UploadPosventa({ area = "POSVENTA" }: { area?: "POSVENTA" | "VENTAS" })
               <div className="mt-1 break-words font-mono text-xs">
                 {resultado.totales.ordenesDuplicadas.join(", ")}
               </div>
+            </Alert>
+          )}
+
+          {(resultado.totales.internosDejadosAfuera ?? 0) > 0 && (
+            <Alert tono="info">
+              <strong>{resultado.totales.internosDejadosAfuera} orden(es) internas no se cargaron</strong> (autos de la
+              concesionaria u órdenes con solo visitas internas): en {getMarca().nombre} los casos internos ya no entran
+              al sistema.
             </Alert>
           )}
 

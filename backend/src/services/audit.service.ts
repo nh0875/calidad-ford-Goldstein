@@ -57,6 +57,8 @@ export const ACCIONES = {
   ENCUESTA_VW_MANUAL_CREADA: "ENCUESTA_VW_MANUAL_CREADA",
   ENCUESTA_VW_ELIMINADA: "ENCUESTA_VW_ELIMINADA",
   ENCUESTA_VW_NOTIFICADA: "ENCUESTA_VW_NOTIFICADA",
+  // Todos los casos en estado Interno eliminados de una vez (borrado lógico).
+  CASOS_INTERNOS_ELIMINADOS: "CASOS_INTERNOS_ELIMINADOS",
   // Los avisados sin responder vuelven a pendiente, para recordárselos al vendedor.
   ENCUESTA_VW_VUELTA_A_PENDIENTE: "ENCUESTA_VW_VUELTA_A_PENDIENTE",
   // Cambio de estado a mano (y la calificación que se carga con él). Se audita

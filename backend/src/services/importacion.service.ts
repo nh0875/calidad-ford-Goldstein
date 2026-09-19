@@ -12,7 +12,7 @@ import { marca } from "../config/marca";
 import { prisma } from "../config/prisma";
 import { olvidarSucursalesConocidas } from "./area.service";
 import { crearAviso } from "./aviso.service";
-import { normalizarLibroSiEsVW } from "./contacto-posventa-vw.service";
+import { traducirLibroSiEsVW } from "./contacto-posventa-vw.service";
 import {
   CampoCaso,
   HojaParseada,
@@ -217,6 +217,8 @@ export async function importarHojas(params: ParamsImportacion): Promise<{
     historicosConSentimiento: number;
     semaforo: { VERDE: number; AMARILLO: number; ROJO: number };
     suprimidos: number;
+    /** Órdenes internas del export de VW que no se cargaron (19-09-2026). */
+    internosDejadosAfuera: number;
   };
 }> {
   // La MISMA traducción que hace el preview: si es el export de Contacto
@@ -224,7 +226,8 @@ export async function importarHojas(params: ParamsImportacion): Promise<{
   // Tiene que estar en los dos lados y ser la misma función; si el preview
   // tradujera y la importación no, la persona confirmaría una cosa y se
   // guardaría otra.
-  const workbook = normalizarLibroSiEsVW(abrirWorkbook(params.buffer));
+  const traducido = traducirLibroSiEsVW(abrirWorkbook(params.buffer));
+  const workbook = traducido.libro;
   const resultados: ResultadoHoja[] = [];
 
   // Se cargan una sola vez para toda la importación (alias + supresión).
@@ -235,7 +238,35 @@ export async function importarHojas(params: ParamsImportacion): Promise<{
     codigoPorNombre: await cargarCodigoPorNombre(),
   };
 
+  // Un export de VW en el que TODAS las órdenes eran internas queda sin casos. Sin
+  // este corte, la hoja vacía no tiene fechas, el mes no se deduce y la persona
+  // recibía "Indicá el período a mano" (y si lo indicaba, quedaba una carga vacía
+  // en el historial). Se dice lo que pasó y no se crea ninguna carga.
+  const resumen = traducido.resumen;
+  const soloInternos = !!resumen && resumen.casos === 0 && resumen.internosDejadosAfuera > 0;
+
   for (const hoja of params.hojas) {
+    if (soloInternos) {
+      resultados.push({
+        hoja: hoja.nombre,
+        periodo: null,
+        uploadId: null,
+        ok: false,
+        mensaje:
+          `Las ${resumen!.internosDejadosAfuera} orden(es) del archivo son internas (autos de la ` +
+          `concesionaria o solo visitas internas), y esas ya no se cargan: no quedó ningún caso para cargar.`,
+        totalFilas: 0,
+        insertados: 0,
+        duplicados: 0,
+        ordenesDuplicadas: [],
+        errores: [],
+        historicosConSentimiento: 0,
+        semaforo: { VERDE: 0, AMARILLO: 0, ROJO: 0 },
+        internosExcluidosDeWhatsapp: 0,
+        suprimidos: 0,
+      });
+      continue;
+    }
     resultados.push(await importarHoja(workbook, hoja, params, ctx));
   }
 
@@ -253,6 +284,9 @@ export async function importarHojas(params: ParamsImportacion): Promise<{
       ROJO: resultados.reduce((a, r) => a + r.semaforo.ROJO, 0),
     },
     suprimidos: resultados.reduce((a, r) => a + r.suprimidos, 0),
+    // Se cuentan en la traducción del libro, antes de las hojas: vale una vez por
+    // carga, no por hoja.
+    internosDejadosAfuera: traducido.resumen?.internosDejadosAfuera ?? 0,
   };
 
   return { resultados, totales };

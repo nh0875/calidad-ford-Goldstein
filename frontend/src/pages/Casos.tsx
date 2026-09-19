@@ -213,6 +213,46 @@ export default function Casos() {
   const [aEliminar, setAEliminar] = useState<Caso | null>(null);
   const [eliminando, setEliminando] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
+
+  // Casos internos (solo ADMIN y solo en las marcas que no los cargan, 19-09-2026):
+  // cuántos quedan, y el botón para eliminarlos todos de una vez.
+  const conInternos = esAdmin && !!marcaInfo.modulos.excluirCasosInternos;
+  const [internos, setInternos] = useState(0);
+  const [eliminandoInternos, setEliminandoInternos] = useState(false);
+  const contarInternos = useCallback(async () => {
+    if (!conInternos) return;
+    try {
+      const r = await apiGet<{ cantidad: number }>("/api/admin/casos-internos");
+      setInternos(r.cantidad);
+    } catch {
+      // Es un aviso: si falla el conteo, simplemente no se muestra.
+      setInternos(0);
+    }
+  }, [conInternos]);
+  useEffect(() => {
+    contarInternos();
+  }, [contarInternos]);
+
+  async function eliminarInternos() {
+    const ok = window.confirm(
+      `¿Eliminar los ${internos} caso(s) internos?\n\n` +
+        "Salen de la lista, de los reportes y del tablero. Es el mismo borrado que \"Eliminar\" en un caso: " +
+        "cada uno se puede restaurar después si hace falta."
+    );
+    if (!ok) return;
+    setEliminandoInternos(true);
+    setError(null);
+    setMensaje(null);
+    try {
+      const r = await apiPostJson<{ message: string; cantidad: number }>("/api/admin/casos-internos/eliminar", {});
+      setMensaje(r.message);
+      await Promise.all([cargarCasos(), contarInternos()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudieron eliminar los casos internos.");
+    } finally {
+      setEliminandoInternos(false);
+    }
+  }
   // La columna va siempre: el botón de reintentar un envío fallido lo necesita
   // cualquier usuario, no solo ADMIN.
   const columnas = 13;
@@ -270,7 +310,8 @@ export default function Casos() {
       setMensaje(message);
       setAEliminar(null);
       setSeleccion(new Set());
-      await cargarCasos();
+      // Si era un interno, el aviso de "Hay N internos" tiene que bajar también.
+      await Promise.all([cargarCasos(), contarInternos()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos eliminar el caso.");
     } finally {
@@ -576,6 +617,26 @@ export default function Casos() {
 
       {error && <Alert tono="error">{error}</Alert>}
       {mensaje && <Alert tono="exito">{mensaje}</Alert>}
+
+      {/* Los internos que quedaron de antes: desde el 19-09-2026 no se cargan más. */}
+      {conInternos && internos > 0 && (
+        <Alert tono="advertencia">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              Hay <strong>{internos} caso(s) internos</strong> (autos de la concesionaria u órdenes con solo visitas
+              internas). Ya no se cargan más; los que quedaron de antes se pueden eliminar de una vez.
+            </span>
+            <button
+              onClick={eliminarInternos}
+              disabled={eliminandoInternos}
+              className={claseBoton("secundario", "!py-1.5 border-red-200 text-red-700 hover:bg-red-50")}
+            >
+              <Trash2 className="h-4 w-4" />
+              {eliminandoInternos ? "Eliminando…" : `Eliminar los ${internos} internos`}
+            </button>
+          </div>
+        </Alert>
+      )}
 
       {/* Barra de progreso del envío */}
       {progreso && (

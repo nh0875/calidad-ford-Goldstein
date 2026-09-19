@@ -18,6 +18,8 @@ export interface NumerosAnimacion {
   respondieronAnimados: number;
   /** Contestaron sin que se le avisara al vendedor: cantidad de contexto, no una tasa. */
   respondieronSinAnimar: number;
+  /** CERRADO (solo Encuestas PV): se lo dejó de trabajar sin respuesta. Cuentan en animados. */
+  cerrados?: number;
   mesEstimado: number;
   tasaRespuesta: number | null;
   coberturaAnimacion: number | null;
@@ -58,6 +60,10 @@ export interface SeguimientoEncuestas {
 export interface TextosAnimacion {
   /** Cómo se llama el estado del que todavía no se animó. */
   sinAnimar: string;
+  /** Cómo se llama el estado del que espera respuesta (en la barra). */
+  esperando: string;
+  /** El título de la columna de animados (tabla y ranking). */
+  animados: string;
   /** Qué significa "animado" (para el título de la columna). */
   animadoAyuda: string;
   /** "Por su cuenta": respondieron sin que se los animara. */
@@ -72,6 +78,8 @@ export interface TextosAnimacion {
 
 export const TEXTOS_VENTAS: TextosAnimacion = {
   sinAnimar: "Sin avisar",
+  esperando: "Esperando respuesta",
+  animados: "Animados",
   animadoAyuda: "Clientes a los que se les avisó al vendedor, y qué parte del mes son",
   porSuCuentaAyuda: "Respondieron sin que se le avisara al vendedor",
   persona: "Vendedor",
@@ -79,12 +87,15 @@ export const TEXTOS_VENTAS: TextosAnimacion = {
   personaVacio: "Todavía no hay vendedores con clientes en este mes.",
 };
 
+// En Posventa el estado "Animado" pasó a llamarse "Primer contacto" (19-09-2026).
 export const TEXTOS_POSVENTA: TextosAnimacion = {
-  sinAnimar: "Sin animar",
-  animadoAyuda: "Clientes que Calidad ya animó a responder, y qué parte del mes son",
-  porSuCuentaAyuda: "Respondieron sin que Calidad los animara",
+  sinAnimar: "Sin contactar",
+  esperando: "Primer contacto",
+  animados: "Contactados",
+  animadoAyuda: "Clientes que Calidad ya contactó (primer contacto o cerrados), y qué parte del mes son",
+  porSuCuentaAyuda: "Respondieron sin que Calidad los contactara",
   persona: "Asesor",
-  personaAnimadosAyuda: "Clientes de este asesor que Calidad ya animó",
+  personaAnimadosAyuda: "Clientes de este asesor que Calidad ya contactó",
   personaVacio: "Todavía no hay asesores con clientes en este mes.",
 };
 
@@ -133,23 +144,31 @@ function mesEnCurso(): string {
 // El celeste y el amarillo quedan por debajo de 3:1 de contraste contra el blanco.
 // Por eso el color nunca va solo: leyenda siempre, el total escrito en la punta
 // de cada barra, y la tabla con todos los números al lado.
+//
+// El gris de "Cerrado" (solo Encuestas PV) va al final y solo aparece si algún mes
+// tiene cerrados: en Ventas no existe y la barra queda como siempre.
 const SERIES = [
   { clave: "respondieron", etiqueta: "Respondieron", color: "#0ca30c" },
   { clave: "esperandoRespuesta", etiqueta: "Esperando respuesta", color: "#00B0F0" },
   { clave: "sinAvisar", etiqueta: "Sin avisar", color: "#ca8a04" },
+  { clave: "cerrados", etiqueta: "Cerrados", color: "#9ca3af" },
 ] as const;
 
 type ClaveSerie = (typeof SERIES)[number]["clave"];
 
-/** La etiqueta de una serie con el texto de la pantalla (el amarillo cambia de nombre). */
+const valorSerie = (m: NumerosAnimacion, clave: ClaveSerie): number => m[clave] ?? 0;
+
+/** La etiqueta de una serie con el texto de la pantalla (el amarillo y el celeste cambian de nombre). */
 function etiquetaSerie(clave: ClaveSerie, etiqueta: string, textos: TextosAnimacion): string {
-  return clave === "sinAvisar" ? textos.sinAnimar : etiqueta;
+  if (clave === "sinAvisar") return textos.sinAnimar;
+  if (clave === "esperandoRespuesta") return textos.esperando;
+  return etiqueta;
 }
 
-function Leyenda({ textos }: { textos: TextosAnimacion }) {
+function Leyenda({ textos, conCerrados }: { textos: TextosAnimacion; conCerrados: boolean }) {
   return (
     <div className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-ink-muted">
-      {SERIES.map((s) => (
+      {SERIES.filter((s) => conCerrados || s.clave !== "cerrados").map((s) => (
         <span key={s.clave} className="flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: s.color }} aria-hidden="true" />
           {etiquetaSerie(s.clave, s.etiqueta, textos)}
@@ -193,7 +212,7 @@ export function BarrasAnimacionPorMes({
     <div>
       <div className="space-y-1" role="group" aria-label="Clientes por mes y estado de la encuesta">
         {meses.map((m) => {
-          const partes = SERIES.map((s) => ({ ...s, valor: m[s.clave] })).filter((p) => p.valor > 0);
+          const partes = SERIES.map((s) => ({ ...s, valor: valorSerie(m, s.clave) })).filter((p) => p.valor > 0);
           const activo = seleccionado === m.periodo;
           const enFoco = foco?.periodo === m.periodo ? SERIES.find((s) => s.clave === foco.clave) : undefined;
           return (
@@ -255,7 +274,7 @@ export function BarrasAnimacionPorMes({
                   className="pointer-events-none absolute bottom-full left-24 z-10 mb-1 whitespace-nowrap rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs shadow-md"
                 >
                   <div className="font-semibold tabular-nums text-ink">
-                    {numero(m[enFoco.clave])} de {numero(m.clientes)}
+                    {numero(valorSerie(m, enFoco.clave))} de {numero(m.clientes)}
                   </div>
                   <div className="flex items-center gap-1.5 text-ink-muted">
                     <span className="inline-block h-0.5 w-3" style={{ backgroundColor: enFoco.color }} aria-hidden="true" />
@@ -267,7 +286,7 @@ export function BarrasAnimacionPorMes({
           );
         })}
       </div>
-      <Leyenda textos={textos} />
+      <Leyenda textos={textos} conCerrados={meses.some((m) => (m.cerrados ?? 0) > 0)} />
     </div>
   );
 }
@@ -317,7 +336,7 @@ export function TablaAnimacionPorMes({
             <th className="px-3 py-2">Mes</th>
             <th className="px-3 py-2 text-right">Clientes</th>
             <th className="px-3 py-2 text-right" title={textos.animadoAyuda}>
-              Animados
+              {textos.animados}
             </th>
             <th className="px-3 py-2 text-right">Respondieron</th>
             <th className="px-3 py-2 text-right" title="Respondieron sobre el total de clientes del mes">
@@ -398,7 +417,7 @@ export function RankingVendedoresAnimacion({
             <tr className="border-b text-[11px] uppercase tracking-wider text-ink-muted">
               <th className="px-2 py-1.5 text-left">{textos.persona}</th>
               <th className="px-2 py-1.5 text-right" title={textos.personaAnimadosAyuda}>
-                Animados
+                {textos.animados}
               </th>
               <th className="px-2 py-1.5 text-right" title="De esos clientes animados, cuántos respondieron">
                 Respondieron
@@ -417,7 +436,7 @@ export function RankingVendedoresAnimacion({
                     {v.pocos && (
                       <span
                         className="ml-1 text-[10px] text-ink-muted"
-                        title={`Menos de ${minimo} clientes animados: la efectividad puede no ser representativa.`}
+                        title={`Menos de ${minimo} clientes ${textos.animados.toLowerCase()}: la efectividad puede no ser representativa.`}
                       >
                         ·pocos
                       </span>
@@ -435,7 +454,7 @@ export function RankingVendedoresAnimacion({
       </div>
       {hayPocos && (
         <p className="mt-1.5 text-[11px] text-ink-muted">
-          "·pocos" = menos de {minimo} clientes animados; la efectividad puede no ser representativa.
+          "·pocos" = menos de {minimo} clientes {textos.animados.toLowerCase()}; la efectividad puede no ser representativa.
         </p>
       )}
     </div>
