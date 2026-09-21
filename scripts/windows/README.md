@@ -531,6 +531,7 @@ contraseña, rol, área y provincia).
 | **El checklist dice FALTA Docker** | Abrí Docker Desktop a mano y esperá "Engine running"; después corré el instalador de nuevo. |
 | **No llegan los WhatsApp** | Verificá que ngrok tenga el token correcto (Paso 2) y que la PC no esté suspendida. El vigilante reintenta solo cada 5 min. |
 | **PC de Ford: localhost anda pero el link de afuera no** | Doble clic en `scripts\windows\Arreglar-Arranque-Ford.bat` (con la sesión de Yesica, **sin** administrador). Si queda en rojo, `Diagnosticar-Ngrok-Ford.bat`: frena ngrok, lo corre con registro y anota el error exacto (token, versión, cuenta). Los dos dejan un informe en el Escritorio para mandar; el token de ngrok sale tapado. En la PC de Volkswagen no corren. |
+| **El sistema no arranca solo al prender la PC** | Doble clic en `scripts\windows\Diagnostico-Arranque.bat` (con la sesión de siempre, **sin** administrador). No toca nada: deja en el Escritorio `diagnostico-arranque-<PC>.txt` con el estado de las tareas programadas, el vigilante, Docker, los contenedores, la actualización y el túnel, y termina con un resumen de qué está bien y qué no. Ese archivo es el que hay que mandar. |
 | **El Dashboard muestra en rojo "Copia diaria a OneDrive"** | Ver el Paso 7 (B). Casi siempre es OneDrive sin la sesión iniciada, o la PC apagada del mediodía a las 19:00. |
 | **Docker se queja de virtualización** | Ver Paso 2.5. |
 | **Quiero ver qué está haciendo el sistema** | Abrí `C:\Calidad\Vanina\scripts\windows\vigilante.log` (dice qué reparó y cuándo). |
