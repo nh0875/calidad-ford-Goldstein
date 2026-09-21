@@ -118,7 +118,65 @@ function Registrar-Tarea {
     $salida = (($salida | Out-String) + ($salida2 | Out-String))
   }
 
-  # ULTIMO RECURSO PARA NGROK (CadaMinutos = 0, o sea ONLOGON).
+  
+# ---------------------------------------------------------------------------
+#  Que el vigilante arranque AL INICIAR SESION (y no hasta 5 minutos despues)
+# ---------------------------------------------------------------------------
+#  POR QUE. La tarea del vigilante es "/SC MINUTE /MO 5": corre cuando le toca el
+#  reloj, no cuando la persona entra. Quien prende la PC a la manana puede esperar
+#  hasta 5 minutos a que corra por primera vez, y recien ahi empieza a levantar
+#  Docker, que tarda 2 o 3 mas. Son casi 10 minutos mirando una pagina que no
+#  abre: de ahi salio el "no arranca solo" del 21-09-2026 en la PC de Ford.
+#
+#  DOS CAMINOS, porque no todas las PCs dejan el primero:
+#    1. Una tarea "al iniciar sesion". Es lo mejor, pero CREARLA PIDE PERMISOS DE
+#       ADMINISTRADOR, y ademas en la PC de Volkswagen el antivirus del dominio
+#       bloquea justo ese tipo de tarea (es el disparador que usa el malware).
+#    2. Un acceso directo en la carpeta Inicio del usuario. No pide permisos
+#       ningunos y lo corre Windows al entrar.
+#  Se intenta el 1 y, si no se puede, se hace el 2. Si ninguno sale, no pasa nada
+#  grave: el vigilante sigue corriendo cada 5 minutos, como hasta ahora.
+function Arranque-AlIniciarSesion {
+  param(
+    [string]$Vigilante,            # ruta de vigilante.ps1
+    [string]$Usuario = "",         # cuenta que usa la PC todos los dias
+    [scriptblock]$Contar = $null   # como avisar (Ok/Aviso de cada script)
+  )
+  $nombreTarea = "Sistema de Calidad - Vigilante al entrar"
+  $argumentos = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command & '$Vigilante'"
+  function Decir([string]$t) { if ($Contar) { & $Contar $t } else { Write-Host "  $t" } }
+
+  $p = @("/create", "/TN", $nombreTarea, "/TR", "powershell.exe $argumentos", "/SC", "ONLOGON")
+  $propio = (-not $Usuario) -or ($Usuario -eq "$env:USERDOMAIN\$env:USERNAME")
+  if (-not $propio) { $p += @("/RU", $Usuario, "/IT") }
+  $p += "/F"
+  $salida = (& schtasks @p 2>&1) -join " "
+  if ($LASTEXITCODE -eq 0) {
+    Decir "Arranca apenas se inicia sesion (tarea '$nombreTarea')."
+    return "tarea"
+  }
+
+  # Sin permisos o con la politica del dominio en contra: acceso directo en Inicio.
+  $acceso = Join-Path ([Environment]::GetFolderPath("Startup")) "Sistema de Calidad - arranque.lnk"
+  try {
+    $sh = New-Object -ComObject WScript.Shell
+    $lnk = $sh.CreateShortcut($acceso)
+    $lnk.TargetPath = "powershell.exe"
+    $lnk.Arguments = $argumentos
+    $lnk.WorkingDirectory = Split-Path $Vigilante -Parent
+    $lnk.WindowStyle = 7          # minimizado: no molesta a quien entra
+    $lnk.Description = "Levanta el Sistema de Calidad al iniciar sesion."
+    $lnk.Save()
+    if (Test-Path $acceso) {
+      Decir "Arranca apenas se inicia sesion (acceso directo en la carpeta Inicio)."
+      return "acceso"
+    }
+  } catch { }
+  Decir "Esta PC no deja arrancar 'al iniciar sesion' ($salida). Sigue el vigilante cada 5 minutos: arranca igual, pero tarda unos minutos mas."
+  return "no"
+}
+
+# ULTIMO RECURSO PARA NGROK (CadaMinutos = 0, o sea ONLOGON).
   #
   # /SC ONLOGON es la UNICA variante que algunas politicas de dominio bloquean;
   # todas las demas se crean bien. Sin la tarea, el vigilante lanza ngrok como
@@ -266,6 +324,7 @@ if ($FaseAdmin) {
       -Descripcion "Vigilante del Sistema de Calidad: levanta y repara el stack cada 5 minutos."
     if ($r.ok) {
       Ok "Vigilante registrado (arranca y repara solo, en modo normal)."
+      $null = Arranque-AlIniciarSesion -Vigilante $Vigilante -Usuario $usuarioDestino -Contar { param($t) Ok $t }
       # schtasks /run tampoco usa CIM, a diferencia de Start-ScheduledTask.
       if ($mismoUsuario) { schtasks /run /TN "Sistema de Calidad - Vigilante" 2>&1 | Out-Null }
     } else {

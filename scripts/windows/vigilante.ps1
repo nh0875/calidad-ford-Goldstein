@@ -765,6 +765,33 @@ resolvio solo.
         Guardar-Estado ([pscustomobject]@{ fallas = 0; avisadoEn = "" })
     }
 
+    # ---------------------------------------------------------------------
+    #  Que la proxima vez arranque APENAS se inicia sesion
+    # ---------------------------------------------------------------------
+    #  El vigilante corre cada 5 minutos: quien prende la PC a la manana puede
+    #  esperar hasta 5 minutos a que corra la primera vez, mas 2 o 3 de Docker.
+    #  Por eso, ademas, hay algo que lo dispara al entrar: una tarea "al iniciar
+    #  sesion" donde se puede crearla, y si no un acceso directo en la carpeta
+    #  Inicio. Eso ultimo es lo que el antivirus del dominio ya borro una vez, asi
+    #  que en cada pasada se comprueba y, si falta, se repone. Es silencioso:
+    #  solo escribe en el log el dia que tuvo que reponerlo.
+    try {
+        $tareaEntrar = (& schtasks /query /TN "Sistema de Calidad - Vigilante al entrar" 2>&1)
+        $hayTarea = ($LASTEXITCODE -eq 0)
+        $accesoEntrar = Join-Path ([Environment]::GetFolderPath("Startup")) "Sistema de Calidad - arranque.lnk"
+        if (-not $hayTarea -and -not (Test-Path $accesoEntrar)) {
+            $sh = New-Object -ComObject WScript.Shell
+            $lnk = $sh.CreateShortcut($accesoEntrar)
+            $lnk.TargetPath = "powershell.exe"
+            $lnk.Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command & '$PSCommandPath'"
+            $lnk.WorkingDirectory = $PSScriptRoot
+            $lnk.WindowStyle = 7
+            $lnk.Description = "Levanta el Sistema de Calidad al iniciar sesion."
+            $lnk.Save()
+            if (Test-Path $accesoEntrar) { Log-Accion "Faltaba el arranque al iniciar sesion (lo borra el antivirus): lo puse de nuevo." }
+        }
+    } catch { }
+
     Pop-Location
 }
 catch {

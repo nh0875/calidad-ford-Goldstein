@@ -113,6 +113,7 @@ function Consultar-Web([string]$url, [int]$segundos = 10) {
 
 $TAREAS = @(
     "Sistema de Calidad - Vigilante",
+    "Sistema de Calidad - Vigilante al entrar",
     "Sistema de Calidad - ngrok",
     "Sistema de Calidad - actualizacion automatica"
 )
@@ -178,6 +179,14 @@ Correr "carpeta Inicio" {
     $arch = Get-ChildItem $inicio -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }
     if (-not $arch) { return ("(vacia) " + $inicio) }
     return @(("Carpeta: " + $inicio)) + $arch
+}
+Correr "arranque al iniciar sesion" {
+    $acceso = Join-Path ([System.Environment]::GetFolderPath("Startup")) "Sistema de Calidad - arranque.lnk"
+    if (Test-Path $acceso) {
+        $s = (New-Object -ComObject WScript.Shell).CreateShortcut($acceso)
+        return @("Acceso directo 'Sistema de Calidad - arranque': SI", ("   corre: " + $s.TargetPath + " " + $s.Arguments))
+    }
+    return "Acceso directo 'Sistema de Calidad - arranque': no"
 }
 Correr "registro Run" {
     $r = @()
@@ -358,7 +367,14 @@ $bien = New-Object System.Collections.Generic.List[string]
 
 if ($Proyecto -eq "") { $problemas.Add("No se encontro la carpeta del sistema en esta PC.") }
 $esFord = ("$Marca".ToUpper() -like "FORD*")
+# Arrancar AL ENTRAR es lo que evita los 5 a 10 minutos de espera de la manana.
+$null = & schtasks /query /TN "Sistema de Calidad - Vigilante al entrar" 2>&1
+$hayTareaEntrar = ($LASTEXITCODE -eq 0)
+$hayAccesoEntrar = Test-Path (Join-Path ([System.Environment]::GetFolderPath("Startup")) "Sistema de Calidad - arranque.lnk")
+if ($hayTareaEntrar -or $hayAccesoEntrar) { $bien.Add("Arranca apenas se inicia sesion (no espera los 5 minutos del vigilante).") }
+else { $problemas.Add("NO arranca al iniciar sesion: hay que esperar a la pasada del vigilante (hasta 5 minutos) mas lo que tarda Docker.") }
 foreach ($t in $TAREAS) {
+    if ($t -like "*al entrar*") { continue }   # ya se reviso arriba, con su alternativa
     $null = & schtasks /query /TN "$t" 2>&1
     if ($LASTEXITCODE -ne 0) {
         if ($t -like "*ngrok*" -and -not $esFord) {

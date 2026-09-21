@@ -44,7 +44,66 @@ $Bucle          = Join-Path $ScriptDir "vigilante-bucle.ps1"
 $Vbs            = Join-Path $ScriptDir "ngrok-oculto.vbs"
 $Contenedor     = "calidad-tunel-ngrok"
 $TareaVigilante = "Sistema de Calidad - Vigilante"
+$TareaAlEntrar  = "Sistema de Calidad - Vigilante al entrar"
 $TareaNgrok     = "Sistema de Calidad - ngrok"
+
+
+# ---------------------------------------------------------------------------
+#  Que el vigilante arranque AL INICIAR SESION (y no hasta 5 minutos despues)
+# ---------------------------------------------------------------------------
+#  POR QUE. La tarea del vigilante es "/SC MINUTE /MO 5": corre cuando le toca el
+#  reloj, no cuando la persona entra. Quien prende la PC a la manana puede esperar
+#  hasta 5 minutos a que corra por primera vez, y recien ahi empieza a levantar
+#  Docker, que tarda 2 o 3 mas. Son casi 10 minutos mirando una pagina que no
+#  abre: de ahi salio el "no arranca solo" del 21-09-2026 en la PC de Ford.
+#
+#  DOS CAMINOS, porque no todas las PCs dejan el primero:
+#    1. Una tarea "al iniciar sesion". Es lo mejor, pero CREARLA PIDE PERMISOS DE
+#       ADMINISTRADOR, y ademas en la PC de Volkswagen el antivirus del dominio
+#       bloquea justo ese tipo de tarea (es el disparador que usa el malware).
+#    2. Un acceso directo en la carpeta Inicio del usuario. No pide permisos
+#       ningunos y lo corre Windows al entrar.
+#  Se intenta el 1 y, si no se puede, se hace el 2. Si ninguno sale, no pasa nada
+#  grave: el vigilante sigue corriendo cada 5 minutos, como hasta ahora.
+function Arranque-AlIniciarSesion {
+  param(
+    [string]$Vigilante,            # ruta de vigilante.ps1
+    [string]$Usuario = "",         # cuenta que usa la PC todos los dias
+    [scriptblock]$Contar = $null   # como avisar (Ok/Aviso de cada script)
+  )
+  $nombreTarea = "Sistema de Calidad - Vigilante al entrar"
+  $argumentos = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command & '$Vigilante'"
+  function Decir([string]$t) { if ($Contar) { & $Contar $t } else { Write-Host "  $t" } }
+
+  $p = @("/create", "/TN", $nombreTarea, "/TR", "powershell.exe $argumentos", "/SC", "ONLOGON")
+  $propio = (-not $Usuario) -or ($Usuario -eq "$env:USERDOMAIN\$env:USERNAME")
+  if (-not $propio) { $p += @("/RU", $Usuario, "/IT") }
+  $p += "/F"
+  $salida = (& schtasks @p 2>&1) -join " "
+  if ($LASTEXITCODE -eq 0) {
+    Decir "Arranca apenas se inicia sesion (tarea '$nombreTarea')."
+    return "tarea"
+  }
+
+  # Sin permisos o con la politica del dominio en contra: acceso directo en Inicio.
+  $acceso = Join-Path ([Environment]::GetFolderPath("Startup")) "Sistema de Calidad - arranque.lnk"
+  try {
+    $sh = New-Object -ComObject WScript.Shell
+    $lnk = $sh.CreateShortcut($acceso)
+    $lnk.TargetPath = "powershell.exe"
+    $lnk.Arguments = $argumentos
+    $lnk.WorkingDirectory = Split-Path $Vigilante -Parent
+    $lnk.WindowStyle = 7          # minimizado: no molesta a quien entra
+    $lnk.Description = "Levanta el Sistema de Calidad al iniciar sesion."
+    $lnk.Save()
+    if (Test-Path $acceso) {
+      Decir "Arranca apenas se inicia sesion (acceso directo en la carpeta Inicio)."
+      return "acceso"
+    }
+  } catch { }
+  Decir "Esta PC no deja arrancar 'al iniciar sesion' ($salida). Sigue el vigilante cada 5 minutos: arranca igual, pero tarda unos minutos mas."
+  return "no"
+}
 
 $informe = New-Object System.Collections.Generic.List[string]
 function Linea([string]$t, [string]$color = "Gray") { $informe.Add($t); Write-Host $t -ForegroundColor $color }
@@ -202,8 +261,9 @@ if (Select-String -Path (Join-Path $ScriptDir "vigilante.ps1") -Pattern 'return 
 Titulo "1. COMO ESTA HOY"
 
 # Tareas programadas: todos los nombres que se usaron en algun momento.
-$tareas = @($TareaVigilante, "Sistema Calidad - Vigilante", $TareaNgrok, "Sistema de Calidad - actualizacion automatica", "Respaldo Calidad M365")
+$tareas = @($TareaVigilante, $TareaAlEntrar, "Sistema Calidad - Vigilante", $TareaNgrok, "Sistema de Calidad - actualizacion automatica", "Respaldo Calidad M365")
 $hayTareaVigilante = $false; $nombreVigilante = ""
+$hayTareaAlEntrar = $false
 $hayTareaNgrok = $false; $hayTareaActualizacion = $false; $hayTareaRespaldo = $false
 foreach ($t in $tareas) {
     $xml = (& schtasks /query /TN "$t" /XML 2>$null) -join "`n"
@@ -217,6 +277,7 @@ foreach ($t in $tareas) {
     foreach ($m in [regex]::Matches("$cmd $args2", "[A-Za-z]:\\[^""']+?\.(ps1|vbs|bat|exe)")) {
         if (-not (Test-Path $m.Value)) { Mal "   la tarea '$t' apunta a un archivo que YA NO EXISTE: $($m.Value)"; $rota = $true }
     }
+    if ($t -eq $TareaAlEntrar) { if (-not $rota) { $hayTareaAlEntrar = $true }; continue }
     if ($t -like "*Vigilante" -and -not $rota) { $hayTareaVigilante = $true; $nombreVigilante = $t }
     if ($t -eq $TareaNgrok) { $hayTareaNgrok = $true }
     if ($t -like "*actualizacion automatica") { $hayTareaActualizacion = $true }
@@ -376,6 +437,19 @@ if ($hayTareaVigilante) {
     Mal "No hay tarea del vigilante que funcione: esta PC no tiene con que arrancar sola."
     Info "Lo que haya en el registro o en Inicio NO se toca. Mandale este informe a Ignacio."
 }
+
+# AL INICIAR SESION. La tarea del vigilante corre "cada 5 minutos", no cuando la
+# persona entra: quien prende la PC a la manana puede esperar hasta 5 minutos a
+# que corra la primera vez, mas 2 o 3 de Docker. De ahi salio el "no arranca
+# solo" del 21-09-2026. Esta segunda tarea lo dispara apenas se inicia sesion.
+if ($hayTareaVigilante) {
+    if ($hayTareaAlEntrar) {
+        Bien "Ademas arranca apenas se inicia sesion (tarea '$TareaAlEntrar')."
+    } else {
+        $como = Arranque-AlIniciarSesion -Vigilante (Join-Path $ScriptDir "vigilante.ps1") -Contar { param($t) Bien $t }
+        if ($como -ne "no") { $hayTareaAlEntrar = $true }
+    }
+}
 # Sin el bucle, lo que en Volkswagen corre adentro de el en Ford va por tareas.
 $cuenta = "$env:USERDOMAIN\$env:USERNAME"
 if ($hayTareaActualizacion) { Bien "tarea de actualizacion automatica (13:00): existe" }
@@ -435,7 +509,8 @@ else {
 # ------------------------------------------------------------- informe ----
 Titulo "RESULTADO"
 if ($sis -and $pub -eq "ok" -and $hayTareaVigilante) {
-    Linea "  LISTO. Para confirmarlo del todo: reiniciar la PC, iniciar sesion y esperar 10 minutos." "Green"
+    $espera = if ($hayTareaAlEntrar) { "3 o 4 minutos (lo que tarda Docker)" } else { "10 minutos" }
+    Linea "  LISTO. Para confirmarlo del todo: reiniciar la PC, iniciar sesion y esperar $espera." "Green"
 } else {
     Linea "  Quedo algo en rojo. Mandale este informe a Ignacio." "Yellow"
 }
