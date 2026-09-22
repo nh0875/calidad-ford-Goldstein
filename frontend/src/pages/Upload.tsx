@@ -11,6 +11,7 @@ import { Badge } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
 import { Campo, Input } from "../components/ui/Field";
 import UploadFord from "./UploadFord";
+import { AreaCarga, ConfirmarAreaCarga } from "../components/ConfirmarAreaCarga";
 
 // ---------- Tipos que devuelve el backend ----------
 
@@ -105,9 +106,14 @@ function formatearCelda(valor: unknown): string {
 type Paso = "formulario" | "mapeo" | "resultado";
 
 export default function Upload() {
-  // Selector inicial de tipo de carga. "posventa" = flujo actual (intacto);
-  // "ford" = encuesta oficial en el formato de Ford (Parte B).
-  const [tipoCarga, setTipoCarga] = useState<"posventa" | "ventas" | "ford">("posventa");
+  // Selector inicial de tipo de carga. "posventa" / "ventas" = Excel de Contacto
+  // en cada área; "ford" = encuesta oficial en el formato de Ford (Parte B).
+  //
+  // Arranca SIN NADA ELEGIDO a propósito (pedido de Calidad, 22-09-2026): venía
+  // marcado "Contacto Posventa" y un Excel de Ventas se podía cargar en Posventa
+  // sin que nadie lo notara. Ahora hay que elegir el área cada vez, y antes de
+  // importar se vuelve a preguntar (ConfirmarAreaCarga).
+  const [tipoCarga, setTipoCarga] = useState<"posventa" | "ventas" | "ford" | null>(null);
   const marca = getMarca();
 
   return (
@@ -142,7 +148,15 @@ export default function Upload() {
         </Alert>
       )}
 
-      {tipoCarga === "ford" && marca.modulos.refuerzo ? (
+      {tipoCarga === null ? (
+        <Card padding="p-6">
+          <p className="font-semibold text-ink">¿Dónde vas a cargar el Excel?</p>
+          <p className="mt-1 text-sm text-ink-muted">
+            Elegí arriba una opción. Fijate bien si el archivo es de <strong>Posventa</strong> o de{" "}
+            <strong>Ventas</strong>: los casos quedan en el área que elijas.
+          </p>
+        </Card>
+      ) : tipoCarga === "ford" && marca.modulos.refuerzo ? (
         <UploadFord />
       ) : (
         <UploadPosventa area={tipoCarga === "ventas" ? "VENTAS" : "POSVENTA"} />
@@ -154,7 +168,9 @@ export default function Upload() {
 function SelectorTipo({ activo, onClick, icono: Icono, titulo, descripcion }: { activo: boolean; onClick: () => void; icono: typeof UploadCloud; titulo: string; descripcion: string }) {
   return (
     <button
+      type="button"
       onClick={onClick}
+      aria-pressed={activo}
       className={`flex flex-1 items-start gap-3 rounded-xl border-2 bg-white p-4 text-left transition-colors ${
         activo ? "border-accent" : "border-gray-200 hover:border-gray-300"
       }`}
@@ -168,10 +184,12 @@ function SelectorTipo({ activo, onClick, icono: Icono, titulo, descripcion }: { 
   );
 }
 
-function UploadPosventa({ area = "POSVENTA" }: { area?: "POSVENTA" | "VENTAS" }) {
+function UploadPosventa({ area }: { area: AreaCarga }) {
   const [paso, setPaso] = useState<Paso>("formulario");
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // La ventana "¿Estás seguro de cargar en …?" abierta.
+  const [pidiendoOk, setPidiendoOk] = useState(false);
 
   // Paso 1
   const [sucursal, setSucursal] = useState("");
@@ -268,19 +286,31 @@ function UploadPosventa({ area = "POSVENTA" }: { area?: "POSVENTA" | "VENTAS" })
     });
   }
 
+  const hojasElegidas = hojasOk.filter((h) => hojasEstado[h.nombre]?.incluir);
+
+  // "Confirmar e importar" no importa: abre la ventana que pregunta por el área.
+  function pedirConfirmacion() {
+    if (!preview) return;
+    setError(null);
+    if (hojasElegidas.length === 0) {
+      setError("Elegí al menos una hoja (mes) para importar.");
+      return;
+    }
+    setPidiendoOk(true);
+  }
+
   async function confirmar() {
     if (!preview) return;
     setError(null);
 
-    const hojasAImportar = hojasOk
-      .filter((h) => hojasEstado[h.nombre]?.incluir)
-      .map((h) => ({
-        nombre: h.nombre,
-        periodo: hojasEstado[h.nombre].periodo || undefined,
-        mapping: hojasEstado[h.nombre].mapping,
-      }));
+    const hojasAImportar = hojasElegidas.map((h) => ({
+      nombre: h.nombre,
+      periodo: hojasEstado[h.nombre].periodo || undefined,
+      mapping: hojasEstado[h.nombre].mapping,
+    }));
 
     if (hojasAImportar.length === 0) {
+      setPidiendoOk(false);
       setError("Elegí al menos una hoja (mes) para importar.");
       return;
     }
@@ -302,6 +332,7 @@ function UploadPosventa({ area = "POSVENTA" }: { area?: "POSVENTA" | "VENTAS" })
       setError(err instanceof Error ? err.message : "No pudimos confirmar la carga. Probá de nuevo.");
     } finally {
       setCargando(false);
+      setPidiendoOk(false);
     }
   }
 
@@ -511,11 +542,27 @@ function UploadPosventa({ area = "POSVENTA" }: { area?: "POSVENTA" | "VENTAS" })
             <button onClick={reiniciar} className={claseBoton("fantasma", "border border-gray-300")}>
               Volver a empezar
             </button>
-            <button onClick={confirmar} disabled={cargando} className={claseBoton("primario")}>
+            <button onClick={pedirConfirmacion} disabled={cargando} className={claseBoton("primario")}>
               {cargando ? "Importando casos…" : "Confirmar e importar"}
             </button>
           </div>
         </div>
+      )}
+
+      {pidiendoOk && preview && (
+        <ConfirmarAreaCarga
+          area={area}
+          archivo={preview.filename}
+          sucursal={sucursal.trim()}
+          meses={hojasElegidas.map((h) => {
+            const periodo = hojasEstado[h.nombre]?.periodo;
+            return periodo ? `${h.nombre} (${periodo})` : h.nombre;
+          })}
+          filas={hojasElegidas.reduce((total, h) => total + h.totalFilasDatos, 0)}
+          cargando={cargando}
+          onCancelar={() => setPidiendoOk(false)}
+          onConfirmar={confirmar}
+        />
       )}
 
       {paso === "resultado" && resultado && (
