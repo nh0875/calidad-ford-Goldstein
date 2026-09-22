@@ -62,10 +62,11 @@ export async function pendientesEncuestaPV(req: Request, res: Response) {
 
 // ---------- PATCH /api/encuesta-pv/clientes/:id ----------
 //
-// Cambio de estado a mano: Pendiente / Primer contacto (en la base, AVISADO: es
-// el mismo enum que las encuestas de Ventas; antes se llamaba "Animado") /
-// Respondió / Cerrado (19-09-2026: se dejó de trabajar sin respuesta). Las fechas
-// las pone el sistema.
+// Cambio de estado a mano: Pendiente / Avisado (22-09-2026: se le avisó al cliente
+// y todavía no contestó) / Primer contacto (ya se habló con él) / Respondió /
+// Cerrado (19-09-2026: se dejó de trabajar sin respuesta). Las fechas las pone el
+// sistema. Avisado y Primer contacto cuentan los dos como CONTACTADO en los
+// gráficos, y la fecha de contacto es la del primero de los dos.
 const estadoSchema = z.object({
   estado: z.nativeEnum(EstadoEncuestaFabrica),
 });
@@ -76,7 +77,7 @@ export async function editarEstadoEncuestaPV(req: Request, res: Response) {
 
   const parseo = estadoSchema.safeParse(req.body);
   if (!parseo.success) {
-    return res.status(400).json({ message: "Elegí un estado válido: Pendiente, Primer contacto, Respondió o Cerrado." });
+    return res.status(400).json({ message: "Elegí un estado válido: Pendiente, Avisado, Primer contacto, Respondió o Cerrado." });
   }
   const estadoNuevo = parseo.data.estado;
   const sucursalPV = marca.encuestaFabricaPV.sucursal ?? "";
@@ -104,7 +105,7 @@ export async function editarEstadoEncuestaPV(req: Request, res: Response) {
   ) {
     return res.status(409).json({
       message:
-        "Este cliente ya no tiene 5 estrellas: si lo pasás a Pendiente sale de la lista y se pierde lo trabajado. Dejalo en Primer contacto, Respondió o Cerrado.",
+        "Este cliente ya no tiene 5 estrellas: si lo pasás a Pendiente sale de la lista y se pierde lo trabajado. Dejalo en Avisado, Primer contacto, Respondió o Cerrado.",
     });
   }
 
@@ -115,7 +116,14 @@ export async function editarEstadoEncuestaPV(req: Request, res: Response) {
   // seguimiento para contar la efectividad, así que NO se borra al pasar a
   // Respondió. Volver a Pendiente sí la borra: significa "todavía no se lo animó".
   if (estadoNuevo === EstadoEncuestaFabrica.PENDIENTE) data.animadoEn = null;
-  if (estadoNuevo === EstadoEncuestaFabrica.AVISADO && !fila.animadoEn) data.animadoEn = new Date();
+  // La fecha de contacto es la del PRIMERO de los dos pasos: si ya estaba avisado,
+  // pasar a Primer contacto no la pisa.
+  if (
+    (estadoNuevo === EstadoEncuestaFabrica.AVISADO || estadoNuevo === EstadoEncuestaFabrica.PRIMER_CONTACTO) &&
+    !fila.animadoEn
+  ) {
+    data.animadoEn = new Date();
+  }
   // Cerrado cuenta como CONTACTADO SIN RESPUESTA (decisión del dueño, 19-09-2026):
   // se lo trabajó y no respondió, así que suma en los contactados y baja la
   // efectividad. Si se lo cierra sin haber pasado por Primer contacto, la fecha se

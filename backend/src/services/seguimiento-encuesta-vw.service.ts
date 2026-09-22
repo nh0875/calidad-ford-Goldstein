@@ -71,7 +71,10 @@ export interface NumerosAnimacion {
   clientes: number;
   /** PENDIENTE: todavía no se le avisó al vendedor. */
   sinAvisar: number;
-  /** AVISADO: se le avisó al vendedor y el cliente todavía no contestó. */
+  /**
+   * Todavía no contestó, pero ya se lo trabajó: en Ventas, AVISADO (se le avisó al
+   * vendedor); en PV, AVISADO (se le avisó al cliente) y PRIMER_CONTACTO.
+   */
   esperandoRespuesta: number;
   respondieron: number;
   /** Se le avisó al vendedor en algún momento, tenga el estado que tenga hoy. */
@@ -141,7 +144,7 @@ function numerosDe(clientes: ReadonlyArray<ClienteSeguimiento>): NumerosAnimacio
     if (animado) animados++;
     if (c.periodo && !c.fechaDominio) mesEstimado++;
     if (c.estado === EstadoEncuestaFabrica.PENDIENTE) sinAvisar++;
-    else if (c.estado === EstadoEncuestaFabrica.AVISADO) esperandoRespuesta++;
+    else if (c.estado === EstadoEncuestaFabrica.AVISADO || c.estado === EstadoEncuestaFabrica.PRIMER_CONTACTO) esperandoRespuesta++;
     else if (c.estado === EstadoEncuestaFabrica.CERRADO) cerrados++;
     else if (c.estado === EstadoEncuestaFabrica.RESPONDIO) {
       respondieron++;

@@ -750,6 +750,12 @@ enum EstadoEncuestaFabrica {
   // mismo cliente dos veces: el aviso sale SOLO de los PENDIENTE, así que apenas
   // se avisa el cliente sale de esa bolsa y el próximo mail no lo repite.
   AVISADO
+  // SOLO en Encuestas de fábrica PV (pedido del 22-09-2026): acá no hay un
+  // vendedor al que avisarle, al cliente lo trabaja Calidad. AVISADO es "se le
+  // avisó al cliente y todavía no contestó" y PRIMER_CONTACTO es "ya se habló con
+  // él". Los dos cuentan como CONTACTADO en los gráficos. Hasta el 22-09 el
+  // "Primer contacto" de PV se guardaba en AVISADO; la migración los pasó acá.
+  PRIMER_CONTACTO
   RESPONDIO // dejó de venir en el archivo, así que ya contestó
   // SOLO en Encuestas de fábrica PV (pedido del 19-09-2026): se dejó de trabajar
   // al cliente sin que respondiera. Cuenta como contactado sin respuesta en los

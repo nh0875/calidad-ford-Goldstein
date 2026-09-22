@@ -686,10 +686,15 @@ export async function crearEncuestaManualVW(req: Request, res: Response) {
 // vive ahora en la pantalla de Casos, sobre el 3° contacto, que es donde de
 // verdad se habla con el cliente.
 const estadoEncuestaSchema = z.object({
-  // "Cerrado" es solo de Encuestas de fábrica PV (19-09-2026): acá no existe.
+  // "Cerrado" (19-09-2026) y "Primer contacto" (22-09-2026) son solo de Encuestas
+  // de fábrica PV: acá no existen.
   estado: z
     .nativeEnum(EstadoEncuestaFabrica)
     .refine((e) => e !== EstadoEncuestaFabrica.CERRADO, "El estado Cerrado es solo de Encuestas de fábrica PV.")
+    .refine(
+      (e) => e !== EstadoEncuestaFabrica.PRIMER_CONTACTO,
+      "El estado Primer contacto es solo de Encuestas de fábrica PV."
+    )
     .optional(),
 });
 

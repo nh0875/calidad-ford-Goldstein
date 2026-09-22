@@ -2,9 +2,9 @@
 //
 // Los clientes de Posventa que calificaron con 5 estrellas —los promotores— entran
 // SOLOS a esta lista. Calidad los contacta para animarlos a responder la encuesta
-// de fábrica y marca cómo va cada uno: Pendiente → Primer contacto → Respondió, o
-// Cerrado si se lo dejó de trabajar sin respuesta. Abajo, el mismo seguimiento mes a
-// mes que las encuestas de Ventas.
+// de fábrica y marca cómo va cada uno: Pendiente → Avisado → Primer contacto →
+// Respondió, o Cerrado si se lo dejó de trabajar sin respuesta. Abajo, el mismo
+// seguimiento mes a mes que las encuestas de Ventas.
 //
 // Los GRÁFICOS los ve cualquier perfil. La LISTA es de Calidad de Posventa de la
 // sucursal: a quien no la trabaja el backend le responde 403 con el motivo, y la
@@ -32,17 +32,21 @@ import {
   TEXTOS_POSVENTA,
 } from "../components/SeguimientoAnimaciones";
 
-// En la base es el MISMO enum que las encuestas de Ventas (PENDIENTE / AVISADO /
-// RESPONDIO), más CERRADO, que es solo de esta pestaña. Acá no hay un vendedor al
-// que avisarle —al cliente lo contacta Calidad—, así que AVISADO se lee "Primer
-// contacto" (hasta el 19-09-2026 decía "Animado"). CERRADO: se lo dejó de trabajar
-// sin respuesta; en los gráficos cuenta como contactado que no respondió.
-const ESTADOS = ["PENDIENTE", "AVISADO", "RESPONDIO", "CERRADO"] as const;
+// Acá no hay un vendedor al que avisarle: al cliente lo trabaja Calidad. El camino
+// es Pendiente -> Avisado (se le avisó y todavía no contestó, 22-09-2026) -> Primer
+// contacto (ya se habló con él; hasta el 19-09-2026 se llamaba "Animado") ->
+// Respondió. CERRADO es aparte: se lo dejó de trabajar sin respuesta.
+//
+// Avisado y Primer contacto cuentan los dos como CONTACTADO en los gráficos, y la
+// fecha de contacto es la del primero de los dos. En la base, PRIMER_CONTACTO es un
+// estado propio de esta pestaña: en las encuestas de Ventas no existe.
+const ESTADOS = ["PENDIENTE", "AVISADO", "PRIMER_CONTACTO", "RESPONDIO", "CERRADO"] as const;
 type Estado = (typeof ESTADOS)[number];
 
 const ETIQUETA_ESTADO: Record<Estado, string> = {
   PENDIENTE: "Pendiente",
-  AVISADO: "Primer contacto",
+  AVISADO: "Avisado",
+  PRIMER_CONTACTO: "Primer contacto",
   RESPONDIO: "Respondió",
   CERRADO: "Cerrado",
 };
@@ -52,22 +56,30 @@ const ETIQUETA_ESTADO: Record<Estado, string> = {
 // ya no se trabaja.
 const CLASE_ESTADO: Record<Estado, string> = {
   PENDIENTE: "bg-yellow-50 text-yellow-900 border-yellow-200 hover:bg-yellow-100",
-  AVISADO: "bg-accent-light text-accent-dark border-accent/30 hover:bg-accent-light/70",
+  // Avisado va en un celeste más claro que Primer contacto: se ve que es el paso de
+  // antes, no otra cosa.
+  AVISADO: "bg-sky-50 text-sky-900 border-sky-200 hover:bg-sky-100",
+  PRIMER_CONTACTO: "bg-accent-light text-accent-dark border-accent/30 hover:bg-accent-light/70",
   RESPONDIO: "bg-green-50 text-green-900 border-green-200 hover:bg-green-100",
   CERRADO: "bg-gray-100 text-ink-muted border-gray-300 hover:bg-gray-200",
 };
 const PUNTO_ESTADO: Record<Estado, string> = {
   PENDIENTE: "bg-yellow-400",
-  AVISADO: "bg-accent",
+  AVISADO: "bg-sky-400",
+  PRIMER_CONTACTO: "bg-accent",
   RESPONDIO: "bg-green-500",
   CERRADO: "bg-gray-400",
 };
 const TONO_ESTADO: Record<Estado, "amarillo" | "azul" | "verde" | "gris"> = {
   PENDIENTE: "amarillo",
   AVISADO: "azul",
+  PRIMER_CONTACTO: "azul",
   RESPONDIO: "verde",
   CERRADO: "gris",
 };
+
+/** Qué dice la fecha de contacto según en qué paso está el cliente. */
+const etiquetaFechaContacto = (estado: Estado) => (estado === "AVISADO" ? "avisado el" : "primer contacto el");
 
 /** El menú escucha este evento para actualizar su contador sin esperar al próximo pedido. */
 export const EVENTO_PENDIENTES_PV = "encuesta-pv:pendientes";
@@ -98,7 +110,7 @@ interface Promotor {
 
 interface RespuestaLista {
   data: Promotor[];
-  resumen: { pendientes: number; animados: number; respondieron: number; cerrados?: number; total: number };
+  resumen: { pendientes: number; avisados: number; primerContacto: number; respondieron: number; cerrados?: number; total: number };
   sucursal: string | null;
   /** Los meses cerrados: un promotor de esos meses que sigue en la lista llegó tarde. */
   periodosCerrados?: Array<{ periodo: string; sucursal: string }>;
@@ -314,8 +326,8 @@ export default function EncuestasFabricaPV() {
         <h3 className="font-display text-sm font-bold uppercase tracking-wide text-navy">Contactos mes a mes</h3>
         <p className="mt-1 text-sm text-ink-muted">
           Cada mes son los promotores cuyo servicio fue ese mes (la salida del taller o, si no está, la apertura de la
-          orden). Un cliente cuenta como contactado desde que Calidad lo marcó en Primer contacto, aunque después haya
-          respondido. Los Cerrados cuentan como contactados que no respondieron.
+          orden). Un cliente cuenta como contactado desde que Calidad lo marcó en Avisado o en Primer contacto, aunque
+          después haya respondido. Los Cerrados cuentan como contactados que no respondieron.
         </p>
         {seguimiento.meses.length === 0 ? (
           <p className="mt-4 text-sm text-ink-muted">
@@ -389,7 +401,8 @@ export default function EncuestasFabricaPV() {
         {lista && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Dato valor={lista.resumen.pendientes} etiqueta="sin contactar" clase="bg-yellow-50 text-yellow-900" />
-            <Dato valor={lista.resumen.animados} etiqueta="primer contacto" clase="bg-accent-light text-accent-dark" />
+            <Dato valor={lista.resumen.avisados} etiqueta="avisados" clase="bg-sky-50 text-sky-900" />
+            <Dato valor={lista.resumen.primerContacto} etiqueta="primer contacto" clase="bg-accent-light text-accent-dark" />
             <Dato valor={lista.resumen.respondieron} etiqueta="respondieron" clase="bg-green-50 text-green-900" />
             {(lista.resumen.cerrados ?? 0) > 0 && (
               <Dato valor={lista.resumen.cerrados ?? 0} etiqueta="cerrados" clase="bg-gray-100 text-ink" />
@@ -549,7 +562,9 @@ export default function EncuestasFabricaPV() {
                           deshabilitado={guardandoId === p.id}
                         />
                         {p.animadoEn && (
-                          <div className="mt-1 text-[11px] text-ink-muted">primer contacto el {fechaCorta(p.animadoEn)}</div>
+                          <div className="mt-1 text-[11px] text-ink-muted">
+                            {etiquetaFechaContacto(p.estado)} {fechaCorta(p.animadoEn)}
+                          </div>
                         )}
                       </td>
                     </tr>

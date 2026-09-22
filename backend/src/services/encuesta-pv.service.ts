@@ -238,10 +238,12 @@ export interface PromotorPV {
 
 const ORDEN_ESTADO: Record<EstadoEncuestaFabrica, number> = {
   PENDIENTE: 0,
+  // Se le avisó y todavía no contestó: es lo próximo a trabajar.
   AVISADO: 1,
-  RESPONDIO: 2,
+  PRIMER_CONTACTO: 2,
+  RESPONDIO: 3,
   // Al final: ya no se trabaja.
-  CERRADO: 3,
+  CERRADO: 4,
 };
 
 const INCLUDE_CASO = {
@@ -311,7 +313,15 @@ async function aPromotores(filas: FilaPV[]): Promise<PromotorPV[]> {
 /** La lista de trabajo: sin los clientes de los meses cerrados. */
 export async function listarPromotoresPV(): Promise<{
   data: PromotorPV[];
-  resumen: { pendientes: number; animados: number; respondieron: number; cerrados: number; total: number };
+  resumen: {
+    pendientes: number;
+    /** Se le avisó al cliente y todavía no contestó (22-09-2026). */
+    avisados: number;
+    primerContacto: number;
+    respondieron: number;
+    cerrados: number;
+    total: number;
+  };
 }> {
   await sincronizarPromotoresPV();
 
@@ -325,7 +335,8 @@ export async function listarPromotoresPV(): Promise<{
     data,
     resumen: {
       pendientes: data.filter((d) => d.estado === EstadoEncuestaFabrica.PENDIENTE).length,
-      animados: data.filter((d) => d.estado === EstadoEncuestaFabrica.AVISADO).length,
+      avisados: data.filter((d) => d.estado === EstadoEncuestaFabrica.AVISADO).length,
+      primerContacto: data.filter((d) => d.estado === EstadoEncuestaFabrica.PRIMER_CONTACTO).length,
       respondieron: data.filter((d) => d.estado === EstadoEncuestaFabrica.RESPONDIO).length,
       cerrados: data.filter((d) => d.estado === EstadoEncuestaFabrica.CERRADO).length,
       total: data.length,
