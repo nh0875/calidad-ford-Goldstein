@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, ChevronRight, FileDown, SearchX } from "lucide-react";
 import { apiDescargarArchivo, apiGet } from "../lib/api";
+import { etiquetaEscala } from "../lib/marca";
 import { causasRaiz, etiquetaCategoria, fechaCorta } from "../lib/categorias";
 import { BarraFiltros, CampoFiltro, FILTROS_VACIOS, FiltroSelect, FiltrosComunes, filtrosAQuery, useOpcionesCasos } from "../components/filtros";
 import { getUsuario, veTodasLasAreas } from "../lib/auth";
@@ -205,7 +206,7 @@ export default function ReporteCausasRaiz() {
                   <th className="px-3 py-2">Sucursal</th>
                   <th className="px-3 py-2">Asesor</th>
                   <th className="px-3 py-2">Servicio</th>
-                  <th className="px-3 py-2 text-center">Semáforo</th>
+                  <th className="px-3 py-2 text-center">{etiquetaEscala()}</th>
                   <th className="px-3 py-2">Severidad</th>
                   <th className="px-3 py-2">Causas raíz</th>
                   <th className="px-3 py-2">RQR</th>

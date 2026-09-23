@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { getMarca } from "../lib/marca";
+import { getMarca, usaEstrellas } from "../lib/marca";
 import { CheckCircle2, ClipboardList, FileSpreadsheet, ListChecks, UploadCloud } from "lucide-react";
 import { apiPostForm, apiPostJson } from "../lib/api";
 import { CAMPOS_CASO } from "../lib/camposCaso";
@@ -598,7 +598,9 @@ function UploadPosventa({ area }: { area: AreaCarga }) {
           </div>
 
           <Card>
-            <h3 className="mb-2 text-sm font-semibold text-ink">Semáforo de los casos históricos</h3>
+            <h3 className="mb-2 text-sm font-semibold text-ink">
+              {usaEstrellas() ? "Clasificación de los casos históricos" : "Semáforo de los casos históricos"}
+            </h3>
             <div className="flex flex-wrap gap-3">
               <Badge tono="verde">Verdes: {resultado.totales.semaforo.VERDE}</Badge>
               <Badge tono="amarillo">Amarillos: {resultado.totales.semaforo.AMARILLO}</Badge>

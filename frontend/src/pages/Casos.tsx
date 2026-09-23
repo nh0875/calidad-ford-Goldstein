@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useSearchParams } from "react-router-dom";
 import { FileDown, MessageSquarePlus, Pencil, RotateCcw, Search, Send, SearchX, Trash2, UserPlus, Phone } from "lucide-react";
 import { apiDelete, apiDescargarArchivo, apiGet, apiPostJson } from "../lib/api";
-import { getMarca } from "../lib/marca";
+import { etiquetaEscala, getMarca } from "../lib/marca";
 import { PanelLlamada } from "../components/PanelLlamada";
 import { getModoDemo, getUsuario, veTodasLasAreas } from "../lib/auth";
 import { AREAS, etiquetaArea, tonoArea } from "../lib/area";
@@ -767,7 +767,7 @@ export default function Casos() {
               <th className="px-3 py-2">Área</th>
               <th className="px-3 py-2">Período</th>
               <th className="px-3 py-2">WhatsApp</th>
-              <th className="px-3 py-2">Semáforo</th>
+              <th className="px-3 py-2">{etiquetaEscala()}</th>
               <th className="px-3 py-2">Estado</th>
               <th className="px-3 py-2 text-center">Acciones</th>
             </tr>

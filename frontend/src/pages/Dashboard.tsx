@@ -397,7 +397,9 @@ export default function Dashboard() {
           <div className="grid gap-4 lg:grid-cols-2">
             {/* Distribución + top causas */}
             <Card>
-              <h3 className="mb-3 text-sm font-semibold text-ink">Distribución del semáforo</h3>
+              <h3 className="mb-3 text-sm font-semibold text-ink">
+                {porEstrellas ? "Distribución de puntajes" : "Distribución del semáforo"}
+              </h3>
               {porEstrellas ? (
                 <DistribucionEstrellas
                   distribucion={resumen.estrellas.distribucion}

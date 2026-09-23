@@ -114,3 +114,14 @@ export async function cargarMarca(): Promise<InfoMarca> {
 export function usaEstrellas(): boolean {
   return cache.escala === "ESTRELLAS";
 }
+
+/**
+ * Cómo se llama la escala en ESTA marca, para los títulos y los encabezados:
+ * "Semáforo" en Ford y "Estrellas" en Volkswagen.
+ *
+ * Existe porque el rótulo estaba escrito fijo en varias tablas y en Volkswagen
+ * quedaba una columna que decía "Semáforo" con estrellas adentro (23-09-2026).
+ */
+export function etiquetaEscala(): string {
+  return usaEstrellas() ? "Estrellas" : "Semáforo";
+}

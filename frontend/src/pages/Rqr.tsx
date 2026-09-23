@@ -6,6 +6,7 @@ import { causasRaiz, etiquetasCategorias, fechaCorta } from "../lib/categorias";
 import { BarraFiltros, FILTROS_VACIOS, FiltroSelect, FiltrosComunes, filtrosAQuery, useOpcionesCasos } from "../components/filtros";
 import { getUsuario, veTodasLasAreas } from "../lib/auth";
 import { etiquetaArea, tonoArea } from "../lib/area";
+import { etiquetaEscala } from "../lib/marca";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge, PuntoSemaforo } from "../components/ui/Badge";
@@ -196,7 +197,7 @@ export default function Rqr() {
               <th className="px-3 py-2">Asesor</th>
               <th className="px-3 py-2">Apertura</th>
               <th className="px-3 py-2">Causas raíz</th>
-              <th className="px-3 py-2 text-center">Semáforo</th>
+              <th className="px-3 py-2 text-center">{etiquetaEscala()}</th>
               <th className="px-3 py-2">Estado</th>
             </tr>
           </thead>
