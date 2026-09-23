@@ -27,14 +27,22 @@ import {
 //    Volkswagen.
 
 /** Por qué este usuario no trabaja la lista, o null si puede. */
+// Quién trabaja esta pantalla: Posventa de la provincia de la lista (hoy Mendoza)
+// y los administradores. Desde el 23-09-2026 vale para TODO: la lista, los meses
+// cerrados y también los gráficos. Antes los gráficos los veía cualquier perfil
+// (16-09-2026) y un usuario de Calidad de VENTAS terminaba con una pestaña que no
+// es de su trabajo; el dueño pidió sacársela.
 export function motivoSinAccesoPV(req: Request): string | null {
   const sucursal = marca.encuestaFabricaPV.sucursal ?? "";
+  if (req.usuario?.rol === "FIDELIZACION") {
+    return "Esta pantalla es de Calidad de Posventa.";
+  }
   if (areaPermitida(req.usuario!) === AreaTrabajo.VENTAS) {
-    return "Esta lista es del área de Posventa. Los gráficos mes a mes sí los podés ver.";
+    return `Esta pantalla es del área de Posventa${sucursal ? ` (${sucursal})` : ""}.`;
   }
   const provincia = provinciaPermitida(req.usuario!);
   if (provincia && claveNormalizada(provincia) !== claveNormalizada(sucursal)) {
-    return `Esta lista es de Posventa ${sucursal} y tu usuario es de ${provincia}. Los gráficos mes a mes sí los podés ver.`;
+    return `Esta pantalla es de Posventa ${sucursal} y tu usuario es de ${provincia}.`;
   }
   return null;
 }
@@ -165,6 +173,8 @@ const seguimientoSchema = z.object({
 });
 
 export async function seguimientoEncuestaPV(req: Request, res: Response) {
+  const motivo = motivoSinAccesoPV(req);
+  if (motivo) return res.status(403).json({ message: motivo });
   const parsed = seguimientoSchema.safeParse(req.query);
   if (!parsed.success) {
     return res.status(400).json({ message: parsed.error.errors.map((e) => e.message).join(" ") });

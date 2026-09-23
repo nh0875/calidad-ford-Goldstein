@@ -19,6 +19,8 @@ export interface InfoMarca {
   nombre: string;
   escala: EscalaSatisfaccion;
   estrellasSinRqr: number | null;
+  /** De qué provincia son los promotores de Encuestas de fábrica PV. */
+  sucursalEncuestaPV?: string | null;
   modulos: {
     fidelizacion: boolean;
     refuerzo: boolean;

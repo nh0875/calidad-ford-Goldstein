@@ -8,6 +8,12 @@ export interface UsuarioSesion {
   email: string;
   rol: "ADMIN" | "CALIDAD" | "FIDELIZACION";
   area: "VENTAS" | "POSVENTA" | "AMBAS";
+  /**
+   * Provincia del usuario; null o vacío = ve todas. Puede faltar en una sesión
+   * abierta desde antes del 23-09-2026: hasta que vuelva a entrar, se lo trata
+   * como sin restricción de provincia (el backend igual corta lo que no le toca).
+   */
+  sucursal?: string | null;
 }
 
 // ¿El usuario ve más de un área? (ADMIN o CALIDAD con área AMBAS). Se usa para

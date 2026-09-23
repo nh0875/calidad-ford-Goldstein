@@ -6,15 +6,17 @@
 // Respondió, o Cerrado si se lo dejó de trabajar sin respuesta. Abajo, el mismo
 // seguimiento mes a mes que las encuestas de Ventas.
 //
-// Los GRÁFICOS los ve cualquier perfil. La LISTA es de Calidad de Posventa de la
-// sucursal: a quien no la trabaja el backend le responde 403 con el motivo, y la
-// pantalla muestra ese motivo en lugar de la lista.
+// TODA la pantalla —la lista y los gráficos— es de Calidad de Posventa de la
+// provincia de la lista y de los administradores (23-09-2026). Hasta entonces los
+// gráficos los veía cualquier perfil, y a Calidad de Ventas le quedaba una pestaña
+// que no es de su trabajo. Al resto el backend le responde 403 y acá ni se pide.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Award, MessagesSquare } from "lucide-react";
 import { apiGet, apiPatchJson } from "../lib/api";
 import { getMarca } from "../lib/marca";
-import { esSoloFidelizacion, getUsuario } from "../lib/auth";
+import { getUsuario } from "../lib/auth";
+import { puedeVerEncuestasPV } from "../lib/area";
 import { Card } from "../components/ui/Card";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
@@ -166,11 +168,12 @@ function etiquetaNotaActual(p: Promotor): string {
 
 export default function EncuestasFabricaPV() {
   const marca = getMarca();
-  // En las marcas sin la pestaña no se pide nada: alguien que entra escribiendo la
-  // URL vería el aviso y, sin esto, la pantalla pediría un 404 cada minuto.
-  const habilitada = marca.modulos.encuestaFabricaPV;
-  // Fidelización ve esta pestaña SOLO con los gráficos: la lista le da 403.
-  const soloGraficos = esSoloFidelizacion(getUsuario());
+  // Esta pantalla es de Calidad de Posventa de la provincia de la lista y de los
+  // administradores (23-09-2026). Quien entra escribiendo la dirección ve el aviso
+  // y no se pide NADA: el backend le daría 403 en todo, y sin esto la pantalla lo
+  // pediría igual cada minuto.
+  const puedeVer = puedeVerEncuestasPV(getUsuario(), marca);
+  const habilitada = marca.modulos.encuestaFabricaPV && puedeVer;
 
   const [lista, setLista] = useState<RespuestaLista | null>(null);
   // El motivo por el que este usuario no trabaja la lista (otra provincia, o Ventas).
@@ -191,11 +194,6 @@ export default function EncuestasFabricaPV() {
 
   const cargar = useCallback(async () => {
     if (!habilitada) return;
-    if (soloGraficos) {
-      setVersion((v) => v + 1);
-      setCargando(false);
-      return;
-    }
     try {
       const r = await apiGet<RespuestaLista>("/api/encuesta-pv");
       setLista(r);
@@ -211,7 +209,7 @@ export default function EncuestasFabricaPV() {
       setCargando(false);
       setVersion((v) => v + 1);
     }
-  }, [habilitada, soloGraficos]);
+  }, [habilitada]);
 
   useEffect(() => {
     cargar();
@@ -220,12 +218,12 @@ export default function EncuestasFabricaPV() {
   // Un cliente que acaba de poner 5 estrellas tiene que aparecer sin recargar la
   // página: la lista se vuelve a pedir cada minuto mientras la pestaña está abierta.
   useEffect(() => {
-    if (!habilitada || soloGraficos || sinAcceso) return;
+    if (!habilitada || sinAcceso) return;
     const t = window.setInterval(() => {
       cargar();
     }, 60_000);
     return () => window.clearInterval(t);
-  }, [cargar, habilitada, soloGraficos, sinAcceso]);
+  }, [cargar, habilitada, sinAcceso]);
 
   useEffect(() => {
     if (!habilitada) return;
@@ -286,8 +284,15 @@ export default function EncuestasFabricaPV() {
     });
   }, [lista, buscar, filtroEstado, mes]);
 
-  if (!habilitada) {
+  if (!marca.modulos.encuestaFabricaPV) {
     return <Alert tono="info">Esta pantalla no aplica en {marca.nombre}.</Alert>;
+  }
+  if (!puedeVer) {
+    return (
+      <Alert tono="info">
+        Esta pantalla es de Calidad de Posventa{marca.sucursalEncuestaPV ? ` de ${marca.sucursalEncuestaPV}` : ""}.
+      </Alert>
+    );
   }
 
   const sucursal = lista?.sucursal ?? seguimiento?.sucursal ?? "";
@@ -316,7 +321,7 @@ export default function EncuestasFabricaPV() {
           {seguimiento.sinMes > 0 && <option value="SIN_MES">Sin mes ({seguimiento.sinMes})</option>}
         </Select>
         <span className="text-xs text-ink-muted">
-          {soloGraficos || !lista
+          {!lista
             ? "Acota el ranking de asesores."
             : "Acota el ranking de asesores y la lista de promotores de abajo."}
         </span>
@@ -372,18 +377,6 @@ export default function EncuestasFabricaPV() {
       </Card>
     </>
   );
-
-  if (soloGraficos) {
-    return (
-      <div className="space-y-4">
-        <Alert tono="info">
-          Ves los gráficos de los promotores de Posventa. La lista de clientes la trabaja Calidad de Posventa.
-        </Alert>
-        {avisoGraficos}
-        {bloqueSeguimiento ?? (!errorSeguimiento && <SkeletonBlock className="h-64 w-full" />)}
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">

@@ -118,6 +118,9 @@ export async function login(req: Request, res: Response) {
       email: usuario.email,
       rol: usuario.rol,
       area: usuario.area,
+      // La provincia del usuario (null = ve todas). El menú la necesita para
+      // esconder las pestañas de otra provincia; el backend igual las corta.
+      sucursal: usuario.sucursal,
     },
     modoDemo: env.modoDemo,
   });

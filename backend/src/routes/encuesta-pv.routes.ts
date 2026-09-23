@@ -23,7 +23,7 @@ router.get("/", asyncHandler(listarEncuestaPV));
 // Cuántos pendientes hay, para el contador del menú.
 router.get("/pendientes", asyncHandler(pendientesEncuestaPV));
 
-// Gráficos mes a mes: los ve cualquier perfil.
+// Gráficos mes a mes: los ve quien trabaja la lista (23-09-2026), no cualquiera.
 router.get("/seguimiento", asyncHandler(seguimientoEncuestaPV));
 
 // Pendiente / Animado / Respondió.

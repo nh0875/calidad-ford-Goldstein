@@ -17,6 +17,9 @@ export function infoMarca(_req: Request, res: Response) {
     escala: marca.escala,
     // Puntaje máximo que NO abre RQR (solo si la marca usa estrellas).
     estrellasSinRqr: marca.estrellasSinRqr,
+    // De qué provincia son los promotores de Encuestas de fábrica PV. El menú lo
+    // usa para no mostrarle la pestaña a quien no trabaja esa lista.
+    sucursalEncuestaPV: marca.encuestaFabricaPV.sucursal ?? null,
     modulos: {
       fidelizacion: marca.fidelizacion,
       // Las DOS marcas refuerzan la encuesta de fábrica, pero con circuitos

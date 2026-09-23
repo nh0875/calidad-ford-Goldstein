@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { getModoDemo, getUsuario, limpiarSesion, veTodasLasAreas, esSoloFidelizacion } from "../lib/auth";
-import { etiquetaArea } from "../lib/area";
+import { etiquetaArea, puedeVerEncuestasPV } from "../lib/area";
 import { apiGet, apiPostJson } from "../lib/api";
 import { Badge } from "../components/ui/Badge";
 import { claseBoton } from "../components/ui/Button";
@@ -124,7 +124,7 @@ export default function MainLayout() {
   useEffect(() => {
     // Fidelización no trabaja esa lista (solo ve sus gráficos), y en las marcas sin
     // la pestaña el endpoint no existe.
-    if (esSoloFidelizacion(usuario) || !getMarca().modulos.encuestaFabricaPV) return;
+    if (!puedeVerEncuestasPV(usuario, getMarca())) return;
     const pedir = () =>
       apiGet<{ pendientes: number }>("/api/encuesta-pv/pendientes")
         .then((r) => setPendientesPV(r.pendientes))
@@ -163,13 +163,14 @@ export default function MainLayout() {
     "/fidelizacion/clientes",
     "/seguimiento",
     "/encuestas-fabrica",
-    "/encuestas-fabrica-pv",
     "/indicadores-cem",
   ];
   const soloFidelizacion = esSoloFidelizacion(usuario);
   const itemsDeLaMarca = navItems
     .filter((i) => !i.modulo || modulos[i.modulo])
-    .filter((i) => !soloFidelizacion || RUTAS_DE_FIDELIZACION.includes(i.to));
+    .filter((i) => !soloFidelizacion || RUTAS_DE_FIDELIZACION.includes(i.to))
+    // Encuestas de fábrica PV es de Posventa de su provincia (23-09-2026).
+    .filter((i) => i.to !== "/encuestas-fabrica-pv" || puedeVerEncuestasPV(usuario, getMarca()));
 
   // Los links de administración solo aparecen para ADMIN (el backend también lo
   // exige, así que ocultarlos acá es cosmético, no la protección real)
