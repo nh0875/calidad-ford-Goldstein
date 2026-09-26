@@ -15,6 +15,7 @@ import { marca } from "../config/marca";
 import { clavePersonaVendedor, NUMEROS_DE_MOSTRADOR } from "./encuesta-vw.service";
 import { claveNormalizada } from "./normalizacion.service";
 import { enviarMail, MailError } from "./mail.service";
+import { clavePatente, telefonosPorDominio } from "./telefono-cliente.service";
 
 function fechaCorta(f: Date | null | undefined): string {
   if (!f) return "-";
@@ -32,6 +33,8 @@ function escapar(s: string): string {
 interface ClientePendiente {
   nombre: string;
   email: string;
+  /** Para que el vendedor pueda llamarlo (25-09-2026). "" = no lo tenemos. */
+  telefono: string;
   dominio: string;
   canal: string;
   fecha: string;
@@ -52,6 +55,9 @@ function tablaHtml(clientes: ClientePendiente[], conAvisosPrevios: boolean): str
       (c) => `<tr>
         <td style="padding:6px 10px;border-bottom:1px solid #eee">${escapar(c.nombre)}</td>
         <td style="padding:6px 10px;border-bottom:1px solid #eee">${escapar(c.email)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #eee">${
+          c.telefono ? escapar(c.telefono) : '<span style="color:#999">sin teléfono</span>'
+        }</td>
         <td style="padding:6px 10px;border-bottom:1px solid #eee">${escapar(c.dominio)}</td>
         <td style="padding:6px 10px;border-bottom:1px solid #eee">${escapar(c.canal)}</td>
         <td style="padding:6px 10px;border-bottom:1px solid #eee">${escapar(c.fecha)}</td>${
@@ -70,6 +76,7 @@ function tablaHtml(clientes: ClientePendiente[], conAvisosPrevios: boolean): str
         <tr style="background:#f4f4f4;text-align:left">
           <th style="padding:6px 10px">Cliente</th>
           <th style="padding:6px 10px">E-mail donde le llegó</th>
+          <th style="padding:6px 10px">Teléfono</th>
           <th style="padding:6px 10px">Dominio</th>
           <th style="padding:6px 10px">Canal</th>
           <th style="padding:6px 10px">Entrega</th>${conAvisosPrevios ? `
@@ -111,7 +118,8 @@ function armarCuerpo(vendedor: string, clientes: ClientePendiente[]): { html: st
     </p>
   </div>`;
 
-  const linea = (c: ClientePendiente) => `- ${c.nombre} | ${c.email} | ${c.dominio} | ${c.canal} | Entrega ${c.fecha}`;
+  const linea = (c: ClientePendiente) =>
+    `- ${c.nombre} | ${c.telefono || "sin teléfono"} | ${c.email} | ${c.dominio} | ${c.canal} | Entrega ${c.fecha}`;
   const texto =
     `Hola ${vendedor},\n\n` +
     (nuevos.length
@@ -228,6 +236,7 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
           id: true,
           nombreCliente: true,
           email: true,
+          telefono: true,
           dominio: true,
           canalVentas: true,
           fechaEntrega: true,
@@ -258,6 +267,26 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
     orderBy: { codigo: "asc" },
   });
 
+  // ÚLTIMO INTENTO DE CONSEGUIR EL TELÉFONO. El teléfono se guarda al cargar la
+  // encuesta, buscándolo en los casos de Contacto por el dominio; pero el caso
+  // puede haberse cargado DESPUÉS. Antes de avisar se vuelve a buscar solo para
+  // los que no lo tienen, y lo que aparece queda guardado: así el vendedor recibe
+  // el teléfono aunque los dos Excel hayan entrado en cualquier orden.
+  const sinTelefono = vendedores.flatMap((v) => v.pendientes).filter((p) => !p.telefono);
+  const encontrados = new Map<string, string>();
+  if (sinTelefono.length) {
+    const porDominio = await telefonosPorDominio(sinTelefono.map((p) => p.dominio));
+    for (const p of sinTelefono) {
+      const telefono = porDominio.get(clavePatente(p.dominio));
+      if (telefono) encontrados.set(p.id, telefono);
+    }
+    for (const [id, telefono] of encontrados) {
+      await prisma.encuestaFabricaVW.update({ where: { id }, data: { telefono } });
+    }
+  }
+  /** El teléfono guardado o el que se acaba de encontrar. */
+  const telefonoDe = (p: { id: string; telefono: string | null }) => p.telefono ?? encontrados.get(p.id) ?? "";
+
   const resultados: ResultadoAvisoVendedor[] = [];
 
   for (const grupo of porPersona.values()) {
@@ -284,6 +313,7 @@ export async function avisarVendedoresVW(opciones?: { codigos?: string[] }): Pro
     const clientes: ClientePendiente[] = pendientes.map((p) => ({
       nombre: p.nombreCliente,
       email: p.email,
+      telefono: telefonoDe(p),
       dominio: p.dominio || "-",
       canal: p.canalVentas || "-",
       fecha: fechaCorta(p.fechaEntrega),

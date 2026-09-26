@@ -123,6 +123,12 @@ interface Pendiente {
   dominio: string | null;
   nombreCliente: string;
   email: string;
+  /**
+   * El teléfono del cliente, para que el vendedor pueda llamarlo. No viene en el
+   * Excel de fábrica: lo saca la carga de los casos de Contacto, por el dominio
+   * (25-09-2026). null = no lo encontró.
+   */
+  telefono?: string | null;
   canalVentas: string | null;
   area: string | null;
   fechaEntrega: string | null;
@@ -172,6 +178,8 @@ interface ClienteCerradoVentas {
 
 interface Resumen {
   totalPendientes: number;
+  /** De los que faltan avisar, cuántos no tienen teléfono para pasarle al vendedor. */
+  sinTelefono?: number;
   vendedoresConPendientes: number;
   sinCorreo: number;
   totalClientes: number;
@@ -926,6 +934,15 @@ export default function EncuestasFabrica() {
           </div>
         )}
 
+        {(resumen?.sinTelefono ?? 0) > 0 && (
+          <div className="mt-3"><Alert tono="info">
+            {resumen!.sinTelefono === 1
+              ? "A 1 cliente no le encontramos el teléfono: al vendedor le va a llegar sin ese dato."
+              : `A ${resumen!.sinTelefono} clientes no les encontramos el teléfono: al vendedor le van a llegar sin ese dato.`}{" "}
+            El teléfono sale de los casos de Contacto, buscándolo por el dominio: si cargás ese Excel, aparece solo.
+          </Alert></div>
+        )}
+
         {sinCorreo.length > 0 && (
           <div className="mt-3"><Alert tono="advertencia">
             {sinCorreo.length === 1
@@ -1241,6 +1258,12 @@ export default function EncuestasFabrica() {
                         </div>
                         <div className="truncate text-xs text-ink-muted" title={c.email || undefined}>
                           {c.email || "sin correo"}
+                        </div>
+                        {/* El teléfono va acá porque es lo que el vendedor necesita
+                            para llamarlo, y es el mismo dato que le llega en el
+                            correo del aviso. */}
+                        <div className="truncate text-xs text-ink-muted">
+                          {c.telefono || <span className="text-amber-700">sin teléfono</span>}
                         </div>
                       </td>
                       <td className="whitespace-nowrap px-3 py-2.5">

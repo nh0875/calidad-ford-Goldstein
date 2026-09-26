@@ -261,6 +261,8 @@ export async function listarEncuestaVW(req: Request, res: Response) {
           dominio: true,
           nombreCliente: true,
           email: true,
+          // Lo saca la carga de los casos de Contacto, por dominio (25-09-2026).
+          telefono: true,
           canalVentas: true,
           area: true,
           fechaEntrega: true,
@@ -316,6 +318,11 @@ export async function listarEncuestaVW(req: Request, res: Response) {
       totalAvisados: todos.filter((p) => p.estado === EstadoEncuestaFabrica.AVISADO).length,
       totalRespondidos: todos.filter((p) => p.estado === EstadoEncuestaFabrica.RESPONDIO).length,
       totalManuales: todos.filter((p) => p.esManual).length,
+      // Cuántos de los que faltan avisar no tienen teléfono para pasarle al
+      // vendedor: son los que conviene ir a buscar a los casos de Contacto.
+      sinTelefono: todos.filter(
+        (p) => !p.telefono && p.estado !== EstadoEncuestaFabrica.RESPONDIO
+      ).length,
       totalVendedores: vendedores.length,
     },
     // Los meses cerrados: un cliente de esos meses que está en la lista llegó

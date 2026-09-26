@@ -20,6 +20,7 @@ import {
   resumirPeriodosVW,
   sucursalDeCodigoVendedor,
 } from "./encuesta-vw.service";
+import { clavePatente, telefonosPorDominio } from "./telefono-cliente.service";
 
 /**
  * Importa el Excel de encuestas pendientes de fábrica de Volkswagen.
@@ -261,8 +262,14 @@ async function guardar(
     ).map((c) => `${c.periodo}|${claveNormalizada(c.sucursal)}`)
   );
 
+  // El teléfono de cada cliente sale de los casos de Contacto, por el dominio: el
+  // Excel de fábrica no lo trae y el vendedor lo necesita para poder llamarlo
+  // (25-09-2026). Se busca de una sola vez para todo el archivo.
+  const telefonos = await telefonosPorDominio(archivo.filas.map((f) => f.dominio));
+
   for (const f of archivo.filas) {
     const vendedorId = idPorCodigo.get(f.codigoVendedor)!;
+    const telefono = telefonos.get(clavePatente(f.dominio)) ?? null;
     const datos = {
       dominio: f.dominio,
       nombreCliente: f.nombreCliente,
@@ -275,6 +282,9 @@ async function guardar(
       observacionesFabrica: f.observacionesFabrica,
       vistaEnUploadId: upload.id,
     };
+    // El teléfono solo se escribe cuando se encontró: si esta vez no aparece (el
+    // caso todavía no se cargó), no se borra el que ya tenía.
+    const conTelefono = telefono ? { telefono } : {};
     // El mes del cliente: el de su Fecha Dominio, o estimado con la entrega.
     const mes = periodoDeFila(f);
     const existente = await prisma.encuestaFabricaVW.findUnique({ where: { chasis: f.chasis } });
@@ -315,7 +325,7 @@ async function guardar(
       }
       await prisma.encuestaFabricaVW.update({
         where: { chasis: f.chasis },
-        data: { ...datos, ...mesActualizado, ...cierre },
+        data: { ...datos, ...mesActualizado, ...cierre, ...conTelefono },
       });
       if (!existente.cerradoEn) pendientesQueSiguen++;
     } else {
@@ -324,6 +334,7 @@ async function guardar(
       await prisma.encuestaFabricaVW.create({
         data: {
           ...datos,
+          ...conTelefono,
           estado: EstadoEncuestaFabrica.PENDIENTE,
           chasis: f.chasis,
           origenUploadId: upload.id,
