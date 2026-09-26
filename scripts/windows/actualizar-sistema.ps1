@@ -234,6 +234,19 @@ if (-not $r.ok) {
     Write-Host "  NO SE PUDO TRAER LA VERSION NUEVA. No se reconstruye nada: el sistema" -ForegroundColor Red
     Write-Host "  sigue funcionando con la version de antes, que es lo correcto." -ForegroundColor Red
 
+    # REPOSITORIO DAÑADO. No es un problema de conexion ni de cambios locales: a la
+    # carpeta oculta .git le faltan pedazos y git no puede terminar de traer nada.
+    # Paso en la PC de Volkswagen (26-09-2026), donde el antivirus del dominio ya
+    # se habia comido archivos del sistema. Se arregla con Reparar-Git.bat, que
+    # trae una copia limpia sin tocar la configuracion ni los datos.
+    if ($r.texto -match "unresolved deltas|pack checksum mismatch|is corrupt|object file .* is empty|unable to read (tree|sha1)|did not receive expected object") {
+        Write-Host ""
+        Write-Host "  El repositorio de esta PC quedo DANADO: por eso falla siempre." -ForegroundColor Yellow
+        Write-Host "  Arreglalo con doble clic en:" -ForegroundColor Yellow
+        Write-Host "      $ProjectDir\scripts\windows\Reparar-Git.bat" -ForegroundColor Gray
+        Write-Host "  Despues volve a correr esta actualizacion." -ForegroundColor Yellow
+    }
+
     if ($r.texto -match "Your local changes to the following files would be overwritten") {
         Write-Host ""
         Write-Host "  Es porque estos archivos del sistema fueron editados en esta PC:" -ForegroundColor Yellow
